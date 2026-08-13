@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "Сервер перезапускается. Подключение восстановится автоматически.",
+  "commands.aerogel.restart.complete": "Перезапуск сервера завершён за %s с.",
+  "commands.aerogel.restart.failed": "Не удалось перезапустить сервер. Подключитесь позже.",
+  "commands.aerogel.restart.unavailable": "Автоматический перезапуск недоступен без загрузчика Aerogel.",
+  "commands.aerogel.restart.already": "Перезапуск сервера уже выполняется.",
+  "commands.aerogel.restart.prepare_failed": "Не удалось подготовить перезапуск. Подробности в консоли.",
   "commands.aerogel.plugins.list": "Плагины (%s): %s",
   "commands.aerogel.plugins.none": "Нет",
   "commands.aerogel.plugins.reload_all.starting": "Перезагрузка всех плагинов...",

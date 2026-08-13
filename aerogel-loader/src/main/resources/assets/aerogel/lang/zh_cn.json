@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "服务器正在重启，连接将自动恢复。",
+  "commands.aerogel.restart.complete": "服务器重启已完成，用时 %s 秒。",
+  "commands.aerogel.restart.failed": "服务器重启失败，请稍后重新连接。",
+  "commands.aerogel.restart.unavailable": "服务器未通过 Aerogel 启动器运行，无法自动重启。",
+  "commands.aerogel.restart.already": "服务器重启已在进行中。",
+  "commands.aerogel.restart.prepare_failed": "无法准备服务器重启，请查看控制台。",
   "commands.aerogel.plugins.list": "插件（%s 个）：%s",
   "commands.aerogel.plugins.none": "无",
   "commands.aerogel.plugins.reload_all.starting": "正在重载所有插件...",

@@ -4,6 +4,7 @@ import dev.aerogel.api.event.AerogelEvent;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class EventHooks {
@@ -30,6 +31,15 @@ public final class EventHooks {
         }
     }
 
+    public static void setField(Object owner, String name, Object value) {
+        try {
+            Field field = FIELDS.computeIfAbsent(new FieldKey(owner.getClass(), name), key -> findField(key.type, key.name));
+            field.set(owner, value);
+        } catch (IllegalAccessException exception) {
+            throw new IllegalStateException("Cannot write vanilla field " + name, exception);
+        }
+    }
+
     public static Object staticField(Object owner, String className, String fieldName) {
         try {
             Class<?> type = Class.forName(className, true, owner.getClass().getClassLoader());
@@ -51,6 +61,28 @@ public final class EventHooks {
             return method.invoke(owner, arguments);
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Cannot call vanilla method " + methodName, exception);
+        }
+    }
+
+    public static Object construct(Object owner, String className, Object... arguments) {
+        try {
+            Class<?> type = Class.forName(className, true, owner.getClass().getClassLoader());
+            for (Constructor<?> constructor : type.getConstructors()) {
+                Class<?>[] parameters = constructor.getParameterTypes();
+                if (parameters.length != arguments.length) continue;
+                boolean compatible = true;
+                for (int index = 0; index < parameters.length; index++) {
+                    Object argument = arguments[index];
+                    if (argument != null && !boxed(parameters[index]).isInstance(argument)) {
+                        compatible = false;
+                        break;
+                    }
+                }
+                if (compatible) return constructor.newInstance(arguments);
+            }
+            throw new NoSuchMethodException(type.getName() + " constructor");
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Cannot construct vanilla class " + className, exception);
         }
     }
 
@@ -94,18 +126,23 @@ public final class EventHooks {
     }
 
     private static Method findMethod(Class<?> type, String name, Object[] arguments) throws NoSuchMethodException {
-        for (Method method : type.getMethods()) {
-            if (!method.getName().equals(name) || method.getParameterCount() != arguments.length) continue;
-            Class<?>[] parameters = method.getParameterTypes();
-            boolean compatible = true;
-            for (int index = 0; index < parameters.length; index++) {
-                Object argument = arguments[index];
-                if (argument != null && !boxed(parameters[index]).isInstance(argument)) {
-                    compatible = false;
-                    break;
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (!method.getName().equals(name) || method.getParameterCount() != arguments.length) continue;
+                Class<?>[] parameters = method.getParameterTypes();
+                boolean compatible = true;
+                for (int index = 0; index < parameters.length; index++) {
+                    Object argument = arguments[index];
+                    if (argument != null && !boxed(parameters[index]).isInstance(argument)) {
+                        compatible = false;
+                        break;
+                    }
+                }
+                if (compatible) {
+                    method.setAccessible(true);
+                    return method;
                 }
             }
-            if (compatible) return method;
         }
         throw new NoSuchMethodException(type.getName() + "." + name);
     }

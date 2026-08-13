@@ -18,6 +18,7 @@ val apiMinecraftStubs = aerogelApiProject.extensions
 dependencies {
     implementation(project(":aerogel-api"))
     compileOnly(apiMinecraftStubs.output)
+    testRuntimeOnly(apiMinecraftStubs.output)
     implementation("net.fabricmc:sponge-mixin:$mixinVersion")
     implementation("org.ow2.asm:asm:$asmVersion")
     implementation("org.ow2.asm:asm-tree:$asmVersion")

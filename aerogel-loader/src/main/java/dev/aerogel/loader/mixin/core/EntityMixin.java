@@ -7,14 +7,58 @@ import dev.aerogel.api.event.entity.EntityRemoveEvent;
 import dev.aerogel.api.event.entity.EntityTeleportEvent;
 import dev.aerogel.loader.event.EventHooks;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Predicate;
+
 @Mixin(targets = "net.minecraft.world.entity.Entity")
 abstract class EntityMixin {
+    @Unique
+    public Collection<Entity> nearbyEntities(double radius) {
+        return nearbyEntities(radius, entity -> true);
+    }
+
+    @Unique
+    public Collection<Entity> nearbyEntities(double radius, Predicate<Entity> filter) {
+        Object level = EventHooks.call(this, "level");
+        if (!EventHooks.isInstance(level, "net.minecraft.server.level.ServerLevel")) return List.of();
+        Collection<Entity> nearby = ((ServerLevel) level).nearbyEntities(
+            ((Number) EventHooks.call(this, "getX")).doubleValue(),
+            ((Number) EventHooks.call(this, "getY")).doubleValue(),
+            ((Number) EventHooks.call(this, "getZ")).doubleValue(), radius,
+            Objects.requireNonNull(filter, "filter"));
+        Object self = this;
+        return nearby.stream().filter(entity -> entity != self).toList();
+    }
+
+    @Unique
+    public boolean teleport(ServerLevel destination, double x, double y, double z) {
+        return teleport(destination, x, y, z,
+            ((Number) EventHooks.call(this, "getYRot")).floatValue(),
+            ((Number) EventHooks.call(this, "getXRot")).floatValue());
+    }
+
+    @Unique
+    public boolean teleport(
+        ServerLevel destination, double x, double y, double z, float yaw, float pitch
+    ) {
+        Objects.requireNonNull(destination, "destination");
+        return (boolean) EventHooks.call(this, "teleportTo", destination,
+            x, y, z, Set.of(), yaw, pitch, true);
+    }
+
     @Inject(method = "remove(Lnet/minecraft/world/entity/Entity$RemovalReason;)V", at = @At("HEAD"))
     private void aerogel$removed(@Coerce Object reason, CallbackInfo callbackInfo) {
         EventHooks.post(new EntityRemoveEvent(EventHooks.cast(this), EventHooks.cast(reason)));

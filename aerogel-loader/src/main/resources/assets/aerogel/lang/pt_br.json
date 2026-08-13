@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "O servidor está reiniciando. A conexão será restaurada automaticamente.",
+  "commands.aerogel.restart.complete": "O servidor reiniciou em %s segundos.",
+  "commands.aerogel.restart.failed": "A reinicialização falhou. Tente conectar novamente mais tarde.",
+  "commands.aerogel.restart.unavailable": "A reinicialização automática não está disponível sem o iniciador Aerogel.",
+  "commands.aerogel.restart.already": "Já existe uma reinicialização em andamento.",
+  "commands.aerogel.restart.prepare_failed": "Não foi possível preparar a reinicialização. Consulte o console.",
   "commands.aerogel.plugins.list": "Plugins (%s): %s",
   "commands.aerogel.plugins.none": "Nenhum",
   "commands.aerogel.plugins.reload_all.starting": "Recarregando todos os plugins...",

@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "Server restart started. Your connection will be restored automatically.",
+  "commands.aerogel.restart.complete": "Server restart completed in %s seconds.",
+  "commands.aerogel.restart.failed": "Server restart failed. Please reconnect later.",
+  "commands.aerogel.restart.unavailable": "Automatic restart is unavailable because Aerogel is not running under its launcher.",
+  "commands.aerogel.restart.already": "A server restart is already in progress.",
+  "commands.aerogel.restart.prepare_failed": "The server could not prepare for restart. See the console for details.",
   "commands.aerogel.plugins.list": "Plugins (%s): %s",
   "commands.aerogel.plugins.none": "None",
   "commands.aerogel.plugins.reload_all.starting": "Reloading all plugins...",

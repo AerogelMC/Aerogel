@@ -12,6 +12,7 @@ import dev.aerogel.api.event.world.WorldLoadEvent;
 import dev.aerogel.api.event.world.WorldUnloadEvent;
 import dev.aerogel.loader.event.EventHooks;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -19,8 +20,131 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.state.BlockState;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Predicate;
+
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin {
+    @Unique
+    public String identifier() {
+        return String.valueOf(EventHooks.call(EventHooks.call(this, "dimension"), "identifier"));
+    }
+
+    @Unique
+    public Collection<Entity> entities() {
+        Iterable<?> entities = (Iterable<?>) EventHooks.call(this, "getAllEntities");
+        List<Entity> result = new ArrayList<>();
+        for (Object entity : entities) result.add(EventHooks.cast(entity));
+        return List.copyOf(result);
+    }
+
+    @Unique
+    public Optional<Entity> findEntity(UUID uniqueId) {
+        return Optional.ofNullable(EventHooks.cast(EventHooks.call(this, "getEntityInAnyDimension",
+            Objects.requireNonNull(uniqueId, "uniqueId"))));
+    }
+
+    @Unique
+    public Optional<Entity> findEntity(int entityId) {
+        return Optional.ofNullable(EventHooks.cast(EventHooks.call(this, "getEntity", entityId)));
+    }
+
+    @Unique
+    public Collection<Entity> nearbyEntities(double x, double y, double z, double radius) {
+        return nearbyEntities(x, y, z, radius, entity -> true);
+    }
+
+    @Unique
+    public Collection<Entity> nearbyEntities(
+        double centerX, double centerY, double centerZ, double radius, Predicate<Entity> filter
+    ) {
+        Objects.requireNonNull(filter, "filter");
+        if (!Double.isFinite(radius) || radius < 0.0D) {
+            throw new IllegalArgumentException("radius must be finite and non-negative");
+        }
+        double maximumDistance = radius * radius;
+        List<Entity> result = new ArrayList<>();
+        for (Entity entity : entities()) {
+            double x = entity.getX() - centerX;
+            double y = entity.getY() - centerY;
+            double z = entity.getZ() - centerZ;
+            if (x * x + y * y + z * z <= maximumDistance && filter.test(entity)) result.add(entity);
+        }
+        return List.copyOf(result);
+    }
+
+    @Unique
+    private void aerogel$weather(int value, int durationTicks) {
+        if (durationTicks < 0) throw new IllegalArgumentException("durationTicks must not be negative");
+        boolean raining = value > 0;
+        boolean thundering = value > 1;
+        Object weather = EventHooks.call(this, "getWeatherData");
+        EventHooks.call(weather, "setClearWeatherTime", value == 0 ? durationTicks : 0);
+        EventHooks.call(weather, "setRainTime", raining ? durationTicks : 0);
+        EventHooks.call(weather, "setThunderTime", thundering ? durationTicks : 0);
+        EventHooks.call(weather, "setRaining", raining);
+        EventHooks.call(weather, "setThundering", thundering);
+    }
+
+    @Unique
+    public void clearWeather(int durationTicks) {
+        aerogel$weather(0, durationTicks);
+    }
+
+    @Unique
+    public void rain(int durationTicks) {
+        aerogel$weather(1, durationTicks);
+    }
+
+    @Unique
+    public void thunder(int durationTicks) {
+        aerogel$weather(2, durationTicks);
+    }
+
+    @Unique
+    public BlockState block(int x, int y, int z) {
+        return EventHooks.cast(EventHooks.call(this, "getBlockState", EventHooks.construct(this,
+            "net.minecraft.core.BlockPos", x, y, z)));
+    }
+
+    @Unique
+    public boolean block(int x, int y, int z, BlockState state, int flags) {
+        return (boolean) EventHooks.call(this, "setBlock", EventHooks.construct(this,
+            "net.minecraft.core.BlockPos", x, y, z), Objects.requireNonNull(state, "state"), flags);
+    }
+
+    @Unique
+    public boolean spawn(Entity entity) {
+        return (boolean) EventHooks.call(this, "addFreshEntity", Objects.requireNonNull(entity, "entity"));
+    }
+
+    @Unique
+    public boolean teleport(ServerPlayer player, double x, double y, double z) {
+        Objects.requireNonNull(player, "player");
+        return teleport(player, x, y, z,
+            ((Number) EventHooks.call(player, "getYRot")).floatValue(),
+            ((Number) EventHooks.call(player, "getXRot")).floatValue());
+    }
+
+    @Unique
+    public boolean teleport(
+        ServerPlayer player, double x, double y, double z, float yaw, float pitch
+    ) {
+        Objects.requireNonNull(player, "player");
+        return (boolean) EventHooks.call(player, "teleportTo", this,
+            x, y, z, Set.of(), yaw, pitch, true);
+    }
+
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$worldLoaded(CallbackInfo callbackInfo) {
         EventHooks.post(new WorldLoadEvent(EventHooks.cast(this)));

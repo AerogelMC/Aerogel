@@ -13,6 +13,10 @@ import java.lang.reflect.Method;
 import java.nio.file.Path;
 
 public final class InteractiveConsole {
+    private static volatile Terminal activeTerminal;
+    private static volatile Thread activeThread;
+    private static volatile boolean closingForRestart;
+
     private InteractiveConsole() {
     }
 
@@ -32,6 +36,9 @@ public final class InteractiveConsole {
         }
 
         try (Terminal terminal = TerminalBuilder.builder().system(true).nativeSignals(true).build()) {
+            closingForRestart = false;
+            activeTerminal = terminal;
+            activeThread = Thread.currentThread();
             LineReader reader = LineReaderBuilder.builder()
                 .terminal(terminal)
                 .completer((ignored, line, candidates) -> {
@@ -56,13 +63,45 @@ public final class InteractiveConsole {
                     // Ctrl-C clears the current line without stopping the server.
                 } catch (EndOfFileException endOfInput) {
                     break;
+                } catch (IllegalStateException terminalClosed) {
+                    if (closingForRestart) {
+                        break;
+                    }
+                    throw terminalClosed;
                 }
             }
             return true;
         } catch (ReflectiveOperationException | java.io.IOException exception) {
+            if (closingForRestart) {
+                return true;
+            }
             System.err.println("[Aerogel] Interactive console unavailable; using vanilla input: "
                 + exception.getMessage());
             return false;
+        } catch (IllegalStateException exception) {
+            if (closingForRestart) {
+                return true;
+            }
+            throw exception;
+        } finally {
+            activeTerminal = null;
+            activeThread = null;
+        }
+    }
+
+    public static void stop() {
+        closingForRestart = true;
+        Thread thread = activeThread;
+        if (thread != null) {
+            thread.interrupt();
+        }
+        Terminal terminal = activeTerminal;
+        if (terminal != null) {
+            try {
+                terminal.close();
+            } catch (java.io.IOException ignored) {
+                // The console may already be closing as part of normal shutdown.
+            }
         }
     }
 

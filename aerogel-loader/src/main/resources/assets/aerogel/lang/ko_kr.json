@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "서버 재시작을 시작합니다. 연결은 자동으로 복구됩니다.",
+  "commands.aerogel.restart.complete": "서버 재시작이 %s초 만에 완료되었습니다.",
+  "commands.aerogel.restart.failed": "서버 재시작에 실패했습니다. 잠시 후 다시 접속해 주세요.",
+  "commands.aerogel.restart.unavailable": "Aerogel 런처로 실행되지 않아 자동 재시작을 사용할 수 없습니다.",
+  "commands.aerogel.restart.already": "서버 재시작이 이미 진행 중입니다.",
+  "commands.aerogel.restart.prepare_failed": "서버 재시작을 준비하지 못했습니다. 콘솔에서 자세한 내용을 확인하세요.",
   "commands.aerogel.plugins.list": "플러그인 (%s개): %s",
   "commands.aerogel.plugins.none": "없음",
   "commands.aerogel.plugins.reload_all.starting": "플러그인을 리로드하는 중...",

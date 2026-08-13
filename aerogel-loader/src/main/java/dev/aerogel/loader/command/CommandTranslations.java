@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-final class CommandTranslations {
+public final class CommandTranslations {
     private static final Gson GSON = new Gson();
     private static final Map<String, Map<String, String>> CACHE = new ConcurrentHashMap<>();
     private static final String[] SUPPORTED = {
@@ -21,7 +21,7 @@ final class CommandTranslations {
     private CommandTranslations() {
     }
 
-    static String fallback(String language, String key, String englishFallback) {
+    public static String fallback(String language, String key, String englishFallback) {
         String normalized = normalize(language);
         return CACHE.computeIfAbsent(normalized, CommandTranslations::load).getOrDefault(key, englishFallback);
     }

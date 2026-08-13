@@ -1,25 +1,23 @@
 # Aerogel API
 
-Aerogel adds convenience where vanilla server development is repetitive, while keeping the official Minecraft 26.2 classes available. API resources belong to the plugin that created them and are closed automatically when that plugin reloads.
+Aerogel extends the official Minecraft 26.2 server classes where vanilla development is repetitive. Once you have a `MinecraftServer`, `ServerLevel`, `ServerPlayer`, or `Entity`, normal work continues directly on that object instead of passing through a second wrapper API.
 
-Every service is available from `PluginContext`:
+`PluginContext` only holds plugin-owned resources whose lifetime Aerogel must manage:
 
 ```java
 context.commands();
 context.scheduler();
 context.inventories();
-context.players();
 context.scoreboards();
 context.bossBars();
 context.dialogs();
-context.worlds();
 ```
 
-The live server and every wrapped object remain accessible:
+Get the live vanilla server directly:
 
 ```java
-MinecraftServer server = context.server().vanilla();
-ServerLevel level = context.worlds().overworld().vanilla();
+MinecraftServer server = context.minecraft();
+ServerLevel level = server.overworld();
 SimpleContainer container = inventory.vanilla();
 ```
 
@@ -66,7 +64,48 @@ Inventories expose their live `Container`, track viewers, close open views on pl
 
 ## Players
 
-`context.players()` returns live `ServerPlayer` objects by name or UUID, lists online players, broadcasts components, and sends chat or action-bar messages. Player wrappers are intentionally avoided because vanilla already exposes the complete player surface.
+Player lookup and broadcasts live on `MinecraftServer`; player operations live on `ServerPlayer`:
+
+```java
+MinecraftServer server = context.minecraft();
+ServerPlayer player = server.findPlayer("Steve").orElseThrow();
+
+player.sendSystemMessage(Component.literal("Hello"));
+player.sendOverlayMessage(Component.literal("Ready"));
+player.sendTitle(Component.literal("Game start"), Component.literal("Good luck"), 10, 60, 20);
+player.giveItem(new ItemStack(Items.DIAMOND));
+player.sendPacket(packet);
+
+server.broadcast(Component.literal("Round complete"));
+server.broadcastPacket(packet);
+```
+
+`kick`, `clearTitle`, predicate-based `removeItems`, and `clearInventory` are also available directly. Existing vanilla methods remain available alongside them.
+
+## Entities and items
+
+Levels expose their live entities directly, and an entity can query its own surroundings:
+
+```java
+Collection<Entity> nearby = level.nearbyEntities(0, 64, 0, 16,
+    entity -> entity instanceof LivingEntity);
+Collection<Entity> aroundMob = mob.nearbyEntities(8);
+
+level.findEntity(uniqueId).ifPresent(Entity::discard);
+level.spawn(entity);
+entity.teleport(destination, 0.5, 65, 0.5);
+```
+
+Item behavior stays on the owning vanilla object: use `ServerPlayer.giveItem`, `removeItems`, and the normal vanilla inventory and `ItemStack` APIs.
+
+## Packets
+
+Packets use the same direct objects:
+
+```java
+player.sendPacket(new ClientboundClearTitlesPacket(true));
+context.minecraft().broadcastPacket(packet);
+```
 
 ## Scoreboards
 
@@ -112,14 +151,18 @@ Notice and confirmation dialogs have high-level builders. `nativeDialog` accepts
 ## Worlds
 
 ```java
-World world = context.worlds().overworld();
-world.dayTime(6000)
-    .weather(Weather.CLEAR, 20 * 60);
+MinecraftServer server = context.minecraft();
+ServerLevel world = server.overworld();
+
+world.setDayTime(6000);
+world.clearWeather(20 * 60);
 world.block(0, 64, 0, Blocks.STONE.defaultBlockState(), 3);
-world.teleport(player, new Position(0.5, 65, 0.5));
+world.teleport(player, 0.5, 65, 0.5);
 ```
 
-Loaded-world lookup, time, weather, block access, entity spawning, and player teleporting are provided. Advanced dimension creation, chunk generation, registries, recipes, particles, sounds, packets, and data components use the live vanilla server/level handles directly; Aerogel does not hide or duplicate those APIs.
+`MinecraftServer.loadedLevels`, `ServerLevel.identifier`, entity lookup, radius queries, block access, spawning, `rain`, and `thunder` are provided. Advanced dimension creation, chunk generation, registries, recipes, particles, sounds, and data components continue to use vanilla APIs directly.
+
+`MinecraftServer.restart()` requests Aerogel's full-process restart and returns whether the request was accepted.
 
 ## Components
 

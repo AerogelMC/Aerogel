@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "Le redémarrage du serveur commence. La connexion sera rétablie automatiquement.",
+  "commands.aerogel.restart.complete": "Le redémarrage du serveur s’est terminé en %s secondes.",
+  "commands.aerogel.restart.failed": "Le redémarrage du serveur a échoué. Veuillez vous reconnecter plus tard.",
+  "commands.aerogel.restart.unavailable": "Le redémarrage automatique est indisponible sans le lanceur Aerogel.",
+  "commands.aerogel.restart.already": "Un redémarrage du serveur est déjà en cours.",
+  "commands.aerogel.restart.prepare_failed": "Impossible de préparer le redémarrage. Consultez la console.",
   "commands.aerogel.plugins.list": "Plugins (%s) : %s",
   "commands.aerogel.plugins.none": "Aucun",
   "commands.aerogel.plugins.reload_all.starting": "Rechargement de tous les plugins...",

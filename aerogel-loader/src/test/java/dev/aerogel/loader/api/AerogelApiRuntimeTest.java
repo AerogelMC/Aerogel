@@ -7,8 +7,23 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 final class AerogelApiRuntimeTest {
+    @Test
+    void exposesPluginOwnedServicesBeforeTheServerStarts() {
+        AerogelApiRuntime runtime = new AerogelApiRuntime();
+        PluginApiScope scope = runtime.openScope("test", Logger.getAnonymousLogger());
+
+        assertNotNull(scope.commands());
+        assertNotNull(scope.scheduler());
+        assertNotNull(scope.inventories());
+        assertNotNull(scope.scoreboards());
+        assertNotNull(scope.bossBars());
+        assertNotNull(scope.dialogs());
+        scope.close();
+    }
+
     @Test
     void synchronousTasksFollowTicksAndCloseWithPluginScope() {
         AerogelApiRuntime runtime = new AerogelApiRuntime();

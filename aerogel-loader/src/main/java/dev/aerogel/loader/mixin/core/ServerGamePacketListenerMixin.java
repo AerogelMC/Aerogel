@@ -7,14 +7,22 @@ import dev.aerogel.api.event.inventory.InventoryButtonClickEvent;
 import dev.aerogel.api.event.inventory.RecipePlaceEvent;
 import dev.aerogel.api.event.inventory.TradeSelectEvent;
 import dev.aerogel.api.event.player.PlayerAbilitiesChangeEvent;
+import dev.aerogel.api.event.player.PlayerAdvancementsScreenEvent;
 import dev.aerogel.api.event.player.PlayerActionEvent;
 import dev.aerogel.api.event.player.PlayerAttackEntityEvent;
 import dev.aerogel.api.event.player.PlayerChatEvent;
+import dev.aerogel.api.event.player.PlayerClientCommandEvent;
 import dev.aerogel.api.event.player.PlayerClientInformationEvent;
 import dev.aerogel.api.event.player.PlayerCommandActionEvent;
+import dev.aerogel.api.event.player.PlayerCommandSuggestionEvent;
 import dev.aerogel.api.event.player.PlayerEditBookEvent;
 import dev.aerogel.api.event.player.PlayerHotbarSlotChangeEvent;
 import dev.aerogel.api.event.player.PlayerInputEvent;
+import dev.aerogel.api.event.player.PlayerBundleSelectionEvent;
+import dev.aerogel.api.event.player.PlayerPaddleBoatEvent;
+import dev.aerogel.api.event.player.PlayerRecipeBookSettingsEvent;
+import dev.aerogel.api.event.player.PlayerRecipeSeenEvent;
+import dev.aerogel.api.event.player.PlayerSpectatorActionEvent;
 import dev.aerogel.api.event.player.PlayerInteractEntityEvent;
 import dev.aerogel.api.event.player.PlayerMoveEvent;
 import dev.aerogel.api.event.player.PlayerPacketEvent;
@@ -25,6 +33,8 @@ import dev.aerogel.api.event.player.PlayerUseItemEvent;
 import dev.aerogel.api.event.player.PlayerUseItemOnBlockEvent;
 import dev.aerogel.api.event.player.PlayerVehicleMoveEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.restart.RestartCoordinator;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
@@ -38,10 +48,66 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.server.network.ServerGamePacketListenerImpl")
 abstract class ServerGamePacketListenerMixin {
+    @Redirect(
+        method = "removePlayerFromWorld",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/players/PlayerList;broadcastSystemMessage(Lnet/minecraft/network/chat/Component;Z)V"
+        )
+    )
+    private void aerogel$suppressRestartQuitMessage(PlayerList players, Component message, boolean overlay) {
+        if (!RestartCoordinator.requested()) {
+            players.broadcastSystemMessage(message, overlay);
+        }
+    }
+
     @Inject(method = "handleMovePlayer(Lnet/minecraft/network/protocol/game/ServerboundMovePlayerPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$move(@Coerce Object packet, CallbackInfo callbackInfo) {
         post(new PlayerMoveEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleClientCommand(Lnet/minecraft/network/protocol/game/ServerboundClientCommandPacket;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$clientCommand(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerClientCommandEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleSpectatorAction(Lnet/minecraft/network/protocol/game/ServerboundSpectatorActionPacket;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$spectatorAction(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerSpectatorActionEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handlePaddleBoat(Lnet/minecraft/network/protocol/game/ServerboundPaddleBoatPacket;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$paddleBoat(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerPaddleBoatEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleRecipeBookSeenRecipePacket", at = @At("HEAD"), cancellable = true)
+    private void aerogel$recipeSeen(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerRecipeSeenEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleRecipeBookChangeSettingsPacket", at = @At("HEAD"), cancellable = true)
+    private void aerogel$recipeSettings(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerRecipeBookSettingsEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleSeenAdvancements", at = @At("HEAD"), cancellable = true)
+    private void aerogel$advancements(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerAdvancementsScreenEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleBundleItemSelectedPacket", at = @At("HEAD"), cancellable = true)
+    private void aerogel$bundleSelection(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerBundleSelectionEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(method = "handleCustomCommandSuggestions", at = @At("HEAD"), cancellable = true)
+    private void aerogel$commandSuggestions(@Coerce Object packet, CallbackInfo callbackInfo) {
+        post(new PlayerCommandSuggestionEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handlePlayerInput(Lnet/minecraft/network/protocol/game/ServerboundPlayerInputPacket;)V",

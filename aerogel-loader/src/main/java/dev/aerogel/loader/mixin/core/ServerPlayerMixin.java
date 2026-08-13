@@ -11,6 +11,7 @@ import dev.aerogel.api.event.player.PlayerItemConsumeEvent;
 import dev.aerogel.api.event.player.PlayerTeleportEvent;
 import dev.aerogel.loader.event.EventHooks;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -18,9 +19,83 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.OptionalInt;
+import java.util.Objects;
+import java.util.function.Predicate;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.world.item.ItemStack;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
 abstract class ServerPlayerMixin {
+    @Unique
+    public void sendTitle(Component title) {
+        sendTitle(title, null, 10, 70, 20);
+    }
+
+    @Unique
+    public void sendTitle(
+        Component title, Component subtitle, int fadeInTicks, int stayTicks, int fadeOutTicks
+    ) {
+        Objects.requireNonNull(title, "title");
+        if (fadeInTicks < 0 || stayTicks < 0 || fadeOutTicks < 0) {
+            throw new IllegalArgumentException("title times must not be negative");
+        }
+        Object listener = EventHooks.field(this, "connection");
+        EventHooks.call(listener, "send", EventHooks.construct(this,
+            "net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket",
+            fadeInTicks, stayTicks, fadeOutTicks));
+        if (subtitle != null) {
+            EventHooks.call(listener, "send", EventHooks.construct(this,
+                "net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket", subtitle));
+        }
+        EventHooks.call(listener, "send", EventHooks.construct(this,
+            "net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket", title));
+    }
+
+    @Unique
+    public void clearTitle() {
+        clearTitle(true);
+    }
+
+    @Unique
+    public void clearTitle(boolean resetTimes) {
+        Object packet = EventHooks.construct(this,
+            "net.minecraft.network.protocol.game.ClientboundClearTitlesPacket", resetTimes);
+        EventHooks.call(EventHooks.field(this, "connection"), "send", packet);
+    }
+
+    @Unique
+    public void kick(Component reason) {
+        EventHooks.call(EventHooks.field(this, "connection"), "disconnect",
+            Objects.requireNonNull(reason, "reason"));
+    }
+
+    @Unique
+    public void sendPacket(Packet<?> packet) {
+        EventHooks.call(EventHooks.field(this, "connection"), "send",
+            Objects.requireNonNull(packet, "packet"));
+    }
+
+    @Unique
+    public boolean giveItem(ItemStack stack) {
+        return (boolean) EventHooks.call(EventHooks.call(this, "getInventory"), "add",
+            Objects.requireNonNull(stack, "stack"));
+    }
+
+    @Unique
+    public int removeItems(Predicate<ItemStack> filter, int maximum) {
+        Objects.requireNonNull(filter, "filter");
+        if (maximum < 0) throw new IllegalArgumentException("maximum must not be negative");
+        if (maximum == 0) return 0;
+        return (int) EventHooks.call(EventHooks.call(this, "getInventory"),
+            "clearOrCountMatchingItems", filter, maximum, null);
+    }
+
+    @Unique
+    public void clearInventory() {
+        EventHooks.call(EventHooks.call(this, "getInventory"), "clearContent");
+    }
+
     @Inject(method = "startSleepInBed(Lnet/minecraft/core/BlockPos;)Lcom/mojang/datafixers/util/Either;",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$bedEnter(

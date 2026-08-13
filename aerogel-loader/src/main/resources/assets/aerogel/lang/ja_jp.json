@@ -1,4 +1,10 @@
 {
+  "commands.aerogel.restart.starting": "サーバーの再起動を開始します。接続は自動的に復元されます。",
+  "commands.aerogel.restart.complete": "サーバーの再起動が%s秒で完了しました。",
+  "commands.aerogel.restart.failed": "サーバーの再起動に失敗しました。しばらくしてから再接続してください。",
+  "commands.aerogel.restart.unavailable": "Aerogel ランチャーで実行されていないため、自動再起動を利用できません。",
+  "commands.aerogel.restart.already": "サーバーの再起動はすでに進行中です。",
+  "commands.aerogel.restart.prepare_failed": "サーバーの再起動を準備できませんでした。コンソールを確認してください。",
   "commands.aerogel.plugins.list": "プラグイン (%s): %s",
   "commands.aerogel.plugins.none": "なし",
   "commands.aerogel.plugins.reload_all.starting": "すべてのプラグインを再読み込みしています...",

@@ -7,8 +7,11 @@ import dev.aerogel.loader.runtime.AerogelServerBootstrap;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.jar.JarFile;
 
@@ -23,6 +26,72 @@ public final class ServerProcessLauncher {
         verifyRuntime(options);
         new PluginDiscovery().discover(options.gameDirectory().resolve("plugins"), options.minecraftVersion());
 
+        Path session = options.gameDirectory().resolve(".aerogel").resolve("restart")
+            .resolve(UUID.randomUUID().toString()).toAbsolutePath().normalize();
+        Files.createDirectories(session);
+        int generation = 0;
+        Process current = start(options, session, generation);
+
+        while (true) {
+            Path request = session.resolve("request-" + generation + ".properties");
+            while (current.isAlive() && !Files.isRegularFile(request)) {
+                Thread.sleep(100L);
+            }
+            if (!Files.isRegularFile(request)) {
+                return current.waitFor();
+            }
+
+            int nextGeneration = generation + 1;
+            Process next;
+            try {
+                next = start(options, session, nextGeneration);
+            } catch (IOException exception) {
+                Files.writeString(session.resolve("failed-" + generation), exception.toString(),
+                    StandardCharsets.UTF_8);
+                current.waitFor();
+                throw exception;
+            }
+
+            Path ready = session.resolve("ready-" + nextGeneration);
+            long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(4);
+            while (next.isAlive() && !Files.isRegularFile(ready) && System.nanoTime() < deadline) {
+                Thread.sleep(100L);
+            }
+            if (!Files.isRegularFile(ready)) {
+                String reason = next.isAlive() ? "The replacement server did not become ready in time."
+                    : "The replacement server exited with status " + next.exitValue() + ".";
+                Files.writeString(session.resolve("failed-" + generation), reason, StandardCharsets.UTF_8);
+                if (next.isAlive()) {
+                    next.destroy();
+                }
+                current.waitFor();
+                return next.isAlive() ? 1 : next.exitValue();
+            }
+
+            Files.writeString(session.resolve("release-" + generation), "ready", StandardCharsets.UTF_8);
+            if (!current.waitFor(30, TimeUnit.SECONDS)) {
+                current.destroy();
+                if (!current.waitFor(5, TimeUnit.SECONDS)) {
+                    current.destroyForcibly();
+                }
+            }
+            current = next;
+            generation = nextGeneration;
+        }
+    }
+
+    private Process start(LaunchOptions options, Path restartSession, int generation) throws IOException {
+        List<String> command = command(options);
+        int classPathIndex = command.indexOf("-cp");
+        command.add(classPathIndex, "-Daerogel.restartSession=" + restartSession);
+        command.add(classPathIndex + 1, "-Daerogel.restartGeneration=" + generation);
+        return new ProcessBuilder(command)
+            .directory(options.gameDirectory().toFile())
+            .inheritIO()
+            .start();
+    }
+
+    private List<String> command(LaunchOptions options) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable().toString());
         if (options.jvmArguments().stream().noneMatch(argument -> argument.startsWith("--enable-native-access"))) {
@@ -43,11 +112,7 @@ public final class ServerProcessLauncher {
         if (!options.gui() && options.serverArguments().stream().noneMatch(arg -> arg.equalsIgnoreCase("nogui"))) {
             command.add("nogui");
         }
-        return new ProcessBuilder(command)
-            .directory(options.gameDirectory().toFile())
-            .inheritIO()
-            .start()
-            .waitFor();
+        return command;
     }
 
     public List<String> diagnose(LaunchOptions options) throws IOException {
