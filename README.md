@@ -120,7 +120,7 @@ Minecraft 약관을 직접 읽고 동의한 경우에만 설정 명령에 명시
   --game-dir C:\minecraft\aerogel-server `
   --accept-minecraft-eula
 
-Copy-Item .\example-plugin\build\libs\aerogel-example-plugin-0.1.0.jar `
+Copy-Item .\example-plugin\build\libs\aerogel-example-plugin-26.2-1.jar `
   C:\minecraft\aerogel-server\plugins\
 
 .\aerogel-loader\build\install\aerogel\bin\aerogel.bat doctor `
@@ -147,3 +147,10 @@ Minecraft 인자는 `--` 뒤에 둡니다. 예: `run --game-dir ... -- --port 25
 
 이 프로젝트는 Mojang 또는 Microsoft의 공식 제품이 아니며, 승인이나 제휴를
 의미하지 않습니다.
+
+## 버전 규칙
+
+Aerogel은 `Minecraft버전-빌드번호` 형식을 사용합니다. 예를 들어 첫 26.2 릴리스는
+`26.2-1`, 다음 26.2 수정 릴리스는 `26.2-2`이며, 26.3 지원을 시작하면 `26.3-1`로
+빌드 번호를 다시 시작합니다. Git 태그는 같은 버전에 `v`를 붙인 `v26.2-1` 형식을
+권장합니다.
