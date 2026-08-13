@@ -12,6 +12,7 @@ Aerogel uses these runtime libraries through Gradle dependency resolution:
   This is the bytecode Mixin engine only. Aerogel does not depend on or embed Fabric Loader.
 - ASM, Copyright OW2, BSD 3-Clause License.
 - Gson, Copyright Google, Apache License 2.0.
+- JLine, Copyright the JLine project contributors, BSD 3-Clause License.
 - Error Prone annotations, Copyright Google, Apache License 2.0.
 
 The complete dependency archives and license metadata are included in a built

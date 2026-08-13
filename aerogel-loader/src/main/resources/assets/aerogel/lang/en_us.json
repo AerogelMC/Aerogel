@@ -1,0 +1,13 @@
+{
+  "commands.aerogel.plugins.list": "Plugins (%s): %s",
+  "commands.aerogel.plugins.none": "None",
+  "commands.aerogel.plugins.reload_all.starting": "Reloading all plugins...",
+  "commands.aerogel.plugins.reload_one.starting": "Reloading plugin %s...",
+  "commands.aerogel.plugins.reload_all.success": "Reloaded %s plugin(s) in %s seconds",
+  "commands.aerogel.plugins.reload_one.success": "Reloaded plugin %s in %s seconds",
+  "commands.aerogel.plugins.reload_partial": "Reloaded %s plugin(s) in %s seconds; failed: %s",
+  "commands.aerogel.plugins.reload_failed": "Could not reload plugin %s after %s seconds",
+  "commands.aerogel.plugins.unknown": "Unknown plugin: %s",
+  "commands.aerogel.plugins.mixin_notice": "Mixin changes for %s require a server restart",
+  "commands.aerogel.tps": "TPS (1m, 5m, 15m): %s, %s, %s | MSPT: %s"
+}

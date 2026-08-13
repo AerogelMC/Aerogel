@@ -10,7 +10,6 @@ public record LaunchOptions(
     Path gameDirectory,
     String minecraftVersion,
     Path serverJar,
-    boolean acceptsMinecraftEula,
     boolean gui,
     boolean offline,
     List<String> jvmArguments,
@@ -28,21 +27,23 @@ public record LaunchOptions(
         int index = 0;
         Command command = Command.RUN;
         if (args.length > 0 && !args[0].startsWith("-")) {
-            command = switch (args[0]) {
+            Command parsedCommand = switch (args[0]) {
                 case "setup" -> Command.SETUP;
                 case "run" -> Command.RUN;
                 case "doctor" -> Command.DOCTOR;
                 case "version" -> Command.VERSION;
                 case "help" -> Command.HELP;
-                default -> throw new IllegalArgumentException("Unknown command: " + args[0]);
+                default -> null;
             };
-            index++;
+            if (parsedCommand != null) {
+                command = parsedCommand;
+                index++;
+            }
         }
 
-        Path gameDirectory = Path.of("server");
+        Path gameDirectory = Path.of(".");
         String minecraftVersion = defaultMinecraftVersion;
         Path serverJar = null;
-        boolean acceptsMinecraftEula = false;
         boolean gui = false;
         boolean offline = false;
         List<String> jvmArguments = new ArrayList<>();
@@ -77,13 +78,10 @@ public record LaunchOptions(
                 case "--minecraft" -> minecraftVersion = requireValue(args, index++, argument);
                 case "--server-jar" -> serverJar = Path.of(requireValue(args, index++, argument));
                 case "--jvm-arg" -> jvmArguments.add(requireValue(args, index++, argument));
-                case "--accept-minecraft-eula" -> acceptsMinecraftEula = true;
                 case "--gui" -> gui = true;
                 case "--offline" -> offline = true;
                 case "--help", "-h" -> command = Command.HELP;
-                default -> throw new IllegalArgumentException(
-                    "Unknown option: " + argument + ". Put Minecraft server arguments after --."
-                );
+                default -> serverArguments.add(argument);
             }
         }
 
@@ -98,7 +96,6 @@ public record LaunchOptions(
             gameDirectory,
             minecraftVersion,
             serverJar,
-            acceptsMinecraftEula,
             gui,
             offline,
             List.copyOf(jvmArguments),

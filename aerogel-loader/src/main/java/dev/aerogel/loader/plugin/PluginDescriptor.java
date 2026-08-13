@@ -45,9 +45,6 @@ public record PluginDescriptor(
         String minecraft = json.has("minecraft") ? json.get("minecraft").getAsString() : ">=26.2";
         List<String> entrypoints = strings(json.get("entrypoints"), "entrypoints", jar);
         List<String> mixins = strings(json.get("mixins"), "mixins", jar);
-        if (entrypoints.isEmpty() && mixins.isEmpty()) {
-            throw new IOException("Plugin " + id + " has no entrypoints or mixin configurations");
-        }
         Map<String, String> dependencies = new LinkedHashMap<>();
         if (json.has("depends")) {
             JsonObject depends = json.getAsJsonObject("depends");

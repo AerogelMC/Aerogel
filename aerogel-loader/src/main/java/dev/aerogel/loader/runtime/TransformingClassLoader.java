@@ -106,6 +106,9 @@ public final class TransformingClassLoader extends URLClassLoader {
     public byte[] classBytes(String name, boolean runTransformers) throws IOException, ClassNotFoundException {
         URL resource = findResource(name.replace('.', '/') + ".class");
         if (resource == null) {
+            resource = getParent().getResource(name.replace('.', '/') + ".class");
+        }
+        if (resource == null) {
             throw new ClassNotFoundException(name);
         }
         byte[] bytes;

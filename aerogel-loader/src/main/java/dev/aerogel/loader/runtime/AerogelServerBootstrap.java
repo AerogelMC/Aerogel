@@ -1,6 +1,7 @@
 package dev.aerogel.loader.runtime;
 
 import dev.aerogel.loader.BuildInfo;
+import dev.aerogel.loader.event.AerogelEvents;
 import dev.aerogel.loader.install.ServerBundle;
 import dev.aerogel.loader.mixin.MixinBootstrapper;
 import dev.aerogel.loader.plugin.PluginDescriptor;
@@ -24,7 +25,6 @@ public final class AerogelServerBootstrap {
         Path serverJar = Path.of(requiredProperty("aerogel.serverJar")).toAbsolutePath().normalize();
         String minecraftVersion = requiredProperty("aerogel.minecraftVersion");
         BuildInfo build = BuildInfo.current();
-
         System.out.printf("[Aerogel] %s | Minecraft %s | Mixin %s%n",
             build.version(), minecraftVersion, build.mixinVersion());
         String bundleKey = Hashing.sha1(serverJar).substring(0, 16);
@@ -35,11 +35,6 @@ public final class AerogelServerBootstrap {
         List<PluginDescriptor> plugins = new PluginDiscovery().discover(
             serverDirectory.resolve("plugins"), minecraftVersion
         );
-        for (PluginDescriptor plugin : plugins) {
-            System.out.printf("[Aerogel] Plugin %s %s (%s)%n",
-                plugin.id(), plugin.version(), plugin.jar().getFileName());
-        }
-
         List<URL> urls = new ArrayList<>();
         for (Path artifact : bundle.classPath()) {
             urls.add(artifact.toUri().toURL());
@@ -53,8 +48,15 @@ public final class AerogelServerBootstrap {
         TransformingClassLoader target = new TransformingClassLoader(
             urls.toArray(URL[]::new), AerogelServerBootstrap.class.getClassLoader());
         Thread.currentThread().setContextClassLoader(target);
+        for (PluginDescriptor plugin : plugins) {
+            System.out.printf("[Aerogel] Plugin %s %s (%s)%n",
+                plugin.id(), plugin.version(), plugin.jar().getFileName());
+        }
         MixinBootstrapper.initialize(target, plugins);
-        new PluginManager(serverDirectory, target, plugins).loadEntrypoints();
+        PluginManager pluginManager = new PluginManager(serverDirectory, target, plugins);
+        AerogelEvents.install(pluginManager.eventRegistry());
+        pluginManager.loadEntrypoints();
+        AerogelRuntime.install(pluginManager);
         invokeMain(target, bundle.mainClass(), args);
     }
 

@@ -23,6 +23,8 @@ public final class MixinBootstrapper {
         MixinBootstrap.init();
 
         Set<String> configurations = new HashSet<>();
+        configurations.add("aerogel-core.mixins.json");
+        Mixins.addConfiguration("aerogel-core.mixins.json");
         for (PluginDescriptor plugin : plugins) {
             for (String configuration : plugin.mixins()) {
                 if (!configurations.add(configuration)) {

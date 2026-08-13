@@ -38,3 +38,22 @@ tasks.register<Copy>("collectExamplePlugin") {
     from(project(":example-plugin").tasks.named("jar"))
     into(layout.buildDirectory.dir("example"))
 }
+
+val publishAerogelGradleRepository by tasks.registering {
+    group = "distribution"
+    description = "Publishes the Aerogel API and Gradle plugin marker to a local Maven repository."
+    dependsOn(":aerogel-api:publishMavenJavaPublicationToAerogelBuildRepository")
+    dependsOn(":aerogel-gradle-plugin:publishAllPublicationsToAerogelBuildRepository")
+}
+
+tasks.register<Zip>("aerogelGradleRepositoryZip") {
+    group = "distribution"
+    description = "Packages a directly usable Maven repository for Aerogel plugin development."
+    dependsOn(publishAerogelGradleRepository)
+    archiveFileName.set("aerogel-gradle-plugin-${project.version}.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    from(layout.buildDirectory.dir("aerogel-maven"))
+    from("docs/GRADLE_PLUGIN.md") {
+        rename { "README.md" }
+    }
+}

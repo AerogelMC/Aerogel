@@ -44,29 +44,34 @@ public final class AerogelMain {
             }
             case SETUP -> setup(options);
             case DOCTOR -> doctor(build, options);
-            case RUN -> new ServerProcessLauncher(build).launch(options);
+            case RUN -> run(build, options);
         };
     }
 
-    private static int setup(LaunchOptions options) throws IOException, InterruptedException {
-        if (!options.acceptsMinecraftEula()) {
-            System.err.println("Aerogel does not accept Mojang/Minecraft terms for you.");
-            System.err.println("Read https://aka.ms/MinecraftEULA and https://www.minecraft.net/usage-guidelines");
-            System.err.println("Then rerun with --accept-minecraft-eula if you agree.");
-            return 2;
+    private static int run(BuildInfo build, LaunchOptions options) throws IOException, InterruptedException {
+        if (!Files.isRegularFile(options.serverJar())) {
+            int setupStatus = setup(options);
+            if (setupStatus != 0) {
+                return setupStatus;
+            }
         }
+        return new ServerProcessLauncher(build).launch(options);
+    }
+
+    private static int setup(LaunchOptions options) throws IOException, InterruptedException {
         Files.createDirectories(options.gameDirectory());
         MinecraftInstaller installer = new MinecraftInstaller();
         MinecraftInstaller.Installation result = installer.install(
             options.minecraftVersion(), options.serverJar(), options.gameDirectory()
         );
-        MinecraftInstaller.acceptEula(options.gameDirectory());
         Files.createDirectories(options.gameDirectory().resolve("plugins"));
         Files.createDirectories(options.gameDirectory().resolve("config"));
         System.out.printf("[Aerogel] Installed official Minecraft %s server (%d bytes).%n",
             result.version(), result.size());
         System.out.println("[Aerogel] SHA-1 verified: " + result.sha1());
         System.out.println("[Aerogel] Server directory: " + options.gameDirectory());
+        System.out.println("[Aerogel] EULA acceptance is not automated. Read https://aka.ms/MinecraftEULA");
+        System.out.println("[Aerogel] On first launch, edit the generated eula.txt and set eula=true if you agree.");
         return 0;
     }
 
@@ -84,13 +89,13 @@ public final class AerogelMain {
             Aerogel - Minecraft 26.2+ dedicated-server Mixin loader
 
             Commands:
-              aerogel setup --accept-minecraft-eula [options]
+              aerogel setup [options]
               aerogel run [options] [-- Minecraft server arguments]
               aerogel doctor [options]
               aerogel version
 
             Options:
-              --game-dir <path>       Server directory (default: ./server)
+              --game-dir <path>       Server directory (default: current directory)
               --minecraft <version>   Release to install/run (default: 26.2)
               --server-jar <path>     Use a specific official server JAR
               --jvm-arg <argument>    Child JVM argument; repeatable, e.g. -Xmx4G
@@ -98,6 +103,8 @@ public final class AerogelMain {
               --offline               Reserved for offline verification workflows
               --                      Pass all remaining arguments to Minecraft
 
+            Run: java -Xms2G -Xmx4G -jar Aerogel-26.2-1.jar nogui
+            First launch creates eula.txt and stops. Read the EULA, then edit the file directly.
             Plugins go in <game-dir>/plugins and contain aerogel.plugin.json.
             """);
     }

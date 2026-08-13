@@ -18,4 +18,13 @@ class LaunchOptionsTest {
         assertEquals(java.util.List.of("--port", "25566"), options.serverArguments());
         assertTrue(options.serverJar().endsWith(java.nio.file.Path.of("runtime", "26.2", "server.jar")));
     }
+
+    @Test
+    void acceptsBareServerArguments() {
+        LaunchOptions options = LaunchOptions.parse(new String[] {"nogui", "--port", "25566"}, "26.2");
+
+        assertEquals(LaunchOptions.Command.RUN, options.command());
+        assertEquals(java.util.List.of("nogui", "--port", "25566"), options.serverArguments());
+        assertEquals(java.nio.file.Path.of(".").toAbsolutePath().normalize(), options.gameDirectory());
+    }
 }

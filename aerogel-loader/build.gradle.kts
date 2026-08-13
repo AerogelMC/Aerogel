@@ -8,6 +8,7 @@ evaluationDependsOn(":example-plugin")
 val mixinVersion: String by project
 val asmVersion: String by project
 val gsonVersion: String by project
+val jlineVersion: String by project
 val junitVersion: String by project
 
 dependencies {
@@ -17,7 +18,7 @@ dependencies {
     implementation("org.ow2.asm:asm-tree:$asmVersion")
     implementation("org.ow2.asm:asm-util:$asmVersion")
     implementation("com.google.code.gson:gson:$gsonVersion")
-
+    implementation("org.jline:jline:$jlineVersion")
     testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -51,6 +52,44 @@ tasks.jar {
         attributes["Implementation-Title"] = "Aerogel Loader"
         attributes["Implementation-Version"] = project.version
     }
+}
+
+val standaloneJar by tasks.registering(Jar::class) {
+    group = "distribution"
+    description = "Builds a standalone executable server JAR."
+    archiveBaseName.set("Aerogel")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    manifest {
+        attributes["Main-Class"] = application.mainClass.get()
+        attributes["Implementation-Title"] = "Aerogel Loader"
+        attributes["Implementation-Version"] = project.version
+    }
+
+    from(sourceSets.main.get().output)
+    dependsOn(configurations.runtimeClasspath)
+    from({
+        configurations.runtimeClasspath.get().map { artifact ->
+            if (artifact.isDirectory) artifact else zipTree(artifact)
+        }
+    })
+
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA", "META-INF/*.EC")
+
+    from(rootProject.file("LICENSE")) {
+        into("META-INF/licenses/aerogel")
+        rename { "LICENSE.txt" }
+    }
+    from(rootProject.file("THIRD_PARTY_NOTICES.md")) {
+        into("META-INF/licenses/aerogel")
+    }
+    from(rootProject.file("THIRD_PARTY_LICENSES")) {
+        into("META-INF/licenses/aerogel/third-party")
+    }
+}
+
+tasks.assemble {
+    dependsOn(standaloneJar)
 }
 
 distributions {

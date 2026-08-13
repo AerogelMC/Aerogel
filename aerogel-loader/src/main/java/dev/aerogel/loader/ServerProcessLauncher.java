@@ -24,6 +24,9 @@ public final class ServerProcessLauncher {
 
         List<String> command = new ArrayList<>();
         command.add(javaExecutable().toString());
+        if (options.jvmArguments().stream().noneMatch(argument -> argument.startsWith("--enable-native-access"))) {
+            command.add("--enable-native-access=ALL-UNNAMED");
+        }
         command.addAll(options.jvmArguments());
         command.add("-Daerogel.serverJar=" + options.serverJar());
         command.add("-Daerogel.minecraftVersion=" + options.minecraftVersion());
@@ -60,7 +63,7 @@ public final class ServerProcessLauncher {
         }
         if (!Files.isRegularFile(options.serverJar())) {
             throw new IOException("Minecraft server JAR not found: " + options.serverJar()
-                + System.lineSeparator() + "Run 'aerogel setup --accept-minecraft-eula' first.");
+                + System.lineSeparator() + "Run 'aerogel setup' first.");
         }
     }
 

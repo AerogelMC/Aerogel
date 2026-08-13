@@ -10,6 +10,7 @@ import dev.aerogel.loader.util.Hashing;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.Reader;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,6 +21,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.Locale;
 
@@ -44,6 +46,7 @@ public final class MinecraftInstaller {
 
     public Installation install(String version, Path serverJar, Path gameDirectory) throws IOException, InterruptedException {
         requireSupportedVersion(version);
+        System.out.printf("[Aerogel] Checking official Minecraft metadata for %s...%n", version);
         JsonObject manifest = getJson(VERSION_MANIFEST);
         JsonObject selected = findVersion(manifest.getAsJsonArray("versions"), version);
         URI metadataUri = requireOfficialUri(selected.get("url").getAsString());
@@ -57,7 +60,7 @@ public final class MinecraftInstaller {
         Path temporary = Files.createTempFile(serverJar.getParent(), "server-", ".download");
         boolean complete = false;
         try {
-            download(serverUri, temporary);
+            download(serverUri, temporary, expectedSize);
             long actualSize = Files.size(temporary);
             String actualSha1 = Hashing.sha1(temporary);
             if (actualSize != expectedSize || !actualSha1.equals(expectedSha1)) {
@@ -84,20 +87,6 @@ public final class MinecraftInstaller {
         Files.createDirectories(receiptPath.getParent());
         Files.writeString(receiptPath, gson.toJson(receipt) + System.lineSeparator(), StandardCharsets.UTF_8);
         return new Installation(version, serverJar, serverUri, expectedSha1, expectedSize);
-    }
-
-    public static void acceptEula(Path gameDirectory) throws IOException {
-        Path eula = gameDirectory.resolve("eula.txt");
-        if (Files.exists(eula)) {
-            String current = Files.readString(eula, StandardCharsets.UTF_8);
-            if (current.lines().anyMatch(line -> line.strip().equalsIgnoreCase("eula=true"))) {
-                return;
-            }
-        }
-        String content = "# Accepted explicitly through Aerogel --accept-minecraft-eula" + System.lineSeparator()
-            + "# https://aka.ms/MinecraftEULA" + System.lineSeparator()
-            + "eula=true" + System.lineSeparator();
-        Files.writeString(eula, content, StandardCharsets.UTF_8);
     }
 
     public static void requireSupportedVersion(String version) {
@@ -129,15 +118,26 @@ public final class MinecraftInstaller {
         }
     }
 
-    private void download(URI uri, Path destination) throws IOException, InterruptedException {
+    private void download(URI uri, Path destination, long expectedSize) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofMinutes(5))
             .header("User-Agent", "Aerogel-Loader/0.1")
             .GET()
             .build();
-        HttpResponse<Path> response = httpClient.send(request, HttpResponse.BodyHandlers.ofFile(destination));
+        HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
+            response.body().close();
             throw new IOException("Official server download failed with HTTP " + response.statusCode() + ": " + uri);
+        }
+        DownloadProgress.Printer progress = new DownloadProgress.Printer(System.out, System.console() != null);
+        try (InputStream input = response.body();
+             OutputStream output = Files.newOutputStream(destination,
+                 StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            long transferred = DownloadProgress.copy(input, output, expectedSize, progress);
+            progress.finish(transferred, expectedSize);
+        } catch (IOException | RuntimeException exception) {
+            progress.abort();
+            throw exception;
         }
     }
 

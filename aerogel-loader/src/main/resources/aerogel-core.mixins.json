@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.aerogel.loader.mixin.core",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "MinecraftServerBrandMixin",
+    "MinecraftServerTickMixin",
+    "MinecraftServerSaveMixin",
+    "CommandsMixin",
+    "CommandsExecutionMixin",
+    "PlayerListMixin",
+    "ServerGamePacketListenerMixin",
+    "ServerPlayerMixin",
+    "ServerPlayerGameModeMixin",
+    "ServerLevelMixin",
+    "LivingEntityMixin",
+    "EntityMixin",
+    "ItemEntityMixin",
+    "BlockItemMixin",
+    "DedicatedServerMixin",
+    "DedicatedServerConsoleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "commands.aerogel.plugins.list": "プラグイン (%s): %s",
+  "commands.aerogel.plugins.none": "なし",
+  "commands.aerogel.plugins.reload_all.starting": "すべてのプラグインを再読み込みしています...",
+  "commands.aerogel.plugins.reload_one.starting": "プラグイン %s を再読み込みしています...",
+  "commands.aerogel.plugins.reload_all.success": "%s 個のプラグインを %s 秒で再読み込みしました",
+  "commands.aerogel.plugins.reload_one.success": "プラグイン %s を %s 秒で再読み込みしました",
+  "commands.aerogel.plugins.reload_partial": "%s 個を %s 秒で再読み込みしました。失敗: %s",
+  "commands.aerogel.plugins.reload_failed": "プラグイン %s の再読み込みに %s 秒かかりましたが失敗しました",
+  "commands.aerogel.plugins.unknown": "不明なプラグイン: %s",
+  "commands.aerogel.plugins.mixin_notice": "%s の Mixin 変更にはサーバーの再起動が必要です",
+  "commands.aerogel.tps": "TPS (1分、5分、15分): %s, %s, %s | MSPT: %s"
+}

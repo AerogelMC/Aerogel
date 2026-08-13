@@ -1,0 +1,13 @@
+{
+  "commands.aerogel.plugins.list": "Плагины (%s): %s",
+  "commands.aerogel.plugins.none": "Нет",
+  "commands.aerogel.plugins.reload_all.starting": "Перезагрузка всех плагинов...",
+  "commands.aerogel.plugins.reload_one.starting": "Перезагрузка плагина %s...",
+  "commands.aerogel.plugins.reload_all.success": "Перезагружено плагинов: %s за %s с",
+  "commands.aerogel.plugins.reload_one.success": "Плагин %s перезагружен за %s с",
+  "commands.aerogel.plugins.reload_partial": "Перезагружено плагинов: %s за %s с; ошибки: %s",
+  "commands.aerogel.plugins.reload_failed": "Не удалось перезагрузить плагин %s за %s с",
+  "commands.aerogel.plugins.unknown": "Неизвестный плагин: %s",
+  "commands.aerogel.plugins.mixin_notice": "Изменения Mixin для %s требуют перезапуска сервера",
+  "commands.aerogel.tps": "TPS (1 мин, 5 мин, 15 мин): %s, %s, %s | MSPT: %s"
+}

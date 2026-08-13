@@ -3,7 +3,8 @@ build/
 **/build/
 .idea/
 *.iml
-run/
-server/
+/run/
+/server/
 *.log
+logs/
 hs_err_pid*.log

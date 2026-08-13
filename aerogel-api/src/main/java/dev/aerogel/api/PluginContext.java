@@ -1,5 +1,7 @@
 package dev.aerogel.api;
 
+import dev.aerogel.api.event.EventBus;
+
 import java.nio.file.Path;
 import java.util.logging.Logger;
 
@@ -14,4 +16,6 @@ public interface PluginContext {
     Path dataDirectory();
 
     Logger logger();
+
+    EventBus events();
 }
