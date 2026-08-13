@@ -1,20 +1,22 @@
 package dev.aerogel.api.event.entity;
 
 import dev.aerogel.api.event.CancellableEvent;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 
 /** Fired before a fresh entity is added to a ServerLevel. */
 public final class EntitySpawnEvent implements CancellableEvent {
-    private final Object levelHandle;
-    private final Object entityHandle;
+    private final ServerLevel level;
+    private final Entity entity;
     private boolean cancelled;
 
-    public EntitySpawnEvent(Object levelHandle, Object entityHandle) {
-        this.levelHandle = levelHandle;
-        this.entityHandle = entityHandle;
+    public EntitySpawnEvent(ServerLevel level, Entity entity) {
+        this.level = level;
+        this.entity = entity;
     }
 
-    @SuppressWarnings("unchecked") public <L> L level() { return (L) levelHandle; }
-    @SuppressWarnings("unchecked") public <E> E entity() { return (E) entityHandle; }
+    public ServerLevel level() { return level; }
+    public Entity entity() { return entity; }
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
 }

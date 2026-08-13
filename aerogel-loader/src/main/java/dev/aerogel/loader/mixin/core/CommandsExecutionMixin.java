@@ -16,7 +16,7 @@ abstract class CommandsExecutionMixin {
         cancellable = true
     )
     private void aerogel$beforeCommand(@Coerce Object source, String command, CallbackInfo callbackInfo) {
-        CommandExecuteEvent event = new CommandExecuteEvent(source, command);
+        CommandExecuteEvent event = new CommandExecuteEvent(EventHooks.cast(source), command);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();

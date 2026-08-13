@@ -1,10 +1,8 @@
 package dev.aerogel.api.event.world;
 
 import dev.aerogel.api.event.AerogelEvent;
+import net.minecraft.server.level.ServerLevel;
 
 public interface WorldEvent extends AerogelEvent {
-    Object levelHandle();
-
-    @SuppressWarnings("unchecked")
-    default <L> L level() { return (L) levelHandle(); }
+    ServerLevel level();
 }

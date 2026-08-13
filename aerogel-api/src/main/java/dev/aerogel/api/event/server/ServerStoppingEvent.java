@@ -1,4 +1,6 @@
 package dev.aerogel.api.event.server;
 
-public record ServerStoppingEvent(Object serverHandle) implements ServerEvent {
+import net.minecraft.server.MinecraftServer;
+
+public record ServerStoppingEvent(MinecraftServer server) implements ServerEvent {
 }

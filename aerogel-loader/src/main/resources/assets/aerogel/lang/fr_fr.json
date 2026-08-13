@@ -3,11 +3,12 @@
   "commands.aerogel.plugins.none": "Aucun",
   "commands.aerogel.plugins.reload_all.starting": "Rechargement de tous les plugins...",
   "commands.aerogel.plugins.reload_one.starting": "Rechargement du plugin %s...",
-  "commands.aerogel.plugins.reload_all.success": "%s plugin(s) rechargé(s) en %s secondes",
+  "commands.aerogel.plugins.reload_all.success": "%s plugin(s) chargé(s) ou rechargé(s), %s déchargé(s) en %s secondes",
   "commands.aerogel.plugins.reload_one.success": "Plugin %s rechargé en %s secondes",
-  "commands.aerogel.plugins.reload_partial": "%s plugin(s) rechargé(s) en %s secondes ; échec : %s",
+  "commands.aerogel.plugins.reload_one.unloaded": "Plugin %s déchargé en %s secondes",
+  "commands.aerogel.plugins.reload_partial": "%s plugin(s) chargé(s) ou rechargé(s), %s déchargé(s) en %s secondes ; échec : %s",
   "commands.aerogel.plugins.reload_failed": "Impossible de recharger le plugin %s après %s secondes",
   "commands.aerogel.plugins.unknown": "Plugin inconnu : %s",
-  "commands.aerogel.plugins.mixin_notice": "Les modifications Mixin de %s nécessitent un redémarrage du serveur",
+  "commands.aerogel.plugins.mixin_notice": "Certaines modifications Mixin de %s peuvent ne pas être appliquées avant le redémarrage du serveur",
   "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min) : %s, %s, %s | MSPT : %s"
 }

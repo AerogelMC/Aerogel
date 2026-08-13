@@ -1,6 +1,8 @@
 package dev.aerogel.api.event.server;
 
+import net.minecraft.server.MinecraftServer;
+
 public record ServerSaveEndEvent(
-    Object serverHandle, boolean suppressLog, boolean flush, boolean force, boolean successful
+    MinecraftServer server, boolean suppressLog, boolean flush, boolean force, boolean successful
 ) implements ServerEvent {
 }

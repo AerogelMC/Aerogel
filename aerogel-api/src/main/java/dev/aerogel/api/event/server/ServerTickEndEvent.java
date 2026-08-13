@@ -1,4 +1,6 @@
 package dev.aerogel.api.event.server;
 
-public record ServerTickEndEvent(Object serverHandle) implements ServerEvent {
+import net.minecraft.server.MinecraftServer;
+
+public record ServerTickEndEvent(MinecraftServer server) implements ServerEvent {
 }

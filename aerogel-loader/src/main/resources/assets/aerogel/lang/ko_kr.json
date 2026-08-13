@@ -3,11 +3,12 @@
   "commands.aerogel.plugins.none": "없음",
   "commands.aerogel.plugins.reload_all.starting": "플러그인을 리로드하는 중...",
   "commands.aerogel.plugins.reload_one.starting": "플러그인 %s을(를) 리로드하는 중...",
-  "commands.aerogel.plugins.reload_all.success": "%s개의 플러그인을 %s초 만에 리로드했습니다",
+  "commands.aerogel.plugins.reload_all.success": "%s개의 플러그인을 로드 또는 리로드하고 %s개를 언로드했습니다. 소요 시간: %s초",
   "commands.aerogel.plugins.reload_one.success": "플러그인 %s을(를) %s초 만에 리로드했습니다",
-  "commands.aerogel.plugins.reload_partial": "%s개의 플러그인을 %s초 만에 리로드했습니다. 실패: %s",
+  "commands.aerogel.plugins.reload_one.unloaded": "플러그인 %s을(를) %s초 만에 언로드했습니다",
+  "commands.aerogel.plugins.reload_partial": "%s개의 플러그인을 로드 또는 리로드하고 %s개를 언로드했습니다. 소요 시간: %s초, 실패: %s",
   "commands.aerogel.plugins.reload_failed": "플러그인 %s을(를) %s초 동안 리로드했지만 실패했습니다",
   "commands.aerogel.plugins.unknown": "알 수 없는 플러그인: %s",
-  "commands.aerogel.plugins.mixin_notice": "%s의 Mixin 변경 사항은 서버를 재시작해야 적용됩니다",
+  "commands.aerogel.plugins.mixin_notice": "%s의 일부 Mixin 변경 사항은 서버를 재시작하기 전까지 반영되지 않을 수 있습니다",
   "commands.aerogel.tps": "TPS (1분, 5분, 15분): %s, %s, %s | MSPT: %s"
 }

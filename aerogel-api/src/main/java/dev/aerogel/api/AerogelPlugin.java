@@ -3,7 +3,7 @@ package dev.aerogel.api;
 /** Main entry point implemented by an Aerogel server plugin. */
 @FunctionalInterface
 public interface AerogelPlugin {
-    /** Called before Minecraft's dedicated-server main method is invoked. */
+    /** Called after Minecraft bootstrap and before the dedicated server finishes starting. */
     void onLoad(PluginContext context) throws Exception;
 
     /** Called before this plugin's lifecycle is reloaded or the loader releases it. */
@@ -11,8 +11,9 @@ public interface AerogelPlugin {
     }
 
     /**
-     * Reloads runtime state. Mixin bytecode and plugin classes remain loaded until a server restart.
-     * Plugins with listeners or other registrations should undo them in {@link #onUnload(PluginContext)}.
+     * Convenience lifecycle hook for plugin-managed state. Aerogel's reload command creates a new
+     * plugin class loader instead of calling this method on the old instance. Mixin hot swap is
+     * best-effort and some bytecode changes can still require a server restart.
      */
     default void onReload(PluginContext context) throws Exception {
         onUnload(context);

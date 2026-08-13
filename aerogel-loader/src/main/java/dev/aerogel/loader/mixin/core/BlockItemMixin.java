@@ -13,7 +13,7 @@ abstract class BlockItemMixin {
     @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)"
         + "Lnet/minecraft/world/InteractionResult;", at = @At("HEAD"), cancellable = true)
     private void aerogel$place(@Coerce Object context, CallbackInfoReturnable<Object> callbackInfo) {
-        BlockPlaceEvent event = new BlockPlaceEvent(this, context);
+        BlockPlaceEvent event = new BlockPlaceEvent(EventHooks.cast(this), EventHooks.cast(context));
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(EventHooks.staticField(

@@ -1,23 +1,25 @@
 package dev.aerogel.api.event.block;
 
 import dev.aerogel.api.event.CancellableEvent;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 
-/** Fired immediately before a player attempts to destroy a block. */
-public final class BlockBreakEvent implements CancellableEvent {
-    private final Object playerHandle;
-    private final Object levelHandle;
-    private final Object positionHandle;
+/** Fired after vanilla approves destruction and immediately before it removes the block. */
+public final class BlockBreakEvent extends PlayerBlockEvent implements CancellableEvent {
     private boolean cancelled;
 
-    public BlockBreakEvent(Object playerHandle, Object levelHandle, Object positionHandle) {
-        this.playerHandle = playerHandle;
-        this.levelHandle = levelHandle;
-        this.positionHandle = positionHandle;
+    public BlockBreakEvent(ServerPlayer player, ServerLevel level, BlockPos position) {
+        this(player, level, position, level.getBlockState(position));
     }
 
-    @SuppressWarnings("unchecked") public <P> P player() { return (P) playerHandle; }
-    @SuppressWarnings("unchecked") public <L> L level() { return (L) levelHandle; }
-    @SuppressWarnings("unchecked") public <P> P position() { return (P) positionHandle; }
+    public BlockBreakEvent(
+        ServerPlayer player, ServerLevel level, BlockPos position, BlockState state
+    ) {
+        super(player, level, position, state);
+    }
+
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
 }

@@ -13,7 +13,8 @@ abstract class ItemEntityMixin {
     @Inject(method = "playerTouch(Lnet/minecraft/world/entity/player/Player;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$pickup(@Coerce Object player, CallbackInfo callbackInfo) {
-        PlayerPickupItemEvent event = new PlayerPickupItemEvent(player, this);
+        PlayerPickupItemEvent event = new PlayerPickupItemEvent(
+            EventHooks.cast(player), EventHooks.cast(this));
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();

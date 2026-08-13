@@ -1,4 +1,6 @@
 package dev.aerogel.api.event.world;
 
-public record WorldLoadEvent(Object levelHandle) implements WorldEvent {
+import net.minecraft.server.level.ServerLevel;
+
+public record WorldLoadEvent(ServerLevel level) implements WorldEvent {
 }

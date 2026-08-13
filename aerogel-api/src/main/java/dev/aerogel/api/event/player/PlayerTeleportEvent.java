@@ -1,11 +1,13 @@
 package dev.aerogel.api.event.player;
 
 import dev.aerogel.api.event.CancellableEvent;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 /** Fired before the common server-side player teleport operation. */
 public final class PlayerTeleportEvent implements PlayerEvent, CancellableEvent {
-    private final Object playerHandle;
-    private final Object destinationLevelHandle;
+    private final ServerPlayer player;
+    private final ServerLevel destinationLevel;
     private final double x;
     private final double y;
     private final double z;
@@ -14,11 +16,11 @@ public final class PlayerTeleportEvent implements PlayerEvent, CancellableEvent 
     private boolean cancelled;
 
     public PlayerTeleportEvent(
-        Object playerHandle, Object destinationLevelHandle,
+        ServerPlayer player, ServerLevel destinationLevel,
         double x, double y, double z, float yaw, float pitch
     ) {
-        this.playerHandle = playerHandle;
-        this.destinationLevelHandle = destinationLevelHandle;
+        this.player = player;
+        this.destinationLevel = destinationLevel;
         this.x = x;
         this.y = y;
         this.z = z;
@@ -26,8 +28,8 @@ public final class PlayerTeleportEvent implements PlayerEvent, CancellableEvent 
         this.pitch = pitch;
     }
 
-    @Override public Object playerHandle() { return playerHandle; }
-    @SuppressWarnings("unchecked") public <L> L destinationLevel() { return (L) destinationLevelHandle; }
+    @Override public ServerPlayer player() { return player; }
+    public ServerLevel destinationLevel() { return destinationLevel; }
     public double x() { return x; }
     public double y() { return y; }
     public double z() { return z; }

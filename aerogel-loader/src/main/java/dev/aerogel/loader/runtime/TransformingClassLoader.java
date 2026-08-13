@@ -20,9 +20,18 @@ public final class TransformingClassLoader extends URLClassLoader {
 
     private static final String[] PARENT_FIRST = {
         "java.", "javax.", "jdk.", "sun.", "com.sun.",
-        "dev.aerogel.api.", "dev.aerogel.loader.",
         "org.spongepowered.asm.", "org.objectweb.asm."
     };
+    private static final Set<String> AEROGEL_PARENT_CLASSES = Set.of(
+        "dev.aerogel.loader.AerogelMain",
+        "dev.aerogel.loader.BuildInfo",
+        "dev.aerogel.loader.runtime.AerogelServerBootstrap",
+        "dev.aerogel.loader.runtime.TransformingClassLoader",
+        "dev.aerogel.loader.mixin.AerogelMixinService",
+        "dev.aerogel.loader.mixin.AerogelPropertyService",
+        "dev.aerogel.loader.mixin.MixinBootstrapper",
+        "dev.aerogel.loader.mixin.MixinRuntimeAccess"
+    );
 
     private final Set<String> definedClasses = ConcurrentHashMap.newKeySet();
     private final Set<String> invalidClasses = ConcurrentHashMap.newKeySet();
@@ -127,6 +136,11 @@ public final class TransformingClassLoader extends URLClassLoader {
     }
 
     private static boolean parentFirst(String name) {
+        if (AEROGEL_PARENT_CLASSES.contains(name)
+            || name.startsWith("dev.aerogel.loader.cli.")
+            || name.startsWith("dev.aerogel.loader.install.")) {
+            return true;
+        }
         for (String prefix : PARENT_FIRST) {
             if (name.startsWith(prefix)) {
                 return true;

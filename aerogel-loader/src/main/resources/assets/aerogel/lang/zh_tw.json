@@ -3,11 +3,12 @@
   "commands.aerogel.plugins.none": "無",
   "commands.aerogel.plugins.reload_all.starting": "正在重新載入所有插件...",
   "commands.aerogel.plugins.reload_one.starting": "正在重新載入插件 %s...",
-  "commands.aerogel.plugins.reload_all.success": "已重新載入 %s 個插件，耗時 %s 秒",
+  "commands.aerogel.plugins.reload_all.success": "已載入或重新載入 %s 個插件，卸載 %s 個，耗時 %s 秒",
   "commands.aerogel.plugins.reload_one.success": "已重新載入插件 %s，耗時 %s 秒",
-  "commands.aerogel.plugins.reload_partial": "已重新載入 %s 個插件，耗時 %s 秒；失敗：%s",
+  "commands.aerogel.plugins.reload_one.unloaded": "已卸載插件 %s，耗時 %s 秒",
+  "commands.aerogel.plugins.reload_partial": "已載入或重新載入 %s 個插件，卸載 %s 個，耗時 %s 秒；失敗：%s",
   "commands.aerogel.plugins.reload_failed": "重新載入插件 %s 失敗，耗時 %s 秒",
   "commands.aerogel.plugins.unknown": "未知插件：%s",
-  "commands.aerogel.plugins.mixin_notice": "%s 的 Mixin 變更需要重新啟動伺服器",
+  "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 變更可能要到伺服器重新啟動後才會生效",
   "commands.aerogel.tps": "TPS（1分鐘、5分鐘、15分鐘）：%s, %s, %s | MSPT：%s"
 }

@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import java.util.jar.JarFile;
 
 public final class ServerProcessLauncher {
     private final BuildInfo buildInfo;
@@ -28,6 +29,10 @@ public final class ServerProcessLauncher {
             command.add("--enable-native-access=ALL-UNNAMED");
         }
         command.addAll(options.jvmArguments());
+        Path agentJar = agentJar();
+        if (agentJar != null) {
+            command.add("-javaagent:" + agentJar);
+        }
         command.add("-Daerogel.serverJar=" + options.serverJar());
         command.add("-Daerogel.minecraftVersion=" + options.minecraftVersion());
         command.add("-Daerogel.version=" + buildInfo.version());
@@ -81,5 +86,20 @@ public final class ServerProcessLauncher {
             .map(Path::toString)
             .reduce((left, right) -> left + System.getProperty("path.separator") + right)
             .orElseThrow(() -> new IllegalStateException("Empty Java classpath"));
+    }
+
+    private static Path agentJar() {
+        try {
+            Path location = Path.of(AerogelMain.class.getProtectionDomain().getCodeSource().getLocation().toURI())
+                .toAbsolutePath().normalize();
+            if (!Files.isRegularFile(location)) {
+                return null;
+            }
+            try (JarFile jar = new JarFile(location.toFile(), false)) {
+                return jar.getJarEntry("org/spongepowered/tools/agent/MixinAgent.class") == null ? null : location;
+            }
+        } catch (java.net.URISyntaxException | IOException exception) {
+            return null;
+        }
     }
 }

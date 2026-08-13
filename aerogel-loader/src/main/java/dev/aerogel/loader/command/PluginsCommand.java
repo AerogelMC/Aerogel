@@ -125,28 +125,27 @@ public final class PluginsCommand {
         String elapsed = elapsedSeconds(started);
         if (result.successful()) {
             sendSuccess(context, loader, ROOT + "reload_all.success",
-                "Reloaded %s plugin(s) in %s seconds", result.reloaded().size(), elapsed);
+                "Loaded or reloaded %s plugin(s), unloaded %s in %s seconds",
+                result.reloaded().size(), result.unloaded().size(), elapsed);
         } else {
             sendFailure(context, loader, ROOT + "reload_partial",
-                "Reloaded %s plugin(s) in %s seconds; failed: %s", result.reloaded().size(), elapsed,
+                "Loaded or reloaded %s plugin(s), unloaded %s in %s seconds; failed: %s",
+                result.reloaded().size(), result.unloaded().size(), elapsed,
                 String.join(", ", result.failures().keySet()));
         }
         List<String> mixins = AerogelRuntime.pluginManager().mixinPluginIds();
         if (!mixins.isEmpty()) {
-            sendSuccess(context, loader, ROOT + "mixin_notice",
-                "Mixin changes for %s require a server restart", String.join(", ", mixins));
+            sendWarning(context, loader, ROOT + "mixin_notice",
+                "Some Mixin changes for %s may not be applied until the server restarts",
+                String.join(", ", mixins));
         }
-        return result.reloaded().size();
+        return result.reloaded().size() + result.unloaded().size();
     }
 
     private static int reloadOne(Object context, ClassLoader loader) throws ReflectiveOperationException {
         Class<?> stringArgument = Class.forName("com.mojang.brigadier.arguments.StringArgumentType", true, loader);
         String id = (String) stringArgument.getMethod("getString", context.getClass(), String.class)
             .invoke(null, context, "plugin");
-        if (!AerogelRuntime.pluginManager().pluginIds().contains(id)) {
-            sendFailure(context, loader, ROOT + "unknown", "Unknown plugin: %s", id);
-            return 0;
-        }
         sendSuccess(context, loader, ROOT + "reload_one.starting", "Reloading plugin %s...", id);
         long started = System.nanoTime();
         Optional<PluginManager.ReloadResult> optional = AerogelRuntime.pluginManager().reload(id);
@@ -161,11 +160,16 @@ public final class PluginsCommand {
                 "Could not reload plugin %s after %s seconds", id, elapsed);
             return 0;
         }
+        if (result.unloaded().contains(id)) {
+            sendSuccess(context, loader, ROOT + "reload_one.unloaded",
+                "Unloaded plugin %s in %s seconds", id, elapsed);
+            return 1;
+        }
         sendSuccess(context, loader, ROOT + "reload_one.success",
             "Reloaded plugin %s in %s seconds", id, elapsed);
         if (AerogelRuntime.pluginManager().hasMixins(id)) {
-            sendSuccess(context, loader, ROOT + "mixin_notice",
-                "Mixin changes for %s require a server restart", id);
+            sendWarning(context, loader, ROOT + "mixin_notice",
+                "Some Mixin changes for %s may not be applied until the server restarts", id);
         }
         return 1;
     }
@@ -231,7 +235,7 @@ public final class PluginsCommand {
             String remaining = ((String) builder.getClass().getMethod("getRemainingLowerCase").invoke(builder))
                 .toLowerCase(Locale.ROOT);
             Method suggest = builder.getClass().getMethod("suggest", String.class);
-            for (String id : AerogelRuntime.pluginManager().pluginIds()) {
+            for (String id : AerogelRuntime.pluginManager().reloadablePluginIds()) {
                 if (id.startsWith(remaining)) {
                     suggest.invoke(builder, id);
                 }
@@ -264,6 +268,18 @@ public final class PluginsCommand {
         Class<?> componentType = Class.forName("net.minecraft.network.chat.Component", true, loader);
         Object component = component(loader, source, key, fallback, args);
         source.getClass().getMethod("sendFailure", componentType).invoke(source, component);
+    }
+
+    private static void sendWarning(Object context, ClassLoader loader, String key, String fallback, Object... args)
+        throws ReflectiveOperationException {
+        Object source = context.getClass().getMethod("getSource").invoke(context);
+        Object component = component(loader, source, key, fallback, args);
+        Class<?> mutableType = Class.forName("net.minecraft.network.chat.MutableComponent", true, loader);
+        Class<?> formattingType = Class.forName("net.minecraft.ChatFormatting", true, loader);
+        Object yellow = formattingType.getField("YELLOW").get(null);
+        mutableType.getMethod("withStyle", formattingType).invoke(component, yellow);
+        source.getClass().getMethod("sendSuccess", Supplier.class, boolean.class)
+            .invoke(source, (Supplier<Object>) () -> component, false);
     }
 
     private static Object component(ClassLoader loader, Object source, String key, String fallback, Object[] args)

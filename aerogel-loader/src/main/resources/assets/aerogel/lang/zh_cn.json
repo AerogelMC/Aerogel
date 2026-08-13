@@ -3,11 +3,12 @@
   "commands.aerogel.plugins.none": "无",
   "commands.aerogel.plugins.reload_all.starting": "正在重载所有插件...",
   "commands.aerogel.plugins.reload_one.starting": "正在重载插件 %s...",
-  "commands.aerogel.plugins.reload_all.success": "已重载 %s 个插件，耗时 %s 秒",
+  "commands.aerogel.plugins.reload_all.success": "已加载或重载 %s 个插件，卸载 %s 个，耗时 %s 秒",
   "commands.aerogel.plugins.reload_one.success": "已重载插件 %s，耗时 %s 秒",
-  "commands.aerogel.plugins.reload_partial": "已重载 %s 个插件，耗时 %s 秒；失败：%s",
+  "commands.aerogel.plugins.reload_one.unloaded": "已卸载插件 %s，耗时 %s 秒",
+  "commands.aerogel.plugins.reload_partial": "已加载或重载 %s 个插件，卸载 %s 个，耗时 %s 秒；失败：%s",
   "commands.aerogel.plugins.reload_failed": "重载插件 %s 失败，耗时 %s 秒",
   "commands.aerogel.plugins.unknown": "未知插件：%s",
-  "commands.aerogel.plugins.mixin_notice": "%s 的 Mixin 更改需要重启服务器",
+  "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 更改可能要到服务器重启后才会生效",
   "commands.aerogel.tps": "TPS（1分钟、5分钟、15分钟）：%s, %s, %s | MSPT：%s"
 }

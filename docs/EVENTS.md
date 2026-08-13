@@ -57,17 +57,29 @@ Listeners run in this order:
 
 Registration order is retained inside the same priority. A `MONITOR` listener observes final state and cannot change cancellation state.
 
+## Cancellation contract
+
+Aerogel marks an event cancellable only when its hook can prevent the corresponding vanilla operation. Calling `cancel()` on these events stops that operation rather than merely marking the event:
+
+- All `PlayerPacketEvent` subtypes, including movement, input, attacks, interactions, item use, inventory input, book/sign edits, client settings, and creative-slot changes
+- Block intent and processing: `BlockBreakAttemptEvent`, `BlockMiningStartEvent`, `BlockMiningProgressEvent`, `BlockMiningStopEvent`, `BlockMiningAbortEvent`, `BlockBreakEvent`, `BlockPlaceEvent`, `BlockStateChangeEvent`, and `PistonMoveEvent`
+- Entity changes: `EntitySpawnEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityTargetEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, and `EntityBreedEvent`
+- Player and inventory operations: `PlayerChatEvent`, `PlayerGameModeChangeEvent`, `PlayerTeleportEvent`, `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`, `InventoryOpenEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, and `AnvilRenameEvent`
+- Server/world operations: `CommandExecuteEvent`, `ServerSaveStartEvent`, `ExplosionEvent`, `ChunkPreLoadEvent`, `RainChangeEvent`, and `ThunderChangeEvent`
+
+Result and lifecycle notifications remain observation-only. Examples include `BlockBrokenEvent`, join/quit, respawn, death, entity removal, inventory close, save completion, ticks, and world load/unload. At those hook points the vanilla result already exists, or cancelling it would leave server state inconsistent.
+
 ## Built-in events
 
 Minecraft 26.2 currently provides these concrete events:
 
 - Server: `ServerStartingEvent`, `ServerStartedEvent`, `ServerTickStartEvent`, `ServerTickEndEvent`, `ServerSaveStartEvent`, `ServerSaveEndEvent`, `ServerStoppingEvent`, `ServerStoppedEvent`
 - Commands: `CommandRegistrationEvent`, `CommandExecuteEvent`
-- Players: `PlayerJoinEvent`, `PlayerQuitEvent`, `PlayerRespawnEvent`, `PlayerDeathEvent`, `PlayerTeleportEvent`, `PlayerGameModeChangeEvent`, `PlayerChatEvent`, `PlayerActionEvent`, `PlayerUseItemEvent`, `PlayerUseItemOnBlockEvent`
-- Blocks: `BlockBreakEvent`, `BlockPlaceEvent`
-- Entities: `EntitySpawnEvent`, `EntityRemoveEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityDeathEvent`
-- Items and inventories: `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `InventoryOpenEvent`, `InventoryCloseEvent`, `InventoryClickEvent`
-- Worlds: `WorldLoadEvent`, `WorldUnloadEvent`, `ExplosionEvent`
+- Players: `PlayerJoinEvent`, `PlayerQuitEvent`, `PlayerRespawnEvent`, `PlayerDeathEvent`, `PlayerTeleportEvent`, `PlayerGameModeChangeEvent`, `PlayerChatEvent`, `PlayerActionEvent`, `PlayerMoveEvent`, `PlayerInputEvent`, `PlayerVehicleMoveEvent`, `PlayerInteractEntityEvent`, `PlayerAttackEntityEvent`, `PlayerSwingEvent`, `PlayerCommandActionEvent`, `PlayerAbilitiesChangeEvent`, `PlayerHotbarSlotChangeEvent`, `PlayerEditBookEvent`, `PlayerSignUpdateEvent`, `PlayerClientInformationEvent`, `PlayerUseItemEvent`, `PlayerUseItemOnBlockEvent`, `PlayerSwapHandItemsEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`
+- Blocks: `BlockBreakAttemptEvent`, `BlockMiningStartEvent`, `BlockMiningProgressEvent`, `BlockMiningStopEvent`, `BlockMiningAbortEvent`, `BlockBreakEvent`, `BlockBrokenEvent`, `BlockPlaceEvent`, `BlockStateChangeEvent`, `PistonMoveEvent`
+- Entities: `EntitySpawnEvent`, `EntityRemoveEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityDeathEvent`, `EntityTargetEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, `EntityBreedEvent`
+- Items and inventories: `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `InventoryOpenEvent`, `InventoryCloseEvent`, `InventoryClickEvent`, `CreativeInventorySlotEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, `AnvilRenameEvent`
+- Worlds: `WorldLoadEvent`, `WorldUnloadEvent`, `ChunkPreLoadEvent`, `ChunkLoadEvent`, `ChunkPreUnloadEvent`, `ChunkUnloadEvent`, `RainChangeEvent`, `ThunderChangeEvent`, `ExplosionEvent`
 
 Events expose the live vanilla object rather than an Aerogel wrapper. Assign the generic accessor to the corresponding Minecraft type:
 
@@ -78,4 +90,35 @@ ServerPlayer player = event.player();
 
 Events run on the thread of the underlying vanilla operation. Tick, server lifecycle, command registration, join, and quit events therefore run synchronously and must not perform blocking work.
 
-`PlayerChatEvent`, `PlayerActionEvent`, `PlayerUseItemEvent`, `PlayerUseItemOnBlockEvent`, and `InventoryClickEvent` run before their serverbound packet is handled. Cancelling one skips vanilla packet handling. The packet remains available through `event.packet()` so a plugin can inspect every field without waiting for an Aerogel wrapper API.
+`PlayerPacketEvent` subtypes run before their serverbound packet is handled. Cancelling one skips vanilla packet handling. The typed packet remains available through `event.packet()`, so a plugin can inspect every vanilla field without waiting for an Aerogel wrapper API. High-frequency events such as `PlayerMoveEvent` and `PlayerInputEvent` should use small, non-blocking listeners.
+
+`PlayerChatEvent` runs after signed-message validation and immediately before broadcast. Use
+`event.setMessage(Component)` to replace the displayed component while retaining the original
+`PlayerChatMessage` through `event.signedMessage()`. The same final component is sent to players
+and rendered, including its colors, in the server console.
+
+`InventoryClickEvent` also exposes `containerId()`, `stateId()`, `slot()`, `button()`, and the vanilla `ContainerInput` through `input()`.
+
+World and entity events are hooked at the vanilla operation they describe instead of being inferred from a generic packet. For example, `EntityTargetEvent` covers AI target changes, `ProjectileLaunchEvent` covers a projectile entering a level, and weather events cover natural rain and thunder transitions. Packet-backed inventory events retain their exact vanilla packet through `event.packet()` so plugins can use every Minecraft 26.2 field.
+
+The chunk lifecycle distinguishes requests from completed state changes:
+
+- `ChunkPreLoadEvent` runs before vanilla starts the first load or generation task for the holder. It exposes the `ChunkPos` and requested `ChunkStatus` because no `LevelChunk` exists yet. Cancelling it returns vanilla's unloaded-chunk result and prevents that attempt from reading or generating the chunk.
+- `ChunkLoadEvent` runs after the resulting full chunk starts ticking.
+- `ChunkPreUnloadEvent` runs immediately before the chunk is detached.
+- `ChunkUnloadEvent` runs after block entities and tick containers have been detached and is observation-only.
+
+Cancelling `ChunkPreLoadEvent` is a hard load denial. Ordinary asynchronous and ticket-driven callers receive vanilla's normal unloaded result and may retry later, causing the event to fire again. A plugin must not deny mandatory infrastructure chunks such as initial spawn unless it also controls the requesting operation: synchronous vanilla code that explicitly requires a chunk is allowed to surface a load-failure exception rather than receiving a fake or partially initialized chunk.
+
+### Block destruction lifecycle
+
+Block events deliberately separate client intent, accepted mining, and actual destruction:
+
+- `BlockBreakAttemptEvent` observes the raw start request before range, protection, game-mode, tool, or block restrictions are checked. It is cancellable.
+- `BlockMiningStartEvent` runs only after vanilla accepts non-creative mining. It is cancellable.
+- `BlockMiningProgressEvent` reports the server's accumulated progress and crack-animation stage. Cancelling it suppresses that progress calculation and clears the crack animation.
+- `BlockMiningStopEvent` and `BlockMiningAbortEvent` report the corresponding client actions; neither means that the block was destroyed. Cancelling one prevents vanilla from applying that stop or abort action.
+- `BlockBreakEvent` runs only after vanilla approves destruction, immediately before `playerWillDestroy` and block removal. Cancelling it leaves the block intact.
+- `BlockBrokenEvent` runs only after `removeBlock` succeeds and exposes the state that existed before removal.
+
+All of these events inherit `PlayerBlockEvent`, so one listener can observe the complete player-block lifecycle. A creative-mode sword, for example, can produce an attempt but cannot produce `BlockBreakEvent` or `BlockBrokenEvent` because vanilla rejects it before Aerogel's confirmed-break hook.

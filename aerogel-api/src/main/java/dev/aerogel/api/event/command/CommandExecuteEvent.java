@@ -1,21 +1,21 @@
 package dev.aerogel.api.event.command;
 
 import dev.aerogel.api.event.CancellableEvent;
+import net.minecraft.commands.CommandSourceStack;
 
 /** Fired before vanilla parses and executes a command. */
 public final class CommandExecuteEvent implements CancellableEvent {
-    private final Object sourceHandle;
+    private final CommandSourceStack source;
     private final String command;
     private boolean cancelled;
 
-    public CommandExecuteEvent(Object sourceHandle, String command) {
-        this.sourceHandle = sourceHandle;
+    public CommandExecuteEvent(CommandSourceStack source, String command) {
+        this.source = source;
         this.command = command;
     }
 
-    @SuppressWarnings("unchecked")
-    public <S> S source() {
-        return (S) sourceHandle;
+    public CommandSourceStack source() {
+        return source;
     }
 
     public String command() {

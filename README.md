@@ -18,7 +18,7 @@ Place plugin JARs in the `plugins` directory.
 
 ## Create a plugin
 
-The [`example-plugin`](example-plugin) project is the quickest starting point. Mixin setup and safety guidance are available in [docs/MIXINS.md](docs/MIXINS.md).
+The [`example-plugin`](example-plugin) project is the quickest starting point. See the [API guide](docs/API.md), [event guide](docs/EVENTS.md), and [Mixin guide](docs/MIXINS.md).
 
 ## Build from source
 

@@ -64,6 +64,7 @@ class PluginEventScannerTest {
     }
 
     private record TestContext(dev.aerogel.api.event.EventBus events) implements PluginContext {
+        @Override public dev.aerogel.api.AerogelServer server() { return null; }
         @Override public String pluginId() { return "listener"; }
         @Override public String pluginVersion() { return "1"; }
         @Override public Path serverDirectory() { return Path.of("."); }

@@ -5,9 +5,14 @@ import dev.aerogel.api.PluginContext;
 import dev.aerogel.api.event.EventBus;
 import dev.aerogel.loader.event.EventRegistry;
 import dev.aerogel.loader.event.PluginEventScanner;
+import dev.aerogel.loader.api.AerogelApiRuntime;
+import dev.aerogel.loader.api.PluginApiScope;
+import dev.aerogel.loader.mixin.MixinHotSwap;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -15,18 +20,24 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 public final class PluginManager {
+    private static final AtomicLong LOAD_GENERATION = new AtomicLong();
     private final Path serverDirectory;
     private final ClassLoader classLoader;
-    private final List<PluginDescriptor> plugins;
+    private final String minecraftVersion;
+    private final PluginDiscovery discovery = new PluginDiscovery();
+    private List<PluginDescriptor> plugins;
     private final EventRegistry eventRegistry;
+    private final AerogelApiRuntime apiRuntime;
     private final PluginEventScanner eventScanner = new PluginEventScanner();
     private final Map<String, LoadedPlugin> loaded = new LinkedHashMap<>();
 
     public PluginManager(Path serverDirectory, ClassLoader classLoader, List<PluginDescriptor> plugins) {
-        this(serverDirectory, classLoader, plugins, new EventRegistry());
+        this(serverDirectory, classLoader, plugins, new EventRegistry(), new AerogelApiRuntime());
     }
 
     public PluginManager(
@@ -35,10 +46,34 @@ public final class PluginManager {
         List<PluginDescriptor> plugins,
         EventRegistry eventRegistry
     ) {
+        this(serverDirectory, classLoader, plugins, eventRegistry, new AerogelApiRuntime());
+    }
+
+    public PluginManager(
+        Path serverDirectory,
+        ClassLoader classLoader,
+        List<PluginDescriptor> plugins,
+        EventRegistry eventRegistry,
+        AerogelApiRuntime apiRuntime
+    ) {
+        this(serverDirectory, classLoader, plugins, eventRegistry, apiRuntime,
+            System.getProperty("aerogel.minecraftVersion", "26.2"));
+    }
+
+    public PluginManager(
+        Path serverDirectory,
+        ClassLoader classLoader,
+        List<PluginDescriptor> plugins,
+        EventRegistry eventRegistry,
+        AerogelApiRuntime apiRuntime,
+        String minecraftVersion
+    ) {
         this.serverDirectory = serverDirectory;
         this.classLoader = classLoader;
-        this.plugins = plugins;
+        this.plugins = List.copyOf(plugins);
         this.eventRegistry = eventRegistry;
+        this.apiRuntime = apiRuntime;
+        this.minecraftVersion = minecraftVersion;
     }
 
     public synchronized void loadEntrypoints() throws Exception {
@@ -54,35 +89,120 @@ public final class PluginManager {
         return eventRegistry;
     }
 
+    public AerogelApiRuntime apiRuntime() {
+        return apiRuntime;
+    }
+
     public synchronized ReloadResult reloadAll() {
+        List<PluginDescriptor> discovered;
+        try {
+            discovered = discoverPlugins();
+        } catch (IOException exception) {
+            return new ReloadResult(List.of(), List.of(), Map.of("scan", message(exception)));
+        }
+        plugins = discovered;
+        Map<String, PluginDescriptor> byId = descriptorsById(discovered);
         List<String> reloaded = new ArrayList<>();
+        List<String> unloaded = new ArrayList<>();
         Map<String, String> failures = new LinkedHashMap<>();
-        for (String pluginId : List.copyOf(loaded.keySet())) {
-            LoadedPlugin plugin = loaded.get(pluginId);
-            String failure = reload(plugin);
+
+        List<LoadedPlugin> reverse = new ArrayList<>(loaded.values());
+        Collections.reverse(reverse);
+        for (LoadedPlugin plugin : reverse) {
+            String pluginId = plugin.descriptor().id();
+            if (byId.containsKey(pluginId)) continue;
+            unload(plugin);
+            loaded.remove(pluginId);
+            unloaded.add(pluginId);
+        }
+
+        for (PluginDescriptor descriptor : discovered) {
+            LoadedPlugin current = loaded.get(descriptor.id());
+            String missingDependency = missingDependency(descriptor);
+            if (missingDependency != null) {
+                if (current != null) {
+                    unload(current);
+                    loaded.remove(descriptor.id());
+                    unloaded.add(descriptor.id());
+                }
+                failures.put(descriptor.id(), "Dependency is not loaded: " + missingDependency);
+                continue;
+            }
+            String failure = current == null ? loadNew(descriptor) : reload(current, descriptor);
             if (failure == null) {
-                reloaded.add(pluginId);
+                reloaded.add(descriptor.id());
             } else {
-                failures.put(pluginId, failure);
+                failures.put(descriptor.id(), failure);
             }
         }
-        return new ReloadResult(reloaded, failures);
+        return new ReloadResult(reloaded, unloaded, failures);
     }
 
     public synchronized Optional<ReloadResult> reload(String pluginId) {
         String normalized = pluginId.toLowerCase(Locale.ROOT);
-        LoadedPlugin plugin = loaded.get(normalized);
-        if (plugin == null) {
+        List<PluginDescriptor> discovered;
+        try {
+            discovered = discoverPlugins();
+        } catch (IOException exception) {
+            return Optional.of(new ReloadResult(
+                List.of(), List.of(), Map.of(normalized, message(exception))));
+        }
+        plugins = discovered;
+        Map<String, PluginDescriptor> byId = descriptorsById(discovered);
+        PluginDescriptor descriptor = byId.get(normalized);
+        LoadedPlugin current = loaded.get(normalized);
+        if (descriptor == null && current == null) {
             return Optional.empty();
         }
-        String failure = reload(plugin);
-        return Optional.of(failure == null
-            ? new ReloadResult(List.of(normalized), Map.of())
-            : new ReloadResult(List.of(), Map.of(normalized, failure)));
+        if (descriptor == null) {
+            unload(current);
+            loaded.remove(normalized);
+            return Optional.of(new ReloadResult(List.of(), List.of(normalized), Map.of()));
+        }
+
+        List<String> activated = new ArrayList<>();
+        Map<String, String> failures = new LinkedHashMap<>();
+        Set<String> required = dependencyClosure(descriptor, byId);
+        for (PluginDescriptor candidate : discovered) {
+            if (!required.contains(candidate.id())) continue;
+            LoadedPlugin loadedCandidate = loaded.get(candidate.id());
+            String failure;
+            if (candidate.id().equals(normalized) && loadedCandidate != null) {
+                failure = reload(loadedCandidate, candidate);
+            } else if (loadedCandidate == null) {
+                failure = loadNew(candidate);
+            } else {
+                continue;
+            }
+            if (failure == null) {
+                activated.add(candidate.id());
+            } else {
+                failures.put(candidate.id(), failure);
+                break;
+            }
+        }
+        return Optional.of(new ReloadResult(activated, List.of(), failures));
     }
 
     public synchronized List<String> pluginIds() {
         return List.copyOf(loaded.keySet());
+    }
+
+    public synchronized List<String> reloadablePluginIds() {
+        try {
+            return discoverPlugins().stream().map(PluginDescriptor::id).toList();
+        } catch (IOException ignored) {
+            return pluginIds();
+        }
+    }
+
+    public synchronized void shutdown() {
+        List<LoadedPlugin> reverse = new ArrayList<>(loaded.values());
+        Collections.reverse(reverse);
+        for (LoadedPlugin plugin : reverse) {
+            unload(plugin);
+        }
+        loaded.clear();
     }
 
     public synchronized List<PluginInfo> pluginInfos() {
@@ -103,45 +223,114 @@ public final class PluginManager {
             .toList();
     }
 
-    private String reload(LoadedPlugin plugin) {
-        plugin.events().close();
-        Logger logger = plugin.context().logger();
-        EventRegistry.OwnedEventBus events = eventRegistry.owner(plugin.descriptor().id(), logger);
-        PluginContext context = new Context(
-            plugin.descriptor().id(), plugin.descriptor().version(), serverDirectory,
-            plugin.context().dataDirectory(), logger, events
-        );
-        try {
-            Map<String, Object> instancesByClass = new LinkedHashMap<>();
-            for (AerogelPlugin instance : plugin.instances()) {
-                instance.onReload(context);
-                instancesByClass.put(instance.getClass().getName(), instance);
+    private String reload(LoadedPlugin plugin, PluginDescriptor descriptor) {
+        String pluginId = plugin.descriptor().id();
+        MixinHotSwap.Snapshot activeMixinState = plugin.mixinState();
+        if (!descriptor.mixins().isEmpty()) {
+            try {
+                activeMixinState = MixinHotSwap.reload(descriptor, plugin.mixinState());
+            } catch (Exception exception) {
+                String detail = exception.getMessage() == null
+                    ? exception.getClass().getSimpleName()
+                    : exception.getMessage();
+                plugin.context().logger().warning(
+                    "Mixin changes were not applied: " + detail + ". A server restart is required for those changes.");
             }
-            eventScanner.register(plugin.descriptor(), classLoader, context, events, instancesByClass);
-            loaded.put(plugin.descriptor().id(),
-                new LoadedPlugin(plugin.descriptor(), context, plugin.instances(), events));
+        }
+        unload(plugin);
+        loaded.remove(pluginId);
+        try {
+            loaded.put(pluginId, load(descriptor, activeMixinState));
             return null;
         } catch (Exception exception) {
-            events.close();
-            loaded.remove(plugin.descriptor().id());
-            logger.severe("Reload failed: " + exception.getMessage());
+            plugin.context().logger().severe("Reload failed: " + exception.getMessage());
             return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
         }
     }
 
+    private String loadNew(PluginDescriptor descriptor) {
+        String missingDependency = missingDependency(descriptor);
+        if (missingDependency != null) return "Dependency is not loaded: " + missingDependency;
+        try {
+            loaded.put(descriptor.id(), load(descriptor));
+            return null;
+        } catch (Exception exception) {
+            return message(exception);
+        }
+    }
+
+    private String missingDependency(PluginDescriptor descriptor) {
+        for (String dependency : descriptor.dependencies().keySet()) {
+            if (!loaded.containsKey(dependency)) return dependency;
+        }
+        return null;
+    }
+
+    private List<PluginDescriptor> discoverPlugins() throws IOException {
+        return discovery.discover(serverDirectory.resolve("plugins"), minecraftVersion);
+    }
+
+    private static Map<String, PluginDescriptor> descriptorsById(List<PluginDescriptor> descriptors) {
+        Map<String, PluginDescriptor> byId = new LinkedHashMap<>();
+        for (PluginDescriptor descriptor : descriptors) {
+            byId.put(descriptor.id(), descriptor);
+        }
+        return byId;
+    }
+
+    private static Set<String> dependencyClosure(
+        PluginDescriptor descriptor, Map<String, PluginDescriptor> descriptors
+    ) {
+        Set<String> result = new java.util.LinkedHashSet<>();
+        collectDependencies(descriptor, descriptors, result);
+        return result;
+    }
+
+    private static void collectDependencies(
+        PluginDescriptor descriptor, Map<String, PluginDescriptor> descriptors, Set<String> result
+    ) {
+        if (!result.add(descriptor.id())) return;
+        for (String dependency : descriptor.dependencies().keySet()) {
+            collectDependencies(descriptors.get(dependency), descriptors, result);
+        }
+    }
+
+    private static String message(Exception exception) {
+        return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+    }
+
     private LoadedPlugin load(PluginDescriptor plugin) throws Exception {
+        return load(plugin, MixinHotSwap.inspect(plugin));
+    }
+
+    private LoadedPlugin load(PluginDescriptor plugin, MixinHotSwap.Snapshot mixinState) throws Exception {
         Path dataDirectory = serverDirectory.resolve("plugins").resolve(plugin.id());
         Files.createDirectories(dataDirectory);
-        Logger logger = Logger.getLogger("Aerogel/" + plugin.id());
+        Logger logger = PluginLoggers.create(plugin.id());
         EventRegistry.OwnedEventBus events = eventRegistry.owner(plugin.id(), logger);
+        PluginApiScope api = apiRuntime.openScope(plugin.id(), logger);
+        Path stagedJar = null;
+        PluginClassLoader reloadableLoader = null;
+        ClassLoader pluginLoader = classLoader;
+        PluginDescriptor runtimeDescriptor = plugin;
+        stagedJar = stage(plugin);
+        List<PluginClassLoader> dependencyLoaders = plugin.dependencies().keySet().stream()
+            .map(loaded::get)
+            .filter(java.util.Objects::nonNull)
+            .map(LoadedPlugin::classLoader)
+            .toList();
+        reloadableLoader = new PluginClassLoader(
+            stagedJar.toUri().toURL(), classLoader, dependencyLoaders);
+        pluginLoader = reloadableLoader;
+        runtimeDescriptor = withJar(plugin, stagedJar);
         PluginContext context = new Context(
-            plugin.id(), plugin.version(), serverDirectory, dataDirectory, logger, events
+            plugin.id(), plugin.version(), serverDirectory, dataDirectory, logger, events, api
         );
         List<AerogelPlugin> instances = new ArrayList<>();
         Map<String, Object> instancesByClass = new LinkedHashMap<>();
         try {
             for (String entrypoint : plugin.entrypoints()) {
-                Class<?> type = Class.forName(entrypoint, true, classLoader);
+                Class<?> type = Class.forName(entrypoint, true, pluginLoader);
                 Object instance = type.getDeclaredConstructor().newInstance();
                 if (!(instance instanceof AerogelPlugin aerogelPlugin)) {
                     throw new IllegalStateException(entrypoint + " must implement " + AerogelPlugin.class.getName());
@@ -150,11 +339,15 @@ public final class PluginManager {
                 instances.add(aerogelPlugin);
                 instancesByClass.put(type.getName(), instance);
             }
-            eventScanner.register(plugin, classLoader, context, events, instancesByClass);
-            return new LoadedPlugin(plugin, context, List.copyOf(instances), events);
+            eventScanner.register(runtimeDescriptor, pluginLoader, context, events, instancesByClass);
+            return new LoadedPlugin(
+                plugin, context, List.copyOf(instances), events, api,
+                reloadableLoader, stagedJar, mixinState);
         } catch (Exception exception) {
             events.close();
+            api.close();
             unloadReverse(instances, context);
+            closeLoader(reloadableLoader, stagedJar, logger);
             throw exception;
         }
     }
@@ -162,6 +355,37 @@ public final class PluginManager {
     private static void unload(LoadedPlugin plugin) {
         plugin.events().close();
         unloadReverse(plugin.instances(), plugin.context());
+        plugin.api().close();
+        closeLoader(plugin.classLoader(), plugin.stagedJar(), plugin.context().logger());
+    }
+
+    private Path stage(PluginDescriptor plugin) throws java.io.IOException {
+        Path directory = serverDirectory.resolve(".aerogel").resolve("plugin-cache").resolve(plugin.id());
+        Files.createDirectories(directory);
+        Path staged = directory.resolve(plugin.id() + "-" + LOAD_GENERATION.incrementAndGet() + ".jar");
+        Files.copy(plugin.jar(), staged, StandardCopyOption.REPLACE_EXISTING);
+        return staged;
+    }
+
+    private static PluginDescriptor withJar(PluginDescriptor plugin, Path jar) {
+        return new PluginDescriptor(
+            jar, plugin.id(), plugin.version(), plugin.name(), plugin.minecraft(),
+            plugin.entrypoints(), plugin.mixins(), plugin.dependencies());
+    }
+
+    private static void closeLoader(PluginClassLoader loader, Path stagedJar, Logger logger) {
+        if (loader != null) {
+            try { loader.close(); }
+            catch (java.io.IOException exception) {
+                logger.warning("Could not close plugin class loader: " + exception.getMessage());
+            }
+        }
+        if (stagedJar != null) {
+            try { Files.deleteIfExists(stagedJar); }
+            catch (java.io.IOException exception) {
+                logger.fine("Could not remove staged plugin JAR yet: " + exception.getMessage());
+            }
+        }
     }
 
     private static void unloadReverse(List<AerogelPlugin> instances, PluginContext context) {
@@ -176,9 +400,10 @@ public final class PluginManager {
         }
     }
 
-    public record ReloadResult(List<String> reloaded, Map<String, String> failures) {
+    public record ReloadResult(List<String> reloaded, List<String> unloaded, Map<String, String> failures) {
         public ReloadResult {
             reloaded = List.copyOf(reloaded);
+            unloaded = List.copyOf(unloaded);
             failures = Map.copyOf(failures);
         }
 
@@ -194,7 +419,11 @@ public final class PluginManager {
         PluginDescriptor descriptor,
         PluginContext context,
         List<AerogelPlugin> instances,
-        EventRegistry.OwnedEventBus events
+        EventRegistry.OwnedEventBus events,
+        PluginApiScope api,
+        PluginClassLoader classLoader,
+        Path stagedJar,
+        MixinHotSwap.Snapshot mixinState
     ) {
     }
 
@@ -204,7 +433,8 @@ public final class PluginManager {
         Path serverDirectory,
         Path dataDirectory,
         Logger logger,
-        EventBus events
+        EventBus events,
+        dev.aerogel.api.AerogelServer server
     ) implements PluginContext {
     }
 }

@@ -3,11 +3,12 @@
   "commands.aerogel.plugins.none": "Nenhum",
   "commands.aerogel.plugins.reload_all.starting": "Recarregando todos os plugins...",
   "commands.aerogel.plugins.reload_one.starting": "Recarregando o plugin %s...",
-  "commands.aerogel.plugins.reload_all.success": "%s plugin(s) recarregado(s) em %s segundos",
+  "commands.aerogel.plugins.reload_all.success": "%s plugin(s) carregado(s) ou recarregado(s), %s descarregado(s) em %s segundos",
   "commands.aerogel.plugins.reload_one.success": "Plugin %s recarregado em %s segundos",
-  "commands.aerogel.plugins.reload_partial": "%s plugin(s) recarregado(s) em %s segundos; falhas: %s",
+  "commands.aerogel.plugins.reload_one.unloaded": "Plugin %s descarregado em %s segundos",
+  "commands.aerogel.plugins.reload_partial": "%s plugin(s) carregado(s) ou recarregado(s), %s descarregado(s) em %s segundos; falhas: %s",
   "commands.aerogel.plugins.reload_failed": "Não foi possível recarregar o plugin %s após %s segundos",
   "commands.aerogel.plugins.unknown": "Plugin desconhecido: %s",
-  "commands.aerogel.plugins.mixin_notice": "Alterações de Mixin em %s exigem reiniciar o servidor",
+  "commands.aerogel.plugins.mixin_notice": "Algumas alterações de Mixin em %s podem não ser aplicadas até o servidor ser reiniciado",
   "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s"
 }

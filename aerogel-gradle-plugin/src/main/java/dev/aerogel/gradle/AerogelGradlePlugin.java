@@ -4,7 +4,7 @@ import dev.aerogel.api.AerogelPlugin;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
-import org.gradle.api.file.ConfigurableFileCollection;
+import org.gradle.api.file.ConfigurableFileTree;
 import org.gradle.api.plugins.JavaPlugin;
 import org.gradle.api.plugins.JavaPluginExtension;
 import org.gradle.api.tasks.SourceSetContainer;
@@ -73,12 +73,13 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
         sourceSets.getByName("main").getResources().srcDir(metadata.flatMap(GenerateAerogelMetadata::getOutputDirectory));
         project.getTasks().named("processResources").configure(task -> task.dependsOn(metadata));
 
-        ConfigurableFileCollection minecraft = project.getObjects().fileCollection();
-        minecraft.from(setup.flatMap(SetupAerogelDevelopment::getOutputDirectory)
-            .map(directory -> directory.dir("classpath").getAsFileTree().matching(pattern ->
-                pattern.include("**/*.jar"))));
-        minecraft.builtBy(setup);
-        project.getDependencies().add("compileOnly", minecraft);
+        project.afterEvaluate(ignored -> {
+            ConfigurableFileTree minecraft = project.fileTree(
+                setup.get().getOutputDirectory().get().dir("classpath"));
+            minecraft.include("**/*.jar");
+            minecraft.builtBy(setup);
+            project.getDependencies().add("compileOnly", minecraft);
+        });
         project.getDependencies().add("compileOnly", project.files(apiLocation()));
         project.getDependencies().add("compileOnly", "net.fabricmc:sponge-mixin:" + MIXIN_VERSION);
         project.getDependencies().add("compileOnly",

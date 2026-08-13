@@ -4,6 +4,7 @@ import dev.aerogel.api.event.server.ServerTickEndEvent;
 import dev.aerogel.api.event.server.ServerTickStartEvent;
 import dev.aerogel.loader.command.TpsMonitor;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.runtime.AerogelRuntime;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -16,11 +17,12 @@ abstract class MinecraftServerTickMixin {
     @Inject(method = "tickServer", at = @At("HEAD"))
     private void aerogel$sampleTps(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
         TpsMonitor.tick(System.nanoTime());
-        EventHooks.post(new ServerTickStartEvent(this));
+        AerogelRuntime.tick(this);
+        EventHooks.post(new ServerTickStartEvent(EventHooks.cast(this)));
     }
 
     @Inject(method = "tickServer", at = @At("RETURN"))
     private void aerogel$finishTick(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
-        EventHooks.post(new ServerTickEndEvent(this));
+        EventHooks.post(new ServerTickEndEvent(EventHooks.cast(this)));
     }
 }

@@ -10,12 +10,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.minecraft.server.MinecraftServer")
 abstract class MinecraftServerSaveMixin {
-    @Inject(method = "saveAllChunks(ZZZ)Z", at = @At("HEAD"))
+    @Inject(method = "saveAllChunks(ZZZ)Z", at = @At("HEAD"), cancellable = true)
     private void aerogel$saveStarting(
         boolean suppressLog, boolean flush, boolean force,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        EventHooks.post(new ServerSaveStartEvent(this, suppressLog, flush, force));
+        ServerSaveStartEvent event = new ServerSaveStartEvent(
+            EventHooks.cast(this), suppressLog, flush, force);
+        EventHooks.post(event);
+        if (event.isCancelled()) callbackInfo.setReturnValue(false);
     }
 
     @Inject(method = "saveAllChunks(ZZZ)Z", at = @At("RETURN"))
@@ -24,6 +27,6 @@ abstract class MinecraftServerSaveMixin {
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
         EventHooks.post(new ServerSaveEndEvent(
-            this, suppressLog, flush, force, callbackInfo.getReturnValueZ()));
+            EventHooks.cast(this), suppressLog, flush, force, callbackInfo.getReturnValueZ()));
     }
 }

@@ -23,7 +23,8 @@ abstract class PlayerListMixin {
         @Coerce Object cookie,
         CallbackInfo callbackInfo
     ) {
-        EventHooks.post(new PlayerJoinEvent(player, connection));
+        EventHooks.post(new PlayerJoinEvent(
+            EventHooks.cast(player), EventHooks.cast(connection)));
     }
 
     @Inject(
@@ -31,7 +32,7 @@ abstract class PlayerListMixin {
         at = @At("HEAD")
     )
     private void aerogel$playerQuit(@Coerce Object player, CallbackInfo callbackInfo) {
-        EventHooks.post(new PlayerQuitEvent(player));
+        EventHooks.post(new PlayerQuitEvent(EventHooks.cast(player)));
     }
 
     @Inject(
@@ -47,6 +48,6 @@ abstract class PlayerListMixin {
         org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Object> callbackInfo
     ) {
         EventHooks.post(new PlayerRespawnEvent(
-            previousPlayer, callbackInfo.getReturnValue(), keepEverything));
+            EventHooks.cast(previousPlayer), EventHooks.cast(callbackInfo.getReturnValue()), keepEverything));
     }
 }

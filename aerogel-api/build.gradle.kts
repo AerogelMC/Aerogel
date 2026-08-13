@@ -3,6 +3,16 @@ plugins {
     `maven-publish`
 }
 
+val minecraftStubs by sourceSets.creating
+
+dependencies {
+    compileOnly(minecraftStubs.output)
+}
+
+tasks.compileJava {
+    dependsOn(minecraftStubs.classesTaskName)
+}
+
 tasks.jar {
     archiveBaseName.set("aerogel-api")
 }

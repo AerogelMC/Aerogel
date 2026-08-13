@@ -6,22 +6,33 @@ plugins {
 evaluationDependsOn(":example-plugin")
 
 val mixinVersion: String by project
+val minecraftVersion: String by project
 val asmVersion: String by project
 val gsonVersion: String by project
 val jlineVersion: String by project
 val junitVersion: String by project
+val aerogelApiProject = project(":aerogel-api")
+val apiMinecraftStubs = aerogelApiProject.extensions
+    .getByType<SourceSetContainer>()["minecraftStubs"]
 
 dependencies {
     implementation(project(":aerogel-api"))
+    compileOnly(apiMinecraftStubs.output)
     implementation("net.fabricmc:sponge-mixin:$mixinVersion")
     implementation("org.ow2.asm:asm:$asmVersion")
     implementation("org.ow2.asm:asm-tree:$asmVersion")
     implementation("org.ow2.asm:asm-util:$asmVersion")
     implementation("com.google.code.gson:gson:$gsonVersion")
     implementation("org.jline:jline:$jlineVersion")
+    compileOnly("org.slf4j:slf4j-api:2.0.17")
     testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.slf4j:slf4j-api:2.0.17")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.compileJava {
+    dependsOn(":aerogel-api:minecraftStubsClasses")
 }
 
 application {
@@ -31,16 +42,16 @@ application {
 
 tasks.processResources {
     val projectVersion = project.version.toString()
-    val minecraftVersion: String by project
-    val mixinVersion: String by project
+    val targetMinecraftVersion = minecraftVersion
+    val targetMixinVersion = mixinVersion
     inputs.property("version", projectVersion)
-    inputs.property("minecraftVersion", minecraftVersion)
-    inputs.property("mixinVersion", mixinVersion)
+    inputs.property("minecraftVersion", targetMinecraftVersion)
+    inputs.property("mixinVersion", targetMixinVersion)
     filesMatching("aerogel-build.properties") {
         expand(
             "version" to projectVersion,
-            "minecraftVersion" to minecraftVersion,
-            "mixinVersion" to mixinVersion
+            "minecraftVersion" to targetMinecraftVersion,
+            "mixinVersion" to targetMixinVersion
         )
     }
 }
@@ -51,6 +62,10 @@ tasks.jar {
         attributes["Main-Class"] = application.mainClass.get()
         attributes["Implementation-Title"] = "Aerogel Loader"
         attributes["Implementation-Version"] = project.version
+        attributes["Premain-Class"] = "org.spongepowered.tools.agent.MixinAgent"
+        attributes["Agent-Class"] = "org.spongepowered.tools.agent.MixinAgent"
+        attributes["Can-Redefine-Classes"] = "true"
+        attributes["Can-Retransform-Classes"] = "true"
     }
 }
 
@@ -64,6 +79,10 @@ val standaloneJar by tasks.registering(Jar::class) {
         attributes["Main-Class"] = application.mainClass.get()
         attributes["Implementation-Title"] = "Aerogel Loader"
         attributes["Implementation-Version"] = project.version
+        attributes["Premain-Class"] = "org.spongepowered.tools.agent.MixinAgent"
+        attributes["Agent-Class"] = "org.spongepowered.tools.agent.MixinAgent"
+        attributes["Can-Redefine-Classes"] = "true"
+        attributes["Can-Retransform-Classes"] = "true"
     }
 
     from(sourceSets.main.get().output)

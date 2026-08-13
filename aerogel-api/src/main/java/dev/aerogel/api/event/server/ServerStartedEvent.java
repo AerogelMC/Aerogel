@@ -1,4 +1,6 @@
 package dev.aerogel.api.event.server;
 
-public record ServerStartedEvent(Object serverHandle) implements ServerEvent {
+import net.minecraft.server.MinecraftServer;
+
+public record ServerStartedEvent(MinecraftServer server) implements ServerEvent {
 }

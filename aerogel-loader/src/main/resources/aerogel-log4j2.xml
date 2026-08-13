@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="SysOut" target="SYSTEM_OUT">
+            <PatternLayout
+                pattern="%style{[}{dim}%d{HH:mm:ss}%style{ }{dim}%highlight{%level}{FATAL=bright red, ERROR=red, WARN=yellow, INFO=white, DEBUG=white, TRACE=white}%style{]:}{dim} %highlight{%msg{nolookups}%n%throwable}{FATAL=bright red, ERROR=red, WARN=yellow, INFO=white, DEBUG=white, TRACE=white}"
+                disableAnsi="${sys:aerogel.console.disableAnsi:-false}"
+                noConsoleNoAnsi="false" />
+        </Console>
+        <Queue name="ServerGuiConsole">
+            <PatternLayout pattern="[%d{HH:mm:ss} %level]: %replace{%msg{nolookups}}{\u001B\[[0-9;]*m}{}%n" />
+        </Queue>
+        <RollingRandomAccessFile name="File" fileName="logs/latest.log" filePattern="logs/%d{yyyy-MM-dd}-%i.log.gz">
+            <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level]: %replace{%msg{nolookups}}{\u001B\[[0-9;]*m}{}%n" />
+            <Policies>
+                <TimeBasedTriggeringPolicy />
+                <OnStartupTriggeringPolicy />
+            </Policies>
+        </RollingRandomAccessFile>
+        <Listener name="Tracy">
+            <PatternLayout pattern="(%F:%L): %replace{%msg{nolookups}}{\u001B\[[0-9;]*m}{}%n" />
+        </Listener>
+    </Appenders>
+    <Loggers>
+        <Root level="info">
+            <filters>
+                <MarkerFilter marker="NETWORK_PACKETS" onMatch="DENY" onMismatch="NEUTRAL" />
+            </filters>
+            <AppenderRef ref="SysOut" />
+            <AppenderRef ref="File" />
+            <AppenderRef ref="ServerGuiConsole" />
+            <AppenderRef ref="Tracy" />
+        </Root>
+    </Loggers>
+</Configuration>

@@ -1,9 +1,9 @@
 package dev.aerogel.api.event.entity;
 
 import dev.aerogel.api.event.AerogelEvent;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.LivingEntity;
 
 /** Fired when a LivingEntity begins its vanilla death handling. */
-public record EntityDeathEvent(Object entityHandle, Object damageSourceHandle) implements AerogelEvent {
-    @SuppressWarnings("unchecked") public <E> E entity() { return (E) entityHandle; }
-    @SuppressWarnings("unchecked") public <D> D damageSource() { return (D) damageSourceHandle; }
+public record EntityDeathEvent(LivingEntity entity, DamageSource damageSource) implements AerogelEvent {
 }

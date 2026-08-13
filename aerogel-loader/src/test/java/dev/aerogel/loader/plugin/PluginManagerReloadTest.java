@@ -1,18 +1,19 @@
 package dev.aerogel.loader.plugin;
 
-import dev.aerogel.api.AerogelPlugin;
-import dev.aerogel.api.PluginContext;
-import dev.aerogel.api.event.AerogelEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
+import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginManagerReloadTest {
@@ -21,59 +22,101 @@ class PluginManagerReloadTest {
 
     @BeforeEach
     void resetCounters() {
-        ReloadablePlugin.loads = 0;
-        ReloadablePlugin.unloads = 0;
-        ReloadablePlugin.events = 0;
+        System.setProperty(ReloadFixturePlugin.LOADS, "0");
+        System.setProperty(ReloadFixturePlugin.UNLOADS, "0");
     }
 
     @Test
-    void reloadsOnePluginAndAllPluginsThroughTheLifecycleApi() throws Exception {
-        Path pluginJar = serverDirectory.resolve("test.jar");
-        try (JarOutputStream output = new JarOutputStream(java.nio.file.Files.newOutputStream(pluginJar))) {
-            // The entrypoint class is supplied by the test class path; the scanner still receives a real plugin JAR.
-            output.flush();
-        }
-        PluginDescriptor descriptor = new PluginDescriptor(
-            pluginJar, "test_plugin", "1", "Test", ">=26.2",
-            List.of(ReloadablePlugin.class.getName()), List.of("test.mixins.json"), Map.of());
+    void reloadsPluginCodeThroughFreshClassLoaders() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Path pluginJar = plugins.resolve("test.jar");
+        writePlugin(pluginJar, "test_plugin", "Test", true);
+        List<PluginDescriptor> descriptors = new PluginDiscovery().discover(plugins, "26.2");
         PluginManager manager = new PluginManager(
-            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), List.of(descriptor));
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), descriptors);
 
         manager.loadEntrypoints();
-        manager.eventRegistry().post(new TestEvent());
         PluginManager.ReloadResult one = manager.reload("test_plugin").orElseThrow();
-        manager.eventRegistry().post(new TestEvent());
         PluginManager.ReloadResult all = manager.reloadAll();
-        manager.eventRegistry().post(new TestEvent());
 
-        assertEquals(3, ReloadablePlugin.loads);
-        assertEquals(2, ReloadablePlugin.unloads);
-        assertEquals(3, ReloadablePlugin.events);
+        assertEquals("3", System.getProperty(ReloadFixturePlugin.LOADS));
+        assertEquals("2", System.getProperty(ReloadFixturePlugin.UNLOADS));
         assertTrue(one.successful());
         assertTrue(all.successful());
         assertEquals(List.of("test_plugin"), manager.pluginIds());
         assertEquals(List.of(new PluginManager.PluginInfo("test_plugin", "Test")), manager.pluginInfos());
-        assertTrue(manager.hasMixins("test_plugin"));
+        assertFalse(manager.hasMixins("test_plugin"));
         assertTrue(manager.reload("missing_plugin").isEmpty());
     }
 
-    public static final class ReloadablePlugin implements AerogelPlugin {
-        static int loads;
-        static int unloads;
-        static int events;
+    @Test
+    void reloadAllLoadsNewJarsAndUnloadsRemovedJars() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Files.createDirectories(plugins);
+        PluginManager manager = new PluginManager(
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), List.of());
+        manager.loadEntrypoints();
 
-        @Override
-        public void onLoad(PluginContext context) {
-            loads++;
-            context.events().listen(TestEvent.class, event -> events++);
-        }
+        Path addedJar = plugins.resolve("added.jar");
+        writePlugin(addedJar, "added_plugin", "Added", false);
+        PluginManager.ReloadResult added = manager.reloadAll();
 
-        @Override
-        public void onUnload(PluginContext context) {
-            unloads++;
-        }
+        assertTrue(added.successful());
+        assertEquals(List.of("added_plugin"), added.reloaded());
+        assertEquals(List.of(), added.unloaded());
+        assertEquals(List.of("added_plugin"), manager.pluginIds());
+
+        Files.delete(addedJar);
+        PluginManager.ReloadResult removed = manager.reloadAll();
+
+        assertTrue(removed.successful());
+        assertEquals(List.of(), removed.reloaded());
+        assertEquals(List.of("added_plugin"), removed.unloaded());
+        assertEquals(List.of(), manager.pluginIds());
     }
 
-    private static final class TestEvent implements AerogelEvent {
+    @Test
+    void targetedReloadCanLoadANewPlugin() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Files.createDirectories(plugins);
+        PluginManager manager = new PluginManager(
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), List.of());
+        manager.loadEntrypoints();
+
+        writePlugin(plugins.resolve("targeted.jar"), "targeted_plugin", "Targeted", false);
+        PluginManager.ReloadResult result = manager.reload("targeted_plugin").orElseThrow();
+
+        assertTrue(result.successful());
+        assertEquals(List.of("targeted_plugin"), result.reloaded());
+        assertEquals(List.of("targeted_plugin"), manager.pluginIds());
+    }
+
+    private static void writePlugin(Path path, String id, String name, boolean entrypoint) throws Exception {
+        Files.createDirectories(path.getParent());
+        String entrypointName = ReloadFixturePlugin.class.getName();
+        String metadata = """
+            {
+              "schemaVersion": 1,
+              "id": "%s",
+              "name": "%s",
+              "version": "1",
+              "minecraft": ">=26.2",
+              "entrypoints": %s
+            }
+            """.formatted(id, name, entrypoint ? "[\"" + entrypointName + "\"]" : "[]");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
+            output.putNextEntry(new JarEntry(PluginDescriptor.METADATA_PATH));
+            output.write(metadata.getBytes(StandardCharsets.UTF_8));
+            output.closeEntry();
+            if (entrypoint) {
+                String classPath = entrypointName.replace('.', '/') + ".class";
+                output.putNextEntry(new JarEntry(classPath));
+                try (InputStream input = ReloadFixturePlugin.class.getClassLoader().getResourceAsStream(classPath)) {
+                    if (input == null) throw new IllegalStateException("Missing test fixture class " + classPath);
+                    input.transferTo(output);
+                }
+                output.closeEntry();
+            }
+        }
     }
 }
