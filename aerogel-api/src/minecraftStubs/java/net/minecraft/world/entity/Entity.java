@@ -2,6 +2,7 @@ package net.minecraft.world.entity;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.Collection;
 import java.util.UUID;
@@ -19,6 +20,7 @@ public abstract class Entity {
     public double getZ() { return 0; }
     public int getId() { return 0; }
     public UUID getUUID() { return null; }
+    public Vec3 position() { return null; }
     public Level level() { return null; }
     public void discard() { }
 

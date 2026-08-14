@@ -8,7 +8,7 @@ import net.minecraft.world.entity.Mob;
 public final class EntityTargetEvent implements CancellableEvent {
     private final Mob entity;
     private final LivingEntity previousTarget;
-    private final LivingEntity target;
+    private LivingEntity target;
     private boolean cancelled;
 
     public EntityTargetEvent(Mob entity, LivingEntity previousTarget, LivingEntity target) {
@@ -20,6 +20,7 @@ public final class EntityTargetEvent implements CancellableEvent {
     public Mob entity() { return entity; }
     public LivingEntity previousTarget() { return previousTarget; }
     public LivingEntity target() { return target; }
+    public void setTarget(LivingEntity target) { this.target = target; }
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
 }

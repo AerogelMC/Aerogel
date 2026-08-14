@@ -6,7 +6,7 @@ import net.minecraft.world.entity.Entity;
 /** Fired before an entity is ignited for a number of ticks. */
 public final class EntityCombustEvent implements CancellableEvent {
     private final Entity entity;
-    private final int durationTicks;
+    private int durationTicks;
     private boolean cancelled;
 
     public EntityCombustEvent(Entity entity, int durationTicks) {
@@ -16,6 +16,10 @@ public final class EntityCombustEvent implements CancellableEvent {
 
     public Entity entity() { return entity; }
     public int durationTicks() { return durationTicks; }
+    public void setDurationTicks(int durationTicks) {
+        if (durationTicks < 0) throw new IllegalArgumentException("durationTicks must not be negative");
+        this.durationTicks = durationTicks;
+    }
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
 }

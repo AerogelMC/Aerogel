@@ -5,6 +5,7 @@ import dev.aerogel.api.event.player.PlayerFoodExhaustionEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -14,6 +15,8 @@ import net.minecraft.network.chat.Component;
 
 @Mixin(targets = "net.minecraft.world.entity.player.Player")
 abstract class PlayerMixin {
+    @Unique private boolean aerogel$foodExhaustionOverride;
+
     @Inject(method = "getGameProfile()Lcom/mojang/authlib/GameProfile;",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$packetProfile(CallbackInfoReturnable<GameProfile> callbackInfo) {
@@ -34,9 +37,20 @@ abstract class PlayerMixin {
 
     @Inject(method = "causeFoodExhaustion(F)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$foodExhaustion(float amount, CallbackInfo callbackInfo) {
+        if (aerogel$foodExhaustionOverride) return;
         PlayerFoodExhaustionEvent event = new PlayerFoodExhaustionEvent(
             EventHooks.cast(this), amount);
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.cancel();
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (Float.compare(event.amount(), amount) != 0) {
+            aerogel$foodExhaustionOverride = true;
+            try {
+                EventHooks.call(this, "causeFoodExhaustion", event.amount());
+            } finally {
+                aerogel$foodExhaustionOverride = false;
+            }
+            callbackInfo.cancel();
+        }
     }
 }

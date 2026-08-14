@@ -67,7 +67,26 @@ Aerogel marks an event cancellable only when its hook can prevent the correspond
 - Player and inventory operations: `PlayerLoginEvent`, `PlayerChatEvent`, `PlayerGameModeChangeEvent`, `PlayerTeleportEvent`, `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`, `InventoryOpenEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, and `AnvilRenameEvent`
 - Server/world operations: `CommandExecuteEvent`, `ServerSaveStartEvent`, `ExplosionEvent`, `ChunkPreLoadEvent`, `RainChangeEvent`, and `ThunderChangeEvent`
 
-Result and lifecycle notifications remain observation-only. Examples include `BlockBrokenEvent`, join/quit, respawn, death, entity removal, inventory close, save completion, ticks, and world load/unload. At those hook points the vanilla result already exists, or cancelling it would leave server state inconsistent.
+Result and lifecycle notifications remain observation-only. Examples include `BlockBrokenEvent`, join/quit, respawn, entity removal, inventory close, save completion, ticks, and world load/unload. At those hook points the vanilla result already exists, or cancelling it would leave server state inconsistent. `EntityDeathEvent` is a deliberate exception: it is not cancellable, but Aerogel holds the calculated loot and experience until listeners have edited the result.
+
+## Mutable outcomes
+
+Pre-operation events expose setters when changing an argument still has clear vanilla semantics. Aerogel applies those values to the underlying operation rather than changing only the event object. This includes damage and healing amounts, effects, equipment, targets, mounts, teleports, projectile hits, breeding/taming participants, dropped items, experience changes, food exhaustion, block-state changes, explosion properties, and command text.
+
+Death loot is calculated by vanilla first and spawned only after `EntityDeathEvent` returns. Its drop list is live and mutable:
+
+```java
+@EventHandler
+private void onDeath(EntityDeathEvent event) {
+    event.drops().removeIf(ItemStack::isEmpty);
+    event.addDrop(new ItemStack(Blocks.DIAMOND_BLOCK));
+    event.setDroppedExperience(25);
+}
+```
+
+Use `clearDrops()`, `addDrop(ItemStack)`, `setDrops(Collection)`, or edit `drops()` directly. Aerogel snapshots the final list, copies every non-empty stack, and then lets each entity enter the level through the normal spawn event path. A listener may set experience to zero, but not to a negative value.
+
+Mutable fields are not added to after-the-fact notifications merely for API symmetry. For example, changing `BlockBrokenEvent.state()` after removal could not restore the old block safely; use cancellable `BlockBreakEvent` or mutable `BlockStateChangeEvent` instead. Packet events expose the complete vanilla packet and cancellation because most serverbound packet records cannot be safely rewritten in place.
 
 ## Built-in events
 

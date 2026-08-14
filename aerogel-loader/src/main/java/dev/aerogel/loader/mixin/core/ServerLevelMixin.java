@@ -11,6 +11,7 @@ import dev.aerogel.api.event.world.ThunderChangeEvent;
 import dev.aerogel.api.event.world.WorldLoadEvent;
 import dev.aerogel.api.event.world.WorldUnloadEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.DeathDropCapture;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -35,6 +36,8 @@ import java.util.function.Predicate;
 
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin {
+    @Unique private boolean aerogel$explosionOverride;
+
     @Unique
     public String identifier() {
         return String.valueOf(EventHooks.call(EventHooks.call(this, "dimension"), "identifier"));
@@ -164,6 +167,10 @@ abstract class ServerLevelMixin {
         @Coerce Object entity,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (DeathDropCapture.capture(EventHooks.cast(entity))) {
+            callbackInfo.setReturnValue(true);
+            return;
+        }
         if (EventHooks.isInstance(entity, "net.minecraft.world.entity.projectile.Projectile")) {
             ProjectileLaunchEvent projectileEvent = new ProjectileLaunchEvent(
                 EventHooks.cast(this), EventHooks.cast(entity));
@@ -244,10 +251,25 @@ abstract class ServerLevelMixin {
         @Coerce Object sound,
         CallbackInfo callbackInfo
     ) {
+        if (aerogel$explosionOverride) return;
         ExplosionEvent event = new ExplosionEvent(
-            EventHooks.cast(this), EventHooks.cast(source), x, y, z, radius);
+            EventHooks.cast(this), EventHooks.cast(source), x, y, z, radius, fire);
         EventHooks.post(event);
         if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (Double.compare(event.x(), x) != 0
+            || Double.compare(event.y(), y) != 0
+            || Double.compare(event.z(), z) != 0
+            || Float.compare(event.radius(), radius) != 0
+            || event.fire() != fire) {
+            aerogel$explosionOverride = true;
+            try {
+                EventHooks.call(this, "explode", source, damageSource, calculator,
+                    event.x(), event.y(), event.z(), event.radius(), event.fire(), interaction,
+                    smallParticle, largeParticle, particles, sound);
+            } finally {
+                aerogel$explosionOverride = false;
+            }
             callbackInfo.cancel();
         }
     }

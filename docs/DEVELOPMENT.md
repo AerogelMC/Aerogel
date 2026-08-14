@@ -360,6 +360,23 @@ Within one priority, registration order is retained. A cancelled event skips lis
 
 Only events implementing `CancellableEvent` can prevent their operation. Observation events occur after a result exists and cannot safely be cancelled.
 
+### Mutable event results
+
+When vanilla has not committed an operation yet, Aerogel exposes setters for meaningful inputs and applies the edited values to the real operation. Examples include damage and healing amounts, effects, equipment, teleport destinations, targets, dropped items, experience, explosions, block-state changes, and command text. An after-the-fact notification remains read-only when changing it could no longer produce a coherent vanilla result.
+
+`EntityDeathEvent` is not cancellable, but its loot and experience are mutable. Vanilla calculates both first; Aerogel postpones spawning them until every listener has returned.
+
+```java
+@EventHandler
+private void onDeath(EntityDeathEvent event) {
+    event.clearDrops();
+    event.addDrop(reward.copy());
+    event.setDroppedExperience(25);
+}
+```
+
+`drops()` is a live list. `setDrops(...)`, `addDrop(...)`, and `clearDrops()` are provided for the common cases. Every final non-empty stack is copied before it is spawned, and the normal entity-spawn event path still applies.
+
 ### Choose the correct block event
 
 ```text

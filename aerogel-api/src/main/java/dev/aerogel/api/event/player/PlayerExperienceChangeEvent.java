@@ -8,7 +8,7 @@ public final class PlayerExperienceChangeEvent implements PlayerEvent, Cancellab
     public enum Unit { POINTS, LEVELS }
 
     private final ServerPlayer player;
-    private final int amount;
+    private int amount;
     private final Unit unit;
     private boolean cancelled;
 
@@ -20,6 +20,7 @@ public final class PlayerExperienceChangeEvent implements PlayerEvent, Cancellab
 
     @Override public ServerPlayer player() { return player; }
     public int amount() { return amount; }
+    public void setAmount(int amount) { this.amount = amount; }
     public Unit unit() { return unit; }
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }

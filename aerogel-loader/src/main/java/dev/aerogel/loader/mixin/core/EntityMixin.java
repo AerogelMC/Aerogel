@@ -25,6 +25,10 @@ import java.util.function.Predicate;
 
 @Mixin(targets = "net.minecraft.world.entity.Entity")
 abstract class EntityMixin {
+    @Unique private boolean aerogel$combustOverride;
+    @Unique private boolean aerogel$teleportOverride;
+    @Unique private boolean aerogel$mountOverride;
+
     @Unique
     public Collection<Entity> nearbyEntities(double radius) {
         return nearbyEntities(radius, entity -> true);
@@ -70,10 +74,21 @@ abstract class EntityMixin {
         @Coerce Object vehicle, boolean force, boolean teleport,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (aerogel$mountOverride) return;
         EntityMountEvent event = new EntityMountEvent(
             EventHooks.cast(this), EventHooks.cast(vehicle), force);
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.setReturnValue(false);
+        if (event.isCancelled()) {
+            callbackInfo.setReturnValue(false);
+        } else if (event.vehicle() != vehicle || event.force() != force) {
+            aerogel$mountOverride = true;
+            try {
+                callbackInfo.setReturnValue((Boolean) EventHooks.call(this, "startRiding",
+                    event.vehicle(), event.force(), teleport));
+            } finally {
+                aerogel$mountOverride = false;
+            }
+        }
     }
 
     @Inject(method = "stopRiding()V", at = @At("HEAD"), cancellable = true)
@@ -89,9 +104,20 @@ abstract class EntityMixin {
 
     @Inject(method = "igniteForTicks(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$combust(int durationTicks, CallbackInfo callbackInfo) {
+        if (aerogel$combustOverride) return;
         EntityCombustEvent event = new EntityCombustEvent(EventHooks.cast(this), durationTicks);
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.cancel();
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.durationTicks() != durationTicks) {
+            aerogel$combustOverride = true;
+            try {
+                EventHooks.call(this, "igniteForTicks", event.durationTicks());
+            } finally {
+                aerogel$combustOverride = false;
+            }
+            callbackInfo.cancel();
+        }
     }
 
     @Inject(method = "teleport(Lnet/minecraft/world/level/portal/TeleportTransition;)"
@@ -99,9 +125,19 @@ abstract class EntityMixin {
     private void aerogel$teleport(
         @Coerce Object transition, CallbackInfoReturnable<Object> callbackInfo
     ) {
+        if (aerogel$teleportOverride) return;
         EntityTeleportEvent event = new EntityTeleportEvent(
             EventHooks.cast(this), EventHooks.cast(transition));
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.setReturnValue(null);
+        if (event.isCancelled()) {
+            callbackInfo.setReturnValue(null);
+        } else if (event.transition() != transition) {
+            aerogel$teleportOverride = true;
+            try {
+                callbackInfo.setReturnValue(EventHooks.call(this, "teleport", event.transition()));
+            } finally {
+                aerogel$teleportOverride = false;
+            }
+        }
     }
 }

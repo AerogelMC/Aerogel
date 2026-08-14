@@ -13,6 +13,7 @@ import dev.aerogel.api.event.player.PlayerTeleportEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
 import dev.aerogel.loader.internal.PlayerNameTagService;
+import dev.aerogel.loader.internal.DeathDropCapture;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -51,6 +52,10 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Unique
     private boolean aerogel$nameTagHidden;
+
+    @Unique private boolean aerogel$experienceOverride;
+    @Unique private boolean aerogel$teleportOverride;
+    @Unique private boolean aerogel$dropOverride;
 
     @Unique
     public void setDisplayName(Component displayName) {
@@ -298,18 +303,40 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Inject(method = "giveExperiencePoints(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$experiencePoints(int amount, CallbackInfo callbackInfo) {
+        if (aerogel$experienceOverride) return;
         PlayerExperienceChangeEvent event = new PlayerExperienceChangeEvent(
             EventHooks.cast(this), amount, PlayerExperienceChangeEvent.Unit.POINTS);
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.cancel();
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.amount() != amount) {
+            aerogel$experienceOverride = true;
+            try {
+                EventHooks.call(this, "giveExperiencePoints", event.amount());
+            } finally {
+                aerogel$experienceOverride = false;
+            }
+            callbackInfo.cancel();
+        }
     }
 
     @Inject(method = "giveExperienceLevels(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$experienceLevels(int amount, CallbackInfo callbackInfo) {
+        if (aerogel$experienceOverride) return;
         PlayerExperienceChangeEvent event = new PlayerExperienceChangeEvent(
             EventHooks.cast(this), amount, PlayerExperienceChangeEvent.Unit.LEVELS);
         EventHooks.post(event);
-        if (event.isCancelled()) callbackInfo.cancel();
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.amount() != amount) {
+            aerogel$experienceOverride = true;
+            try {
+                EventHooks.call(this, "giveExperienceLevels", event.amount());
+            } finally {
+                aerogel$experienceOverride = false;
+            }
+            callbackInfo.cancel();
+        }
     }
 
     @Inject(method = "completeUsingItem()V", at = @At("HEAD"), cancellable = true)
@@ -348,11 +375,22 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         @Coerce Object itemStack, boolean randomThrow, boolean retainOwnership,
         CallbackInfoReturnable<Object> callbackInfo
     ) {
+        if (DeathDropCapture.isHandling((ServerPlayer) (Object) this) || aerogel$dropOverride) return;
         PlayerDropItemEvent event = new PlayerDropItemEvent(
             EventHooks.cast(this), EventHooks.cast(itemStack), randomThrow, retainOwnership);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(null);
+        } else if (event.itemStack() != itemStack
+            || event.randomThrow() != randomThrow
+            || event.retainOwnership() != retainOwnership) {
+            aerogel$dropOverride = true;
+            try {
+                callbackInfo.setReturnValue(EventHooks.call(this, "drop", event.itemStack(),
+                    event.randomThrow(), event.retainOwnership()));
+            } finally {
+                aerogel$dropOverride = false;
+            }
         }
     }
 
@@ -368,11 +406,26 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         float yaw, float pitch, boolean dismount,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (aerogel$teleportOverride) return;
         PlayerTeleportEvent event = new PlayerTeleportEvent(
             EventHooks.cast(this), EventHooks.cast(level), x, y, z, yaw, pitch);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
+        } else if (event.destinationLevel() != level
+            || Double.compare(event.x(), x) != 0
+            || Double.compare(event.y(), y) != 0
+            || Double.compare(event.z(), z) != 0
+            || Float.compare(event.yaw(), yaw) != 0
+            || Float.compare(event.pitch(), pitch) != 0) {
+            aerogel$teleportOverride = true;
+            try {
+                callbackInfo.setReturnValue((Boolean) EventHooks.call(this, "teleportTo",
+                    event.destinationLevel(), event.x(), event.y(), event.z(), relative,
+                    event.yaw(), event.pitch(), dismount));
+            } finally {
+                aerogel$teleportOverride = false;
+            }
         }
     }
 }
