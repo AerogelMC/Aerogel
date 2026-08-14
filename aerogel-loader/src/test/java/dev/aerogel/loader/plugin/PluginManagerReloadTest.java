@@ -92,6 +92,42 @@ class PluginManagerReloadTest {
     }
 
     @Test
+    void unchangedStartupMixinDoesNotRequestRestartOnReload() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Path pluginJar = plugins.resolve("mixin.jar");
+        writeMixinPlugin(pluginJar, "mixin_plugin");
+        List<PluginDescriptor> descriptors = new PluginDiscovery().discover(plugins, "26.2");
+        PluginManager manager = new PluginManager(
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), descriptors);
+        manager.loadEntrypoints();
+
+        PluginManager.ReloadResult result = manager.reload("mixin_plugin").orElseThrow();
+
+        assertTrue(result.successful());
+        assertEquals(List.of(), result.mixinRestartRequired());
+    }
+
+    @Test
+    void runtimeAddedMixinKeepsRequestingRestartUntilItIsRemoved() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Files.createDirectories(plugins);
+        Path pluginJar = plugins.resolve("mixin.jar");
+        PluginManager manager = new PluginManager(
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), List.of());
+        manager.loadEntrypoints();
+
+        writeMixinPlugin(pluginJar, "mixin_plugin");
+        PluginManager.ReloadResult added = manager.reloadAll();
+        PluginManager.ReloadResult stillPending = manager.reloadAll();
+        writePlugin(pluginJar, "mixin_plugin", "Mixin", false);
+        PluginManager.ReloadResult removedBeforeRestart = manager.reloadAll();
+
+        assertEquals(List.of("mixin_plugin"), added.mixinRestartRequired());
+        assertEquals(List.of("mixin_plugin"), stillPending.mixinRestartRequired());
+        assertEquals(List.of(), removedBeforeRestart.mixinRestartRequired());
+    }
+
+    @Test
     void onePluginInitializationFailureDoesNotStopOtherPlugins() throws Exception {
         Path plugins = serverDirectory.resolve("plugins");
         Path broken = plugins.resolve("broken.jar");
@@ -144,6 +180,37 @@ class PluginManagerReloadTest {
                 }
                 output.closeEntry();
             }
+        }
+    }
+
+    private static void writeMixinPlugin(Path path, String id) throws Exception {
+        Files.createDirectories(path.getParent());
+        String metadata = """
+            {
+              "schemaVersion": 1,
+              "id": "%s",
+              "name": "Mixin",
+              "version": "1",
+              "minecraft": ">=26.2",
+              "entrypoints": [],
+              "mixins": ["test.mixins.json"]
+            }
+            """.formatted(id);
+        String config = "{\"package\":\"test\",\"mixins\":[\"Fixture\"]}";
+        String fixturePath = ReloadFixturePlugin.class.getName().replace('.', '/') + ".class";
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
+            output.putNextEntry(new JarEntry(PluginDescriptor.METADATA_PATH));
+            output.write(metadata.getBytes(StandardCharsets.UTF_8));
+            output.closeEntry();
+            output.putNextEntry(new JarEntry("test.mixins.json"));
+            output.write(config.getBytes(StandardCharsets.UTF_8));
+            output.closeEntry();
+            output.putNextEntry(new JarEntry("test/Fixture.class"));
+            try (InputStream input = ReloadFixturePlugin.class.getClassLoader().getResourceAsStream(fixturePath)) {
+                if (input == null) throw new IllegalStateException("Missing test fixture " + fixturePath);
+                input.transferTo(output);
+            }
+            output.closeEntry();
         }
     }
 

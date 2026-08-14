@@ -133,12 +133,7 @@ public final class PluginsCommand {
                 result.reloaded().size(), result.unloaded().size(), elapsed,
                 String.join(", ", result.failures().keySet()));
         }
-        List<String> mixins = AerogelRuntime.pluginManager().mixinPluginIds();
-        if (!mixins.isEmpty()) {
-            sendWarning(context, loader, ROOT + "mixin_notice",
-                "Some Mixin changes for %s may not be applied until the server restarts",
-                String.join(", ", mixins));
-        }
+        sendMixinNotice(context, loader, result.mixinRestartRequired());
         return result.reloaded().size() + result.unloaded().size();
     }
 
@@ -158,20 +153,27 @@ public final class PluginsCommand {
         if (!result.successful()) {
             sendFailure(context, loader, ROOT + "reload_failed",
                 "Could not reload plugin %s after %s seconds", id, elapsed);
+            sendMixinNotice(context, loader, result.mixinRestartRequired());
             return 0;
         }
         if (result.unloaded().contains(id)) {
             sendSuccess(context, loader, ROOT + "reload_one.unloaded",
                 "Unloaded plugin %s in %s seconds", id, elapsed);
+            sendMixinNotice(context, loader, result.mixinRestartRequired());
             return 1;
         }
         sendSuccess(context, loader, ROOT + "reload_one.success",
             "Reloaded plugin %s in %s seconds", id, elapsed);
-        if (AerogelRuntime.pluginManager().hasMixins(id)) {
-            sendWarning(context, loader, ROOT + "mixin_notice",
-                "Some Mixin changes for %s may not be applied until the server restarts", id);
-        }
+        sendMixinNotice(context, loader, result.mixinRestartRequired());
         return 1;
+    }
+
+    private static void sendMixinNotice(Object context, ClassLoader loader, List<String> pluginIds)
+        throws ReflectiveOperationException {
+        if (pluginIds.isEmpty()) return;
+        sendWarning(context, loader, ROOT + "mixin_notice",
+            "Some Mixin changes for %s may not be applied until the server restarts",
+            String.join(", ", pluginIds));
     }
 
     private static int tps(Object context, ClassLoader loader, Object minecraftServer)

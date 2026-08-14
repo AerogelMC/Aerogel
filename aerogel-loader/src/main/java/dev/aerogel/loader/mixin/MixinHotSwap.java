@@ -29,6 +29,7 @@ public final class MixinHotSwap {
         if (plugin.mixins().isEmpty()) return Snapshot.EMPTY;
         Set<String> classes = new LinkedHashSet<>();
         Map<String, String> configurations = new TreeMap<>();
+        Map<String, String> classHashes = new TreeMap<>();
         try (JarFile jar = new JarFile(plugin.jar().toFile(), false)) {
             for (String path : plugin.mixins()) {
                 var entry = jar.getJarEntry(path);
@@ -37,21 +38,25 @@ public final class MixinHotSwap {
                 try (var input = jar.getInputStream(entry)) {
                     bytes = input.readAllBytes();
                 }
-                configurations.put(path, sha256(bytes));
                 JsonObject config = JsonParser.parseReader(
                     new InputStreamReader(new java.io.ByteArrayInputStream(bytes), StandardCharsets.UTF_8))
                     .getAsJsonObject();
+                configurations.put(path, sha256(canonicalJson(config).getBytes(StandardCharsets.UTF_8)));
                 String packageName = config.has("package") ? config.get("package").getAsString() : "";
                 collect(config.get("mixins"), packageName, classes);
                 collect(config.get("server"), packageName, classes);
             }
             for (String className : classes) {
-                if (jar.getJarEntry(className.replace('.', '/') + ".class") == null) {
+                var entry = jar.getJarEntry(className.replace('.', '/') + ".class");
+                if (entry == null) {
                     throw new IllegalStateException("Missing Mixin class " + className);
+                }
+                try (var input = jar.getInputStream(entry)) {
+                    classHashes.put(className, sha256(input.readAllBytes()));
                 }
             }
         }
-        return new Snapshot(Set.copyOf(classes), Map.copyOf(configurations));
+        return new Snapshot(Set.copyOf(classes), Map.copyOf(configurations), Map.copyOf(classHashes));
     }
 
     public static Snapshot reload(PluginDescriptor updatedPlugin, Snapshot loadedState) throws Exception {
@@ -63,6 +68,7 @@ public final class MixinHotSwap {
             throw new IllegalStateException("Mixin class list changed; restart required");
         }
         if (updatedState.classes().isEmpty()) return updatedState;
+        if (loadedState.classHashes().equals(updatedState.classHashes())) return updatedState;
 
         Instrumentation instrumentation = instrumentation();
         Map<String, Class<?>> fakeMixins = new java.util.HashMap<>();
@@ -114,7 +120,40 @@ public final class MixinHotSwap {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
-    public record Snapshot(Set<String> classes, Map<String, String> configurations) {
-        private static final Snapshot EMPTY = new Snapshot(Set.of(), Map.of());
+    private static String canonicalJson(JsonElement element) {
+        if (element.isJsonObject()) {
+            StringBuilder result = new StringBuilder("{");
+            boolean first = true;
+            for (String key : new java.util.TreeSet<>(element.getAsJsonObject().keySet())) {
+                if (!first) result.append(',');
+                first = false;
+                result.append(new com.google.gson.JsonPrimitive(key));
+                result.append(':').append(canonicalJson(element.getAsJsonObject().get(key)));
+            }
+            return result.append('}').toString();
+        }
+        if (element.isJsonArray()) {
+            StringBuilder result = new StringBuilder("[");
+            boolean first = true;
+            for (JsonElement value : element.getAsJsonArray()) {
+                if (!first) result.append(',');
+                first = false;
+                result.append(canonicalJson(value));
+            }
+            return result.append(']').toString();
+        }
+        return element.toString();
+    }
+
+    public record Snapshot(
+        Set<String> classes,
+        Map<String, String> configurations,
+        Map<String, String> classHashes
+    ) {
+        private static final Snapshot EMPTY = new Snapshot(Set.of(), Map.of(), Map.of());
+
+        public static Snapshot empty() {
+            return EMPTY;
+        }
     }
 }

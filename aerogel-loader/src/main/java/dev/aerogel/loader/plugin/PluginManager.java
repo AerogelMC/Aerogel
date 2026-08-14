@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -115,7 +116,7 @@ public final class PluginManager {
         try {
             discovered = discoverPlugins();
         } catch (IOException exception) {
-            return new ReloadResult(List.of(), List.of(), Map.of("scan", message(exception)));
+            return new ReloadResult(List.of(), List.of(), Map.of("scan", message(exception)), List.of());
         }
         plugins = discovered;
         Map<String, PluginDescriptor> byId = descriptorsById(discovered);
@@ -123,12 +124,14 @@ public final class PluginManager {
         List<String> reloaded = new ArrayList<>();
         List<String> unloaded = new ArrayList<>();
         Map<String, String> failures = new LinkedHashMap<>();
+        Set<String> mixinRestartRequired = new LinkedHashSet<>();
 
         List<LoadedPlugin> reverse = new ArrayList<>(loaded.values());
         Collections.reverse(reverse);
         for (LoadedPlugin plugin : reverse) {
             String pluginId = plugin.descriptor().id();
             if (byId.containsKey(pluginId)) continue;
+            if (hasAppliedMixins(plugin)) mixinRestartRequired.add(pluginId);
             unload(plugin);
             loaded.remove(pluginId);
             unloaded.add(pluginId);
@@ -139,6 +142,7 @@ public final class PluginManager {
             String missingDependency = missingDependency(descriptor);
             if (missingDependency != null) {
                 if (current != null) {
+                    if (hasAppliedMixins(current)) mixinRestartRequired.add(descriptor.id());
                     unload(current);
                     loaded.remove(descriptor.id());
                     unloaded.add(descriptor.id());
@@ -147,14 +151,18 @@ public final class PluginManager {
                 failures.put(descriptor.id(), "Dependency is not loaded: " + missingDependency);
                 continue;
             }
-            String failure = current == null ? loadNew(descriptor) : reload(current, descriptor);
+            ReloadAttempt attempt = current == null
+                ? loadNewForReload(descriptor)
+                : reload(current, descriptor);
+            String failure = attempt.failure();
+            if (attempt.mixinRestartRequired()) mixinRestartRequired.add(descriptor.id());
             if (failure == null) {
                 reloaded.add(descriptor.id());
             } else {
                 failures.put(descriptor.id(), failure);
             }
         }
-        return new ReloadResult(reloaded, unloaded, failures);
+        return new ReloadResult(reloaded, unloaded, failures, List.copyOf(mixinRestartRequired));
     }
 
     public synchronized Optional<ReloadResult> reload(String pluginId) {
@@ -164,7 +172,7 @@ public final class PluginManager {
             discovered = discoverPlugins();
         } catch (IOException exception) {
             return Optional.of(new ReloadResult(
-                List.of(), List.of(), Map.of(normalized, message(exception))));
+                List.of(), List.of(), Map.of(normalized, message(exception)), List.of()));
         }
         plugins = discovered;
         Map<String, PluginDescriptor> byId = descriptorsById(discovered);
@@ -175,26 +183,32 @@ public final class PluginManager {
             return Optional.empty();
         }
         if (descriptor == null) {
+            List<String> mixinRestartRequired = hasAppliedMixins(current)
+                ? List.of(normalized) : List.of();
             unload(current);
             loaded.remove(normalized);
             disabled.remove(normalized);
-            return Optional.of(new ReloadResult(List.of(), List.of(normalized), Map.of()));
+            return Optional.of(new ReloadResult(
+                List.of(), List.of(normalized), Map.of(), mixinRestartRequired));
         }
 
         List<String> activated = new ArrayList<>();
         Map<String, String> failures = new LinkedHashMap<>();
+        Set<String> mixinRestartRequired = new LinkedHashSet<>();
         Set<String> required = dependencyClosure(descriptor, byId);
         for (PluginDescriptor candidate : discovered) {
             if (!required.contains(candidate.id())) continue;
             LoadedPlugin loadedCandidate = loaded.get(candidate.id());
-            String failure;
+            ReloadAttempt attempt;
             if (candidate.id().equals(normalized) && loadedCandidate != null) {
-                failure = reload(loadedCandidate, candidate);
+                attempt = reload(loadedCandidate, candidate);
             } else if (loadedCandidate == null) {
-                failure = loadNew(candidate);
+                attempt = loadNewForReload(candidate);
             } else {
                 continue;
             }
+            String failure = attempt.failure();
+            if (attempt.mixinRestartRequired()) mixinRestartRequired.add(candidate.id());
             if (failure == null) {
                 activated.add(candidate.id());
             } else {
@@ -202,7 +216,8 @@ public final class PluginManager {
                 break;
             }
         }
-        return Optional.of(new ReloadResult(activated, List.of(), failures));
+        return Optional.of(new ReloadResult(
+            activated, List.of(), failures, List.copyOf(mixinRestartRequired)));
     }
 
     public synchronized List<String> pluginIds() {
@@ -247,13 +262,19 @@ public final class PluginManager {
             .toList();
     }
 
-    private String reload(LoadedPlugin plugin, PluginDescriptor descriptor) {
+    private ReloadAttempt reload(LoadedPlugin plugin, PluginDescriptor descriptor) {
         String pluginId = plugin.descriptor().id();
         MixinHotSwap.Snapshot activeMixinState = plugin.mixinState();
-        if (!descriptor.mixins().isEmpty()) {
+        boolean mixinRestartRequired = false;
+        if (descriptor.mixins().isEmpty() && hasAppliedMixins(plugin)) {
+            mixinRestartRequired = true;
+            plugin.context().logger().warning(
+                "Mixin removal requires a server restart before transformed classes can be restored.");
+        } else if (!descriptor.mixins().isEmpty()) {
             try {
                 activeMixinState = MixinHotSwap.reload(descriptor, plugin.mixinState());
             } catch (Exception exception) {
+                mixinRestartRequired = true;
                 String detail = exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
                     : exception.getMessage();
@@ -266,12 +287,18 @@ public final class PluginManager {
         try {
             loaded.put(pluginId, load(descriptor, activeMixinState));
             disabled.remove(pluginId);
-            return null;
+            return new ReloadAttempt(null, mixinRestartRequired);
         } catch (Exception exception) {
             disabled.put(pluginId, descriptor);
             plugin.context().logger().severe("Reload failed: " + exception.getMessage());
-            return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+            String failure = exception.getMessage() == null
+                ? exception.getClass().getSimpleName() : exception.getMessage();
+            return new ReloadAttempt(failure, mixinRestartRequired);
         }
+    }
+
+    private static boolean hasAppliedMixins(LoadedPlugin plugin) {
+        return !plugin.mixinState().configurations().isEmpty();
     }
 
     private String loadNew(PluginDescriptor descriptor) {
@@ -281,13 +308,22 @@ public final class PluginManager {
             return "Dependency is not loaded: " + missingDependency;
         }
         try {
-            loaded.put(descriptor.id(), load(descriptor));
+            // A plugin discovered after bootstrap can run normally, but its Mixin
+            // configurations were never registered with the transforming loader.
+            MixinHotSwap.inspect(descriptor);
+            loaded.put(descriptor.id(), load(descriptor, MixinHotSwap.Snapshot.empty()));
             disabled.remove(descriptor.id());
             return null;
         } catch (Exception exception) {
             disabled.put(descriptor.id(), descriptor);
             return message(exception);
         }
+    }
+
+    private ReloadAttempt loadNewForReload(PluginDescriptor descriptor) {
+        String failure = loadNew(descriptor);
+        return new ReloadAttempt(
+            failure, failure == null && !descriptor.mixins().isEmpty());
     }
 
     private String missingDependency(PluginDescriptor descriptor) {
@@ -435,16 +471,25 @@ public final class PluginManager {
         }
     }
 
-    public record ReloadResult(List<String> reloaded, List<String> unloaded, Map<String, String> failures) {
+    public record ReloadResult(
+        List<String> reloaded,
+        List<String> unloaded,
+        Map<String, String> failures,
+        List<String> mixinRestartRequired
+    ) {
         public ReloadResult {
             reloaded = List.copyOf(reloaded);
             unloaded = List.copyOf(unloaded);
             failures = Map.copyOf(failures);
+            mixinRestartRequired = List.copyOf(mixinRestartRequired);
         }
 
         public boolean successful() {
             return failures.isEmpty();
         }
+    }
+
+    private record ReloadAttempt(String failure, boolean mixinRestartRequired) {
     }
 
     public record PluginInfo(String id, String name, boolean enabled) {
