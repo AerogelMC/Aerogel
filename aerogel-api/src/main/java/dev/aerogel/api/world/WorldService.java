@@ -11,6 +11,12 @@ public interface WorldService {
     /** Finds a loaded level. An unqualified id uses the calling plugin's namespace. */
     Optional<ServerLevel> find(String id);
 
+    /** Saves and unloads a dynamic level. Returns false when the level is not loaded. */
+    boolean unload(String id);
+
+    /** Unloads a dynamic level and permanently deletes its saved dimension directory. */
+    boolean delete(String id);
+
     /** Creates the default vanilla flat world using the server's world seed. */
     ServerLevel createFlat(String id);
 

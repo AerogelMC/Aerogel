@@ -6,6 +6,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -23,6 +29,65 @@ final class ReflectiveWorldService implements WorldService {
         Object server = scope.serverHandle();
         Object level = Reflect.invoke(server, "getLevel", levelKey(server, id));
         return Optional.ofNullable((ServerLevel) level);
+    }
+
+    @Override public boolean unload(String id) {
+        Object server = scope.serverHandle();
+        requireServerThread(server);
+        Object levelKey = levelKey(server, id);
+        rejectBuiltinLevel(server, levelKey);
+        Object level = Reflect.invoke(server, "getLevel", levelKey);
+        if (level == null) return false;
+
+        Object overworld = Reflect.invoke(server, "overworld");
+        Object respawn = Reflect.invoke(Reflect.invoke(overworld, "getLevelData"), "getRespawnData");
+        Object spawn = Reflect.invoke(respawn, "pos");
+        double x = ((Number) Reflect.invoke(spawn, "getX")).doubleValue() + 0.5;
+        double y = ((Number) Reflect.invoke(spawn, "getY")).doubleValue();
+        double z = ((Number) Reflect.invoke(spawn, "getZ")).doubleValue() + 0.5;
+        float yaw = ((Number) Reflect.invoke(respawn, "yaw")).floatValue();
+        float pitch = ((Number) Reflect.invoke(respawn, "pitch")).floatValue();
+
+        @SuppressWarnings("unchecked")
+        List<Object> players = List.copyOf((List<Object>) Reflect.invoke(level, "players"));
+        for (Object player : players) {
+            boolean moved = (Boolean) Reflect.invoke(
+                player, "teleport", overworld, x, y, z, yaw, pitch);
+            if (!moved) {
+                throw new IllegalStateException(
+                    "Could not move every player out of " + qualifiedId(id));
+            }
+        }
+
+        Reflect.invoke(level, "save", null, true, false);
+        Reflect.invoke(level, "close");
+        @SuppressWarnings("unchecked")
+        Map<Object, Object> levels = (Map<Object, Object>) Reflect.field(server, "levels");
+        if (!levels.remove(levelKey, level)) {
+            throw new IllegalStateException(
+                "World changed while it was being unloaded: " + qualifiedId(id));
+        }
+        return true;
+    }
+
+    @Override public boolean delete(String id) {
+        Object server = scope.serverHandle();
+        requireServerThread(server);
+        Object levelKey = levelKey(server, id);
+        rejectBuiltinLevel(server, levelKey);
+
+        Object storage = Reflect.field(server, "storageSource");
+        Path worldRoot = ((Path) Reflect.invoke(
+            Reflect.invoke(storage, "getLevelDirectory"), "path"))
+            .toAbsolutePath().normalize();
+        Path dimensionDirectory = ((Path) Reflect.invoke(storage, "getDimensionPath", levelKey))
+            .toAbsolutePath().normalize();
+
+        boolean unloaded = unload(id);
+        boolean exists = Files.exists(dimensionDirectory);
+        if (!exists) return unloaded;
+        deleteTree(worldRoot, dimensionDirectory);
+        return true;
     }
 
     @Override public ServerLevel createFlat(String id) {
@@ -229,6 +294,18 @@ final class ReflectiveWorldService implements WorldService {
         }
     }
 
+    private void rejectBuiltinLevel(Object server, Object levelKey) {
+        Class<?> levelType = Reflect.type(scope.loader(), "net.minecraft.world.level.Level");
+        if (levelKey.equals(Reflect.staticField(levelType, "OVERWORLD"))
+            || levelKey.equals(Reflect.staticField(levelType, "NETHER"))
+            || levelKey.equals(Reflect.staticField(levelType, "END"))) {
+            throw new IllegalArgumentException("Built-in Minecraft levels cannot be unloaded");
+        }
+        if (Reflect.invoke(server, "overworld") == Reflect.invoke(server, "getLevel", levelKey)) {
+            throw new IllegalArgumentException("The primary server level cannot be unloaded");
+        }
+    }
+
     private void verifyWorld(
         Object level, Object requestedDimensionType, Object requestedGenerator, String id
     ) {
@@ -243,6 +320,36 @@ final class ReflectiveWorldService implements WorldService {
         if (!loadedDimensionType.equals(requestedDimensionType)) {
             throw new IllegalStateException(
                 "World " + qualifiedId(id) + " is already loaded with a different dimension type");
+        }
+    }
+
+    static void deleteTree(Path worldRoot, Path target) {
+        Path normalizedRoot = worldRoot.toAbsolutePath().normalize();
+        Path normalizedTarget = target.toAbsolutePath().normalize();
+        if (normalizedTarget.equals(normalizedRoot) || !normalizedTarget.startsWith(normalizedRoot)) {
+            throw new IllegalArgumentException(
+                "Refusing to delete a world directory outside the primary world: " + normalizedTarget);
+        }
+        try {
+            Files.walkFileTree(normalizedTarget, new SimpleFileVisitor<>() {
+                @Override public FileVisitResult visitFile(
+                    Path file, BasicFileAttributes attributes
+                ) throws IOException {
+                    Files.delete(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override public FileVisitResult postVisitDirectory(
+                    Path directory, IOException failure
+                ) throws IOException {
+                    if (failure != null) throw failure;
+                    Files.delete(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException exception) {
+            throw new IllegalStateException(
+                "Could not delete world directory " + normalizedTarget, exception);
         }
     }
 }

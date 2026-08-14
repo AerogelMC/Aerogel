@@ -300,6 +300,8 @@ world.teleport(player, 0.5, 65, 0.5);
 
 The dimension folder is saved by vanilla, while the runtime dimension registration is recreated by the plugin on every server start. Reloading or unloading the plugin does not unload the world. Recreate the same generator and call `create` again on each full server start. Generation may execute away from the server thread, so a custom generator must be thread-safe and must derive repeatable output from its seed and coordinates instead of reading mutable live-world state. `MinecraftServer.loadedLevels`, `ServerLevel.identifier`, entity lookup, radius queries, block access, spawning, `rain`, and `thunder` are also provided. Registries, recipes, particles, sounds, and data components continue to use vanilla APIs directly.
 
+`worlds.unload(id)` saves the level, moves its players to the primary overworld spawn, closes its chunk storage, and removes it from the live server. `worlds.delete(id)` performs the same safe unload and then permanently deletes only that dimension's vanilla-resolved storage directory. Both operations reject the three built-in Minecraft levels and must run on the server thread. `delete` cannot be undone.
+
 `MinecraftServer.restart()` requests Aerogel's full-process restart and returns whether the request was accepted.
 
 ## Components
