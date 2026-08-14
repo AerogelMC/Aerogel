@@ -92,7 +92,19 @@ public final class EventHooks {
 
     public static void resyncBlock(Object player, Object level, Object position) {
         Object state = call(level, "getBlockState", position);
-        call(level, "sendBlockUpdated", position, state, state, 3);
+        Object connection = field(player, "connection");
+        Object update = construct(
+            player,
+            "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket",
+            position,
+            state);
+        call(connection, "send", update);
+
+        Object blockEntity = call(level, "getBlockEntity", position);
+        if (blockEntity != null) {
+            Object blockEntityUpdate = call(blockEntity, "getUpdatePacket");
+            if (blockEntityUpdate != null) call(connection, "send", blockEntityUpdate);
+        }
         call(level, "destroyBlockProgress", call(player, "getId"), position, -1);
     }
 
