@@ -43,6 +43,20 @@ class EventRegistryTest {
     }
 
     @Test
+    void logsAListenerFailureAndContinuesDispatching() {
+        EventRegistry registry = new EventRegistry();
+        EventRegistry.OwnedEventBus events = registry.owner("test", Logger.getLogger("test"));
+        List<String> calls = new ArrayList<>();
+        events.listen(TestEvent.class, event -> { throw new IllegalStateException("expected"); });
+        events.listen(TestEvent.class, event -> calls.add("continued"));
+
+        registry.post(new TestEvent());
+        registry.post(new TestEvent());
+
+        assertEquals(List.of("continued", "continued"), calls);
+    }
+
+    @Test
     void skipsCancelledEventsUnlessRequestedAndProtectsMonitorState() {
         EventRegistry registry = new EventRegistry();
         EventRegistry.OwnedEventBus events = registry.owner("test", Logger.getLogger("test"));

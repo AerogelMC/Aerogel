@@ -10,6 +10,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
+import dev.aerogel.loader.plugin.PluginFailures;
 
 final class TickScheduler implements Scheduler, AutoCloseable {
     private static final ScheduledExecutorService ASYNC = Executors.newScheduledThreadPool(
@@ -75,7 +76,10 @@ final class TickScheduler implements Scheduler, AutoCloseable {
         private void execute() {
             if (!active.get()) return;
             try { action.run(); }
-            catch (Throwable throwable) { scope.logger().log(Level.SEVERE, "Scheduled task failed", throwable); }
+            catch (Throwable throwable) {
+                PluginFailures.rethrowFatal(throwable);
+                scope.logger().log(Level.SEVERE, "Scheduled task failed", throwable);
+            }
             if (period > 0 && active.get()) nextTick = currentTick + period;
             else close();
         }

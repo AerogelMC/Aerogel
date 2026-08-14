@@ -7,6 +7,7 @@
   "commands.aerogel.restart.prepare_failed": "Der Serverneustart konnte nicht vorbereitet werden. Details stehen in der Konsole.",
   "commands.aerogel.plugins.list": "Plugins (%s): %s",
   "commands.aerogel.plugins.none": "Keine",
+  "commands.aerogel.plugins.disabled": "Deaktiviert",
   "commands.aerogel.plugins.reload_all.starting": "Alle Plugins werden neu geladen...",
   "commands.aerogel.plugins.reload_one.starting": "Plugin %s wird neu geladen...",
   "commands.aerogel.plugins.reload_all.success": "%s Plugin(s) geladen oder neu geladen, %s in %s Sekunden entladen",

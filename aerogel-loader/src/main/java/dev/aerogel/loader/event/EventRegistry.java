@@ -5,6 +5,7 @@ import dev.aerogel.api.event.CancellableEvent;
 import dev.aerogel.api.event.EventBus;
 import dev.aerogel.api.event.EventPriority;
 import dev.aerogel.api.event.EventRegistration;
+import dev.aerogel.loader.plugin.PluginFailures;
 
 import java.lang.invoke.MethodHandle;
 import java.util.Arrays;
@@ -50,6 +51,7 @@ public final class EventRegistry {
                     throw new IllegalStateException("MONITOR listeners cannot change cancellation state");
                 }
             } catch (Throwable throwable) {
+                PluginFailures.rethrowFatal(throwable);
                 binding.logger().log(Level.SEVERE,
                     "Plugin " + binding.pluginId() + " listener failed for " + event.getClass().getName(),
                     throwable);

@@ -7,6 +7,7 @@
   "commands.aerogel.restart.prepare_failed": "サーバーの再起動を準備できませんでした。コンソールを確認してください。",
   "commands.aerogel.plugins.list": "プラグイン (%s): %s",
   "commands.aerogel.plugins.none": "なし",
+  "commands.aerogel.plugins.disabled": "無効",
   "commands.aerogel.plugins.reload_all.starting": "すべてのプラグインを再読み込みしています...",
   "commands.aerogel.plugins.reload_one.starting": "プラグイン %s を再読み込みしています...",
   "commands.aerogel.plugins.reload_all.success": "%s 個のプラグインを読み込みまたは再読み込みし、%s 個をアンロードしました（%s 秒）",

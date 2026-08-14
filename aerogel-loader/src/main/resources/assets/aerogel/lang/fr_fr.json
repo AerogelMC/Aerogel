@@ -7,6 +7,7 @@
   "commands.aerogel.restart.prepare_failed": "Impossible de préparer le redémarrage. Consultez la console.",
   "commands.aerogel.plugins.list": "Plugins (%s) : %s",
   "commands.aerogel.plugins.none": "Aucun",
+  "commands.aerogel.plugins.disabled": "Désactivé",
   "commands.aerogel.plugins.reload_all.starting": "Rechargement de tous les plugins...",
   "commands.aerogel.plugins.reload_one.starting": "Rechargement du plugin %s...",
   "commands.aerogel.plugins.reload_all.success": "%s plugin(s) chargé(s) ou rechargé(s), %s déchargé(s) en %s secondes",

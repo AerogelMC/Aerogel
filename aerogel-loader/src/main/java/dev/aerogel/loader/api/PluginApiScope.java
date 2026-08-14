@@ -8,6 +8,7 @@ import dev.aerogel.api.dialog.DialogService;
 import dev.aerogel.api.inventory.InventoryService;
 import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.translation.TranslationService;
 import net.minecraft.server.MinecraftServer;
 
 import java.util.ArrayDeque;
@@ -29,8 +30,11 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final ReflectiveScoreboardService scoreboards;
     private final ReflectiveBossBarService bossBars;
     private final ReflectiveDialogService dialogs;
+    private final PluginTranslations translations;
 
-    PluginApiScope(AerogelApiRuntime runtime, String pluginId, Logger logger) {
+    PluginApiScope(
+        AerogelApiRuntime runtime, String pluginId, Logger logger, ClassLoader resourceLoader
+    ) {
         this.runtime = runtime;
         this.pluginId = pluginId;
         this.logger = logger;
@@ -40,6 +44,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         scoreboards = new ReflectiveScoreboardService(this);
         bossBars = new ReflectiveBossBarService(this);
         dialogs = new ReflectiveDialogService(this);
+        translations = new PluginTranslations(pluginId, resourceLoader, logger);
     }
 
     <R extends Registration> R own(R resource) {
@@ -73,6 +78,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     @Override public ScoreboardService scoreboards() { return scoreboards; }
     @Override public BossBarService bossBars() { return bossBars; }
     @Override public DialogService dialogs() { return dialogs; }
+    @Override public TranslationService translations() { return translations; }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;

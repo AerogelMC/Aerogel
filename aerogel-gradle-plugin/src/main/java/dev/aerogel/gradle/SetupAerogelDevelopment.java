@@ -67,6 +67,7 @@ public abstract class SetupAerogelDevelopment extends DefaultTask {
             Path classpath = output.resolve("classpath");
             deleteTree(classpath);
             extractBundle(bundler, classpath);
+            DevelopmentJarPatcher.patch(classpath);
             Files.writeString(output.resolve("ready.txt"),
                 "minecraft=" + version + System.lineSeparator()
                     + "serverSha1=" + Hashing.sha1(bundler) + System.lineSeparator(),

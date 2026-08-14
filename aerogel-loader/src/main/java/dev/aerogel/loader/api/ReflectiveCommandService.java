@@ -1,6 +1,12 @@
 package dev.aerogel.loader.api;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.ArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import com.mojang.brigadier.Command;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.aerogel.api.command.CommandRegistration;
 import dev.aerogel.api.command.CommandService;
@@ -10,6 +16,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
+import dev.aerogel.loader.plugin.PluginFailures;
 
 final class ReflectiveCommandService implements CommandService {
     private final PluginApiScope scope;
@@ -22,13 +29,13 @@ final class ReflectiveCommandService implements CommandService {
     @Override public CommandRegistration register(
         LiteralArgumentBuilder<CommandSourceStack> brigadierRoot
     ) {
-        return registerRoot(brigadierRoot.getLiteral(), brigadierRoot);
+        return registerRoot(brigadierRoot.getLiteral(), guarded(brigadierRoot.build()));
     }
 
     @Override public CommandRegistration register(
         LiteralCommandNode<CommandSourceStack> brigadierRoot
     ) {
-        return registerRoot(brigadierRoot.getLiteral(), brigadierRoot);
+        return registerRoot(brigadierRoot.getLiteral(), guarded(brigadierRoot));
     }
 
     private CommandRegistration registerRoot(String name, Object root) {
@@ -52,13 +59,53 @@ final class ReflectiveCommandService implements CommandService {
         if (!registration.active() || registration.installed) return;
         Object server = scope.serverHandle();
         Object dispatcher = Reflect.invoke(Reflect.invoke(server, "getCommands"), "getDispatcher");
-        if (registration.root instanceof LiteralArgumentBuilder<?>) {
-            Reflect.invoke(dispatcher, "register", registration.root);
-        } else {
-            Reflect.invoke(Reflect.invoke(dispatcher, "getRoot"), "addChild", registration.root);
-        }
+        Reflect.invoke(Reflect.invoke(dispatcher, "getRoot"), "addChild", registration.root);
         registration.installed = true;
         syncCommands(server);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private CommandNode<CommandSourceStack> guarded(CommandNode<CommandSourceStack> node) {
+        ArgumentBuilder<CommandSourceStack, ?> builder = node.createBuilder();
+        Command<CommandSourceStack> command = node.getCommand();
+        if (command != null) {
+            builder.executes(context -> {
+                try {
+                    return command.run(context);
+                } catch (Throwable failure) {
+                    PluginFailures.rethrowFatal(failure);
+                    scope.logger().log(Level.SEVERE, "Command /" + node.getName() + " failed", failure);
+                    return 0;
+                }
+            });
+        }
+        if (builder instanceof RequiredArgumentBuilder<?, ?>) {
+            RequiredArgumentBuilder<CommandSourceStack, ?> required =
+                (RequiredArgumentBuilder<CommandSourceStack, ?>) builder;
+            SuggestionProvider<CommandSourceStack> suggestions = required.getSuggestionsProvider();
+            if (suggestions != null) {
+                required.suggests((context, suggestionsBuilder) -> {
+                    try {
+                        return suggestions.getSuggestions(context, suggestionsBuilder).handle((result, failure) -> {
+                            if (failure == null) return result;
+                            PluginFailures.rethrowFatal(failure);
+                            scope.logger().log(Level.SEVERE,
+                                "Suggestions for /" + node.getName() + " failed", failure);
+                            return Suggestions.empty().join();
+                        });
+                    } catch (Throwable failure) {
+                        PluginFailures.rethrowFatal(failure);
+                        scope.logger().log(Level.SEVERE,
+                            "Suggestions for /" + node.getName() + " failed", failure);
+                        return Suggestions.empty();
+                    }
+                });
+            }
+        }
+        for (CommandNode<CommandSourceStack> child : node.getChildren()) {
+            builder.then(guarded(child));
+        }
+        return builder.build();
     }
 
     private void syncCommands(Object server) {

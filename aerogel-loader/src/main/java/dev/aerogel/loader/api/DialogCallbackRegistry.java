@@ -9,6 +9,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import dev.aerogel.loader.plugin.PluginFailures;
 
 public final class DialogCallbackRegistry {
     private static final Map<String, Entry> CALLBACKS = new ConcurrentHashMap<>();
@@ -33,7 +34,10 @@ public final class DialogCallbackRegistry {
         try { entry.callback.accept(new DialogResult(
             dev.aerogel.loader.event.EventHooks.cast(player), entry.action,
             dev.aerogel.loader.event.EventHooks.cast(payload))); }
-        catch (Exception exception) { entry.logger.log(Level.SEVERE, "Dialog callback failed: " + id, exception); }
+        catch (Throwable exception) {
+            PluginFailures.rethrowFatal(exception);
+            entry.logger.log(Level.SEVERE, "Dialog callback failed: " + id, exception);
+        }
         return true;
     }
 

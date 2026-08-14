@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
+import org.objectweb.asm.ClassReader;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -54,6 +55,14 @@ class AerogelGradlePluginTest {
         }
         assertTrue(Files.isRegularFile(project.resolve(
             "build/aerogel/minecraft/26.2/classpath/versions/26.2/server.jar")));
+        Path developmentServer = project.resolve(
+            "build/aerogel/minecraft/26.2/classpath/versions/26.2/server.jar");
+        try (JarFile jar = new JarFile(developmentServer.toFile())) {
+            byte[] scheduler = jar.getInputStream(jar.getJarEntry(
+                "net/minecraft/util/thread/TaskScheduler.class")).readAllBytes();
+            assertFalse(java.util.List.of(new ClassReader(scheduler).getInterfaces())
+                .contains("java/lang/AutoCloseable"));
+        }
     }
 
     @Test
@@ -99,6 +108,8 @@ class AerogelGradlePluginTest {
             import dev.aerogel.api.event.EventHandler;
             import dev.aerogel.api.event.server.ServerStartedEvent;
             import net.minecraft.server.MinecraftServer;
+            import net.minecraft.server.level.ServerPlayer;
+            import net.minecraft.network.chat.Component;
 
             public final class ExamplePlugin implements AerogelPlugin {
                 private MinecraftServer server;
@@ -106,6 +117,8 @@ class AerogelGradlePluginTest {
                 @Override
                 public void onLoad(PluginContext context) {
                     context.events().listen(ServerStartedEvent.class, event -> server = event.server());
+                    ServerPlayer player = null;
+                    if (player != null) player.sendTitle((Component) null);
                 }
 
                 @EventHandler
@@ -127,19 +140,40 @@ class AerogelGradlePluginTest {
     private static void createFakeBundler(Path bundler) throws Exception {
         Path fixture = bundler.getParent().resolve("fixture");
         Path source = fixture.resolve("src/net/minecraft/server/MinecraftServer.java");
+        Path player = fixture.resolve("src/net/minecraft/server/level/ServerPlayer.java");
+        Path component = fixture.resolve("src/net/minecraft/network/chat/Component.java");
+        Path scheduler = fixture.resolve("src/net/minecraft/util/thread/TaskScheduler.java");
         Path classes = fixture.resolve("classes");
         Files.createDirectories(source.getParent());
         Files.createDirectories(classes);
         Files.writeString(source,
-            "package net.minecraft.server; public class MinecraftServer {}\n", StandardCharsets.UTF_8);
+            "package net.minecraft.server; public class MinecraftServer implements "
+                + "net.minecraft.util.thread.TaskScheduler {}\n", StandardCharsets.UTF_8);
+        Files.createDirectories(player.getParent());
+        Files.createDirectories(component.getParent());
+        Files.createDirectories(scheduler.getParent());
+        Files.writeString(player,
+            "package net.minecraft.server.level; public class ServerPlayer {}\n", StandardCharsets.UTF_8);
+        Files.writeString(component,
+            "package net.minecraft.network.chat; public interface Component {}\n", StandardCharsets.UTF_8);
+        Files.writeString(scheduler,
+            "package net.minecraft.util.thread; public interface TaskScheduler extends AutoCloseable {"
+                + " default void close() {} }\n", StandardCharsets.UTF_8);
         int compilation = ToolProvider.getSystemJavaCompiler().run(
-            null, null, null, "--release", "25", "-d", classes.toString(), source.toString());
+            null, null, null, "--release", "25", "-d", classes.toString(),
+            source.toString(), player.toString(), component.toString(), scheduler.toString());
         assertEquals(0, compilation);
 
         Path server = fixture.resolve("server.jar");
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(server))) {
             Path classFile = classes.resolve("net/minecraft/server/MinecraftServer.class");
             entry(output, "net/minecraft/server/MinecraftServer.class", Files.readAllBytes(classFile));
+            Path playerClass = classes.resolve("net/minecraft/server/level/ServerPlayer.class");
+            entry(output, "net/minecraft/server/level/ServerPlayer.class", Files.readAllBytes(playerClass));
+            Path componentClass = classes.resolve("net/minecraft/network/chat/Component.class");
+            entry(output, "net/minecraft/network/chat/Component.class", Files.readAllBytes(componentClass));
+            Path schedulerClass = classes.resolve("net/minecraft/util/thread/TaskScheduler.class");
+            entry(output, "net/minecraft/util/thread/TaskScheduler.class", Files.readAllBytes(schedulerClass));
         }
         String versions = Hashing.sha256(server) + "\t26.2\t26.2/server.jar\n";
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(bundler))) {

@@ -44,7 +44,7 @@ class PluginManagerReloadTest {
         assertTrue(one.successful());
         assertTrue(all.successful());
         assertEquals(List.of("test_plugin"), manager.pluginIds());
-        assertEquals(List.of(new PluginManager.PluginInfo("test_plugin", "Test")), manager.pluginInfos());
+        assertEquals(List.of(new PluginManager.PluginInfo("test_plugin", "Test", true)), manager.pluginInfos());
         assertFalse(manager.hasMixins("test_plugin"));
         assertTrue(manager.reload("missing_plugin").isEmpty());
     }
@@ -91,9 +91,36 @@ class PluginManagerReloadTest {
         assertEquals(List.of("targeted_plugin"), manager.pluginIds());
     }
 
+    @Test
+    void onePluginInitializationFailureDoesNotStopOtherPlugins() throws Exception {
+        Path plugins = serverDirectory.resolve("plugins");
+        Path broken = plugins.resolve("broken.jar");
+        writePluginWithEntrypoint(broken, "broken_plugin", "Broken", FailingLoadPlugin.class);
+        Path healthy = plugins.resolve("healthy.jar");
+        writePlugin(healthy, "healthy_plugin", "Healthy", true);
+        List<PluginDescriptor> descriptors = new PluginDiscovery().discover(plugins, "26.2");
+        PluginManager manager = new PluginManager(
+            serverDirectory, PluginManagerReloadTest.class.getClassLoader(), descriptors);
+
+        manager.loadEntrypoints();
+
+        assertEquals(List.of("healthy_plugin"), manager.pluginIds());
+        assertEquals(List.of(
+            new PluginManager.PluginInfo("broken_plugin", "Broken", false),
+            new PluginManager.PluginInfo("healthy_plugin", "Healthy", true)
+        ), manager.pluginInfos());
+        assertEquals("1", System.getProperty(ReloadFixturePlugin.LOADS));
+    }
+
     private static void writePlugin(Path path, String id, String name, boolean entrypoint) throws Exception {
+        writePluginWithEntrypoint(path, id, name, entrypoint ? ReloadFixturePlugin.class : null);
+    }
+
+    private static void writePluginWithEntrypoint(
+        Path path, String id, String name, Class<?> entrypoint
+    ) throws Exception {
         Files.createDirectories(path.getParent());
-        String entrypointName = ReloadFixturePlugin.class.getName();
+        String entrypointName = entrypoint == null ? null : entrypoint.getName();
         String metadata = """
             {
               "schemaVersion": 1,
@@ -103,15 +130,15 @@ class PluginManagerReloadTest {
               "minecraft": ">=26.2",
               "entrypoints": %s
             }
-            """.formatted(id, name, entrypoint ? "[\"" + entrypointName + "\"]" : "[]");
+            """.formatted(id, name, entrypoint == null ? "[]" : "[\"" + entrypointName + "\"]");
         try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(path))) {
             output.putNextEntry(new JarEntry(PluginDescriptor.METADATA_PATH));
             output.write(metadata.getBytes(StandardCharsets.UTF_8));
             output.closeEntry();
-            if (entrypoint) {
+            if (entrypoint != null) {
                 String classPath = entrypointName.replace('.', '/') + ".class";
                 output.putNextEntry(new JarEntry(classPath));
-                try (InputStream input = ReloadFixturePlugin.class.getClassLoader().getResourceAsStream(classPath)) {
+                try (InputStream input = entrypoint.getClassLoader().getResourceAsStream(classPath)) {
                     if (input == null) throw new IllegalStateException("Missing test fixture class " + classPath);
                     input.transferTo(output);
                 }
@@ -119,4 +146,5 @@ class PluginManagerReloadTest {
             }
         }
     }
+
 }

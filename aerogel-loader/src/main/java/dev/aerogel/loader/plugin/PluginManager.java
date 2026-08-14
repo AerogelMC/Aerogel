@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 public final class PluginManager {
     private static final AtomicLong LOAD_GENERATION = new AtomicLong();
@@ -35,6 +36,7 @@ public final class PluginManager {
     private final AerogelApiRuntime apiRuntime;
     private final PluginEventScanner eventScanner = new PluginEventScanner();
     private final Map<String, LoadedPlugin> loaded = new LinkedHashMap<>();
+    private final Map<String, PluginDescriptor> disabled = new LinkedHashMap<>();
 
     public PluginManager(Path serverDirectory, ClassLoader classLoader, List<PluginDescriptor> plugins) {
         this(serverDirectory, classLoader, plugins, new EventRegistry(), new AerogelApiRuntime());
@@ -77,13 +79,28 @@ public final class PluginManager {
     }
 
     public synchronized void loadEntrypoints() throws Exception {
-        if (!loaded.isEmpty()) {
+        if (!loaded.isEmpty() || !disabled.isEmpty()) {
             throw new IllegalStateException("Plugin entrypoints are already loaded");
         }
         for (PluginDescriptor plugin : plugins) {
-            loaded.put(plugin.id(), load(plugin));
+            String dependency = missingDependency(plugin);
+            if (dependency != null) {
+                PluginLoggers.create(plugin.id()).severe(
+                    "Plugin disabled because dependency is not loaded: " + dependency);
+                disabled.put(plugin.id(), plugin);
+                continue;
+            }
+            try {
+                loaded.put(plugin.id(), load(plugin));
+                disabled.remove(plugin.id());
+            } catch (Exception exception) {
+                disabled.put(plugin.id(), plugin);
+                PluginLoggers.create(plugin.id()).log(Level.SEVERE,
+                    "Plugin failed during onLoad and was disabled; server startup will continue", exception);
+            }
         }
     }
+
 
     public EventRegistry eventRegistry() {
         return eventRegistry;
@@ -102,6 +119,7 @@ public final class PluginManager {
         }
         plugins = discovered;
         Map<String, PluginDescriptor> byId = descriptorsById(discovered);
+        disabled.keySet().removeIf(id -> !byId.containsKey(id));
         List<String> reloaded = new ArrayList<>();
         List<String> unloaded = new ArrayList<>();
         Map<String, String> failures = new LinkedHashMap<>();
@@ -125,6 +143,7 @@ public final class PluginManager {
                     loaded.remove(descriptor.id());
                     unloaded.add(descriptor.id());
                 }
+                disabled.put(descriptor.id(), descriptor);
                 failures.put(descriptor.id(), "Dependency is not loaded: " + missingDependency);
                 continue;
             }
@@ -149,6 +168,7 @@ public final class PluginManager {
         }
         plugins = discovered;
         Map<String, PluginDescriptor> byId = descriptorsById(discovered);
+        disabled.keySet().removeIf(id -> !byId.containsKey(id));
         PluginDescriptor descriptor = byId.get(normalized);
         LoadedPlugin current = loaded.get(normalized);
         if (descriptor == null && current == null) {
@@ -157,6 +177,7 @@ public final class PluginManager {
         if (descriptor == null) {
             unload(current);
             loaded.remove(normalized);
+            disabled.remove(normalized);
             return Optional.of(new ReloadResult(List.of(), List.of(normalized), Map.of()));
         }
 
@@ -203,11 +224,14 @@ public final class PluginManager {
             unload(plugin);
         }
         loaded.clear();
+        disabled.clear();
     }
 
     public synchronized List<PluginInfo> pluginInfos() {
-        return loaded.values().stream()
-            .map(plugin -> new PluginInfo(plugin.descriptor().id(), plugin.descriptor().name()))
+        return plugins.stream()
+            .filter(plugin -> loaded.containsKey(plugin.id()) || disabled.containsKey(plugin.id()))
+            .map(plugin -> new PluginInfo(
+                plugin.id(), plugin.name(), loaded.containsKey(plugin.id())))
             .toList();
     }
 
@@ -241,8 +265,10 @@ public final class PluginManager {
         loaded.remove(pluginId);
         try {
             loaded.put(pluginId, load(descriptor, activeMixinState));
+            disabled.remove(pluginId);
             return null;
         } catch (Exception exception) {
+            disabled.put(pluginId, descriptor);
             plugin.context().logger().severe("Reload failed: " + exception.getMessage());
             return exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
         }
@@ -250,11 +276,16 @@ public final class PluginManager {
 
     private String loadNew(PluginDescriptor descriptor) {
         String missingDependency = missingDependency(descriptor);
-        if (missingDependency != null) return "Dependency is not loaded: " + missingDependency;
+        if (missingDependency != null) {
+            disabled.put(descriptor.id(), descriptor);
+            return "Dependency is not loaded: " + missingDependency;
+        }
         try {
             loaded.put(descriptor.id(), load(descriptor));
+            disabled.remove(descriptor.id());
             return null;
         } catch (Exception exception) {
+            disabled.put(descriptor.id(), descriptor);
             return message(exception);
         }
     }
@@ -308,27 +339,29 @@ public final class PluginManager {
         Files.createDirectories(dataDirectory);
         Logger logger = PluginLoggers.create(plugin.id());
         EventRegistry.OwnedEventBus events = eventRegistry.owner(plugin.id(), logger);
-        PluginApiScope api = apiRuntime.openScope(plugin.id(), logger);
         Path stagedJar = null;
         PluginClassLoader reloadableLoader = null;
         ClassLoader pluginLoader = classLoader;
         PluginDescriptor runtimeDescriptor = plugin;
-        stagedJar = stage(plugin);
-        List<PluginClassLoader> dependencyLoaders = plugin.dependencies().keySet().stream()
-            .map(loaded::get)
-            .filter(java.util.Objects::nonNull)
-            .map(LoadedPlugin::classLoader)
-            .toList();
-        reloadableLoader = new PluginClassLoader(
-            stagedJar.toUri().toURL(), classLoader, dependencyLoaders);
-        pluginLoader = reloadableLoader;
-        runtimeDescriptor = withJar(plugin, stagedJar);
-        PluginContext context = new Context(
-            plugin.id(), plugin.version(), serverDirectory, dataDirectory, logger, events, api
-        );
+        PluginApiScope api = null;
+        PluginContext context = null;
         List<AerogelPlugin> instances = new ArrayList<>();
         Map<String, Object> instancesByClass = new LinkedHashMap<>();
         try {
+            stagedJar = stage(plugin);
+            List<PluginClassLoader> dependencyLoaders = plugin.dependencies().keySet().stream()
+                .map(loaded::get)
+                .filter(java.util.Objects::nonNull)
+                .map(LoadedPlugin::classLoader)
+                .toList();
+            reloadableLoader = new PluginClassLoader(
+                stagedJar.toUri().toURL(), classLoader, dependencyLoaders);
+            pluginLoader = reloadableLoader;
+            runtimeDescriptor = withJar(plugin, stagedJar);
+            api = apiRuntime.openScope(plugin.id(), logger, pluginLoader);
+            context = new Context(
+                plugin.id(), plugin.version(), serverDirectory, dataDirectory, logger, events, api
+            );
             for (String entrypoint : plugin.entrypoints()) {
                 Class<?> type = Class.forName(entrypoint, true, pluginLoader);
                 Object instance = type.getDeclaredConstructor().newInstance();
@@ -343,12 +376,14 @@ public final class PluginManager {
             return new LoadedPlugin(
                 plugin, context, List.copyOf(instances), events, api,
                 reloadableLoader, stagedJar, mixinState);
-        } catch (Exception exception) {
+        } catch (Throwable exception) {
+            PluginFailures.rethrowFatal(exception);
             events.close();
-            api.close();
-            unloadReverse(instances, context);
+            if (api != null) api.close();
+            if (context != null) unloadReverse(instances, context);
             closeLoader(reloadableLoader, stagedJar, logger);
-            throw exception;
+            if (exception instanceof Exception checked) throw checked;
+            throw new IllegalStateException("Plugin linkage failed: " + plugin.id(), exception);
         }
     }
 
@@ -412,7 +447,7 @@ public final class PluginManager {
         }
     }
 
-    public record PluginInfo(String id, String name) {
+    public record PluginInfo(String id, String name, boolean enabled) {
     }
 
     private record LoadedPlugin(

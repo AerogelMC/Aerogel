@@ -4,11 +4,13 @@ plugins {
 }
 
 val gsonVersion: String by project
+val asmVersion: String by project
 val junitVersion: String by project
 
 dependencies {
     implementation(project(":aerogel-api"))
     implementation("com.google.code.gson:gson:$gsonVersion")
+    implementation("org.ow2.asm:asm:$asmVersion")
 
     testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")

@@ -5,6 +5,7 @@ import dev.aerogel.loader.install.ServerBundle;
 import dev.aerogel.loader.mixin.MixinBootstrapper;
 import dev.aerogel.loader.plugin.PluginDescriptor;
 import dev.aerogel.loader.plugin.PluginDiscovery;
+import dev.aerogel.loader.plugin.PluginSnapshots;
 import dev.aerogel.loader.util.Hashing;
 
 import java.lang.reflect.InvocationTargetException;
@@ -39,9 +40,9 @@ public final class AerogelServerBootstrap {
             serverJar,
             serverDirectory.resolve(".aerogel").resolve("bundle").resolve(minecraftVersion + "-" + bundleKey)
         );
-        List<PluginDescriptor> plugins = new PluginDiscovery().discover(
+        List<PluginDescriptor> plugins = PluginSnapshots.stage(new PluginDiscovery().discover(
             serverDirectory.resolve("plugins"), minecraftVersion
-        );
+        ), serverDirectory);
         List<URL> urls = new ArrayList<>();
         urls.add(AerogelServerBootstrap.class.getProtectionDomain().getCodeSource().getLocation());
         for (Path artifact : bundle.classPath()) {

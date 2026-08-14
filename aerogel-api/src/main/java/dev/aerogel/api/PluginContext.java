@@ -7,6 +7,7 @@ import dev.aerogel.api.dialog.DialogService;
 import dev.aerogel.api.inventory.InventoryService;
 import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.translation.TranslationService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -28,6 +29,7 @@ public interface PluginContext {
 
     AerogelServer server();
 
+    /** Returns the live server owned by Aerogel. Plugins must not close it. */
     default MinecraftServer minecraft() { return server().vanilla(); }
 
     default CommandService commands() { return server().commands(); }
@@ -36,4 +38,5 @@ public interface PluginContext {
     default ScoreboardService scoreboards() { return server().scoreboards(); }
     default BossBarService bossBars() { return server().bossBars(); }
     default DialogService dialogs() { return server().dialogs(); }
+    default TranslationService translations() { return server().translations(); }
 }

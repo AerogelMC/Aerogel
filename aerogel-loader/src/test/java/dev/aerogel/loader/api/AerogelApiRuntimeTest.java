@@ -8,6 +8,7 @@ import java.util.logging.Logger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class AerogelApiRuntimeTest {
     @Test
@@ -50,6 +51,28 @@ final class AerogelApiRuntimeTest {
         server.tick = 5;
         runtime.tick(server);
         assertEquals(3, calls.get());
+    }
+
+    @Test
+    void aFailingRepeatingTaskRemainsActiveAndDoesNotEscapeTheTick() {
+        AerogelApiRuntime runtime = new AerogelApiRuntime();
+        PluginApiScope scope = runtime.openScope("test", Logger.getAnonymousLogger());
+        FakeServer server = new FakeServer();
+        AtomicInteger calls = new AtomicInteger();
+        var repeating = scope.scheduler().repeat(0, 1, () -> {
+            calls.incrementAndGet();
+            throw new IllegalStateException("expected");
+        });
+
+        runtime.attach(server);
+        server.tick = 1;
+        runtime.tick(server);
+        server.tick = 2;
+        runtime.tick(server);
+
+        assertEquals(2, calls.get());
+        assertTrue(repeating.active());
+        scope.close();
     }
 
     public static final class FakeServer {

@@ -17,11 +17,10 @@ abstract class ServerCommonPacketListenerMixin {
     @Inject(method = "handleCustomClickAction", at = @At("HEAD"), cancellable = true)
     private void aerogel$dialogAction(@Coerce Object packet, CallbackInfo callbackInfo) {
         String id = String.valueOf(EventHooks.call(packet, "id"));
-        Object player;
-        try { player = EventHooks.call(this, "getPlayer"); }
-        catch (IllegalStateException ignored) { return; }
+        net.minecraft.server.level.ServerPlayer player = playerOrNull();
+        if (player == null) return;
         PlayerCustomClickActionEvent event = new PlayerCustomClickActionEvent(
-            EventHooks.cast(player), EventHooks.cast(packet));
+            player, EventHooks.cast(packet));
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
@@ -34,12 +33,18 @@ abstract class ServerCommonPacketListenerMixin {
 
     @Inject(method = "handleCustomPayload", at = @At("HEAD"), cancellable = true)
     private void aerogel$customPayload(@Coerce Object packet, CallbackInfo callbackInfo) {
-        post(new PlayerCustomPayloadEvent(player(), EventHooks.cast(packet)), callbackInfo);
+        net.minecraft.server.level.ServerPlayer player = playerOrNull();
+        if (player != null) {
+            post(new PlayerCustomPayloadEvent(player, EventHooks.cast(packet)), callbackInfo);
+        }
     }
 
     @Inject(method = "handleResourcePackResponse", at = @At("HEAD"), cancellable = true)
     private void aerogel$resourcePackResponse(@Coerce Object packet, CallbackInfo callbackInfo) {
-        post(new PlayerResourcePackStatusEvent(player(), EventHooks.cast(packet)), callbackInfo);
+        net.minecraft.server.level.ServerPlayer player = playerOrNull();
+        if (player != null) {
+            post(new PlayerResourcePackStatusEvent(player, EventHooks.cast(packet)), callbackInfo);
+        }
     }
 
     private void post(PlayerPacketEvent event, CallbackInfo callbackInfo) {
@@ -47,7 +52,11 @@ abstract class ServerCommonPacketListenerMixin {
         if (event.isCancelled()) callbackInfo.cancel();
     }
 
-    private net.minecraft.server.level.ServerPlayer player() {
-        return EventHooks.cast(EventHooks.call(this, "getPlayer"));
+    private net.minecraft.server.level.ServerPlayer playerOrNull() {
+        if (!EventHooks.isInstance(this,
+            "net.minecraft.server.network.ServerGamePacketListenerImpl")) {
+            return null;
+        }
+        return EventHooks.cast(EventHooks.field(this, "player"));
     }
 }

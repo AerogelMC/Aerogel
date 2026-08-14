@@ -7,6 +7,7 @@
   "commands.aerogel.restart.prepare_failed": "無法準備伺服器重新啟動，請查看主控台。",
   "commands.aerogel.plugins.list": "插件（%s 個）：%s",
   "commands.aerogel.plugins.none": "無",
+  "commands.aerogel.plugins.disabled": "已停用",
   "commands.aerogel.plugins.reload_all.starting": "正在重新載入所有插件...",
   "commands.aerogel.plugins.reload_one.starting": "正在重新載入插件 %s...",
   "commands.aerogel.plugins.reload_all.success": "已載入或重新載入 %s 個插件，卸載 %s 個，耗時 %s 秒",

@@ -44,11 +44,14 @@ public final class AerogelMain {
             }
             case SETUP -> setup(options);
             case DOCTOR -> doctor(build, options);
-            case RUN -> run(build, options);
+            case RUN -> run(build, options, args);
         };
     }
 
-    private static int run(BuildInfo build, LaunchOptions options) throws IOException, InterruptedException {
+    private static int run(BuildInfo build, LaunchOptions options, String[] arguments)
+        throws IOException, InterruptedException {
+        Integer snapshotStatus = RuntimeSnapshot.relaunchIfNeeded(options.gameDirectory(), arguments);
+        if (snapshotStatus != null) return snapshotStatus;
         if (!Files.isRegularFile(options.serverJar())) {
             int setupStatus = setup(options);
             if (setupStatus != 0) {

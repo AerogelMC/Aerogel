@@ -7,6 +7,7 @@
   "commands.aerogel.restart.prepare_failed": "Не удалось подготовить перезапуск. Подробности в консоли.",
   "commands.aerogel.plugins.list": "Плагины (%s): %s",
   "commands.aerogel.plugins.none": "Нет",
+  "commands.aerogel.plugins.disabled": "Отключён",
   "commands.aerogel.plugins.reload_all.starting": "Перезагрузка всех плагинов...",
   "commands.aerogel.plugins.reload_one.starting": "Перезагрузка плагина %s...",
   "commands.aerogel.plugins.reload_all.success": "Загружено или перезагружено плагинов: %s, выгружено: %s за %s с",

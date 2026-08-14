@@ -10,6 +10,7 @@ import dev.aerogel.api.event.player.PlayerAbilitiesChangeEvent;
 import dev.aerogel.api.event.player.PlayerAdvancementsScreenEvent;
 import dev.aerogel.api.event.player.PlayerActionEvent;
 import dev.aerogel.api.event.player.PlayerAttackEntityEvent;
+import dev.aerogel.api.event.player.ChatRender;
 import dev.aerogel.api.event.player.PlayerChatEvent;
 import dev.aerogel.api.event.player.PlayerClientCommandEvent;
 import dev.aerogel.api.event.player.PlayerClientInformationEvent;
@@ -33,9 +34,13 @@ import dev.aerogel.api.event.player.PlayerUseItemEvent;
 import dev.aerogel.api.event.player.PlayerUseItemOnBlockEvent;
 import dev.aerogel.api.event.player.PlayerVehicleMoveEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.plugin.PluginFailures;
 import dev.aerogel.loader.restart.RestartCoordinator;
+import net.minecraft.core.Holder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ChatType;
+import net.minecraft.network.chat.ChatTypeDecoration;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
@@ -45,6 +50,11 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @Mixin(targets = "net.minecraft.server.network.ServerGamePacketListenerImpl")
 abstract class ServerGamePacketListenerMixin {
@@ -196,10 +206,42 @@ abstract class ServerGamePacketListenerMixin {
         PlayerChatEvent event = new PlayerChatEvent(player, signedMessage);
         EventHooks.post(event);
         if (event.isCancelled()) return;
-        PlayerChatMessage outgoing = event.isModified()
-            ? signedMessage.withUnsignedContent(event.message())
+        Component content = event.message();
+        ChatType.Bound outgoingType = chatType;
+        if (event.renderer().isPresent()) {
+            try {
+                ChatRender render = event.renderer().orElseThrow().render(player, content);
+                content = render.message();
+                List<ChatTypeDecoration.Parameter> parameters = List.of(
+                    ChatTypeDecoration.Parameter.SENDER,
+                    ChatTypeDecoration.Parameter.CONTENT,
+                    ChatTypeDecoration.Parameter.TARGET
+                );
+                ChatTypeDecoration display = new ChatTypeDecoration(
+                    "%1$s%2$s%3$s", parameters, net.minecraft.network.chat.Style.EMPTY);
+                ChatTypeDecoration narration = new ChatTypeDecoration(
+                    "%1$s%2$s%3$s", parameters, net.minecraft.network.chat.Style.EMPTY);
+                outgoingType = new ChatType.Bound(
+                    Holder.direct(new ChatType(display, narration)),
+                    aerogel$join(render.prefix()), Optional.of(aerogel$join(render.suffix())));
+            } catch (Throwable failure) {
+                PluginFailures.rethrowFatal(failure);
+                Logger.getLogger("Aerogel").log(Level.SEVERE,
+                    "Plugin chat renderer failed; using the vanilla chat format", failure);
+            }
+        }
+        PlayerChatMessage outgoing = event.isModified() || content != signedMessage.decoratedContent()
+            ? signedMessage.withUnsignedContent(content)
             : signedMessage;
-        playerList.broadcastChatMessage(outgoing, player, chatType);
+        playerList.broadcastChatMessage(outgoing, player, outgoingType);
+    }
+
+    private static Component aerogel$join(List<Component> components) {
+        MutableComponent result = Component.empty();
+        for (Component component : components) {
+            result.append(component);
+        }
+        return result;
     }
 
     @Inject(method = "handleUseItem(Lnet/minecraft/network/protocol/game/ServerboundUseItemPacket;)V",

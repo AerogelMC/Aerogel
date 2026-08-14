@@ -6,6 +6,7 @@ import dev.aerogel.loader.event.EventRegistry;
 import dev.aerogel.loader.plugin.PluginDescriptor;
 import dev.aerogel.loader.plugin.PluginDiscovery;
 import dev.aerogel.loader.plugin.PluginManager;
+import dev.aerogel.loader.plugin.PluginSnapshots;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -21,8 +22,8 @@ public final class ServerRuntime {
         Path serverDirectory, String minecraftVersion, String mainClass, String[] args
     ) throws Throwable {
         ClassLoader target = ServerRuntime.class.getClassLoader();
-        List<PluginDescriptor> plugins = new PluginDiscovery().discover(
-            serverDirectory.resolve("plugins"), minecraftVersion);
+        List<PluginDescriptor> plugins = PluginSnapshots.stage(new PluginDiscovery().discover(
+            serverDirectory.resolve("plugins"), minecraftVersion), serverDirectory);
         AerogelApiRuntime apiRuntime = new AerogelApiRuntime();
         PluginManager pluginManager = new PluginManager(
             serverDirectory, target, plugins, new EventRegistry(), apiRuntime, minecraftVersion);

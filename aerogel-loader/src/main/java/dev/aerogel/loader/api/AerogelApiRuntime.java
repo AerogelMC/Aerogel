@@ -1,5 +1,6 @@
 package dev.aerogel.loader.api;
 
+
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -8,7 +9,13 @@ public final class AerogelApiRuntime implements AutoCloseable {
     private volatile Object server;
 
     public PluginApiScope openScope(String pluginId, java.util.logging.Logger logger) {
-        PluginApiScope scope = new PluginApiScope(this, pluginId, logger);
+        return openScope(pluginId, logger, AerogelApiRuntime.class.getClassLoader());
+    }
+
+    public PluginApiScope openScope(
+        String pluginId, java.util.logging.Logger logger, ClassLoader resourceLoader
+    ) {
+        PluginApiScope scope = new PluginApiScope(this, pluginId, logger, resourceLoader);
         scopes.add(scope);
         if (server != null) scope.serverReady();
         return scope;

@@ -201,6 +201,7 @@ public final class PluginsCommand {
             Class<?> mutableType = Class.forName("net.minecraft.network.chat.MutableComponent", true, loader);
             Class<?> formattingType = Class.forName("net.minecraft.ChatFormatting", true, loader);
             Object gray = formattingType.getField("GRAY").get(null);
+            Object red = formattingType.getField("RED").get(null);
             Object result = componentType.getMethod("empty").invoke(null);
             Method appendString = mutableType.getMethod("append", String.class);
             Method appendComponent = mutableType.getMethod("append", componentType);
@@ -211,14 +212,35 @@ public final class PluginsCommand {
                     appendString.invoke(result, ", ");
                 }
                 if (plugin.name().equals(plugin.id())) {
-                    appendString.invoke(result, plugin.id());
-                    continue;
+                    Object name = componentType.getMethod("literal", String.class)
+                        .invoke(null, plugin.id());
+                    if (!plugin.enabled()) {
+                        withStyle.invoke(name, red);
+                    }
+                    appendComponent.invoke(result, name);
+                } else {
+                    Object name = componentType.getMethod("literal", String.class)
+                        .invoke(null, plugin.name());
+                    if (!plugin.enabled()) {
+                        withStyle.invoke(name, red);
+                    }
+                    appendComponent.invoke(result, name);
+                    Object id = componentType.getMethod("literal", String.class)
+                        .invoke(null, " <" + plugin.id() + ">");
+                    withStyle.invoke(id, gray);
+                    appendComponent.invoke(result, id);
                 }
-                appendString.invoke(result, plugin.name());
-                Object id = componentType.getMethod("literal", String.class)
-                    .invoke(null, " <" + plugin.id() + ">");
-                withStyle.invoke(id, gray);
-                appendComponent.invoke(result, id);
+                if (!plugin.enabled()) {
+                    Object source = context.getClass().getMethod("getSource").invoke(context);
+                    String fallback = CommandTranslations.fallback(
+                        sourceLanguage(source), ROOT + "disabled", "Disabled");
+                    Object status = componentType.getMethod(
+                            "translatableWithFallback", String.class, String.class, Object[].class)
+                        .invoke(null, ROOT + "disabled", fallback, new Object[0]);
+                    withStyle.invoke(status, red);
+                    appendString.invoke(result, " — ");
+                    appendComponent.invoke(result, status);
+                }
             }
             return result;
         }

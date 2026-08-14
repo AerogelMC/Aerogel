@@ -94,11 +94,13 @@ public final class ServerProcessLauncher {
     private List<String> command(LaunchOptions options) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable().toString());
+        command.addAll(RuntimeSnapshot.inheritedJvmArguments());
         if (options.jvmArguments().stream().noneMatch(argument -> argument.startsWith("--enable-native-access"))) {
             command.add("--enable-native-access=ALL-UNNAMED");
         }
         command.addAll(options.jvmArguments());
-        Path agentJar = agentJar();
+        Path runtimeJar = RuntimeSnapshot.latestOrCurrent(options.gameDirectory());
+        Path agentJar = agentJar(runtimeJar);
         if (agentJar != null) {
             command.add("-javaagent:" + agentJar);
         }
@@ -106,7 +108,7 @@ public final class ServerProcessLauncher {
         command.add("-Daerogel.minecraftVersion=" + options.minecraftVersion());
         command.add("-Daerogel.version=" + buildInfo.version());
         command.add("-cp");
-        command.add(absoluteClassPath());
+        command.add(absoluteClassPath(runtimeJar));
         command.add(AerogelServerBootstrap.class.getName());
         command.addAll(options.serverArguments());
         if (!options.gui() && options.serverArguments().stream().noneMatch(arg -> arg.equalsIgnoreCase("nogui"))) {
@@ -142,28 +144,30 @@ public final class ServerProcessLauncher {
         return Path.of(System.getProperty("java.home"), "bin", executable).toAbsolutePath().normalize();
     }
 
-    private static String absoluteClassPath() {
+    private static String absoluteClassPath(Path runtimeJar) {
         Path originalDirectory = Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+        Path currentRuntime = RuntimeSnapshot.codeSource();
         return Pattern.compile(Pattern.quote(System.getProperty("path.separator")))
             .splitAsStream(System.getProperty("java.class.path"))
             .map(Path::of)
             .map(path -> path.isAbsolute() ? path.normalize() : originalDirectory.resolve(path).normalize())
+            .map(path -> runtimeJar != null && currentRuntime != null && path.equals(currentRuntime)
+                ? runtimeJar : path)
             .map(Path::toString)
             .reduce((left, right) -> left + System.getProperty("path.separator") + right)
             .orElseThrow(() -> new IllegalStateException("Empty Java classpath"));
     }
 
-    private static Path agentJar() {
+    private static Path agentJar(Path runtimeJar) {
         try {
-            Path location = Path.of(AerogelMain.class.getProtectionDomain().getCodeSource().getLocation().toURI())
-                .toAbsolutePath().normalize();
-            if (!Files.isRegularFile(location)) {
+            Path location = runtimeJar == null ? RuntimeSnapshot.codeSource() : runtimeJar;
+            if (location == null || !Files.isRegularFile(location)) {
                 return null;
             }
             try (JarFile jar = new JarFile(location.toFile(), false)) {
                 return jar.getJarEntry("org/spongepowered/tools/agent/MixinAgent.class") == null ? null : location;
             }
-        } catch (java.net.URISyntaxException | IOException exception) {
+        } catch (IOException exception) {
             return null;
         }
     }
