@@ -7,4 +7,5 @@ build/
 /server/
 *.log
 logs/
+work/
 hs_err_pid*.log

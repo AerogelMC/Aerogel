@@ -281,6 +281,14 @@ Notice and confirmation dialogs have high-level builders. `nativeDialog` accepts
 ```java
 MinecraftServer server = context.minecraft();
 ServerLevel world = server.overworld();
+ServerLevel arena = context.worlds().createFlat("arena");
+ServerLevel empty = context.worlds().createVoid("empty");
+ServerLevel nether = context.worlds().createVanilla(
+    "nether_arena", seed, VanillaDimension.NETHER
+);
+ServerLevel islands = context.worlds().create(
+    "islands", seed, new IslandChunkGenerator(biomeSource)
+);
 
 world.setDayTime(6000);
 world.clearWeather(20 * 60);
@@ -288,7 +296,9 @@ world.block(0, 64, 0, Blocks.STONE.defaultBlockState(), 3);
 world.teleport(player, 0.5, 65, 0.5);
 ```
 
-`MinecraftServer.loadedLevels`, `ServerLevel.identifier`, entity lookup, radius queries, block access, spawning, `rain`, and `thunder` are provided. Advanced dimension creation, chunk generation, registries, recipes, particles, sounds, and data components continue to use vanilla APIs directly.
+`createFlat("arena")` uses the plugin-local id `<plugin-id>:arena` and the server seed. Use `createFlat(id, seed, settings)` with a vanilla `FlatLevelGeneratorSettings` for the same layers, biome, structures, lakes, and decoration controls used by Minecraft superflat generation. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. `createVanilla` clones the complete built-in overworld, Nether, or End stem, including the correct dimension type. `create(id, generator)` and its seed/dimension overloads accept a plugin-defined vanilla `ChunkGenerator` directly, without reducing it to an Aerogel callback model. Repeating a call returns the loaded world when its generator and dimension types match and fails on a type collision. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. Call world creation from the server thread after the server becomes ready, normally from `ServerStartedEvent` or a synchronous scheduled task. The Minecraft server is not attached yet during the initial `onLoad` callback.
+
+The dimension folder is saved by vanilla, while the runtime dimension registration is recreated by the plugin on every server start. Reloading or unloading the plugin does not unload the world. Recreate the same generator and call `create` again on each full server start. Generation may execute away from the server thread, so a custom generator must be thread-safe and must derive repeatable output from its seed and coordinates instead of reading mutable live-world state. `MinecraftServer.loadedLevels`, `ServerLevel.identifier`, entity lookup, radius queries, block access, spawning, `rain`, and `thunder` are also provided. Registries, recipes, particles, sounds, and data components continue to use vanilla APIs directly.
 
 `MinecraftServer.restart()` requests Aerogel's full-process restart and returns whether the request was accepted.
 

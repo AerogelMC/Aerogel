@@ -9,6 +9,7 @@ import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
 import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
+import dev.aerogel.api.world.WorldService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -41,4 +42,5 @@ public interface PluginContext {
     default DialogService dialogs() { return server().dialogs(); }
     default TranslationService translations() { return server().translations(); }
     default StorageService storage() { return server().storage(); }
+    default WorldService worlds() { return server().worlds(); }
 }

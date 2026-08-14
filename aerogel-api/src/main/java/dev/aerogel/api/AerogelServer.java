@@ -8,6 +8,7 @@ import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
 import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
+import dev.aerogel.api.world.WorldService;
 import net.minecraft.server.MinecraftServer;
 
 /** Plugin-owned access to Aerogel conveniences and the live vanilla server. */
@@ -24,4 +25,5 @@ public interface AerogelServer {
     DialogService dialogs();
     TranslationService translations();
     StorageService storage();
+    WorldService worlds();
 }

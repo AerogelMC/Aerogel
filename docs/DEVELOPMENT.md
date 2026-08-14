@@ -546,6 +546,15 @@ Other conveniences include `kick`, `clearTitle`, predicate-based `removeItems`, 
 
 ```java
 ServerLevel level = context.minecraft().overworld();
+ServerLevel arena = context.worlds().createFlat("arena");
+ServerLevel seededArena = context.worlds().createFlat("practice", 12345L);
+ServerLevel empty = context.worlds().createVoid("empty");
+ServerLevel nether = context.worlds().createVanilla(
+    "nether_arena", 12345L, VanillaDimension.NETHER
+);
+ServerLevel islands = context.worlds().create(
+    "islands", 12345L, new IslandChunkGenerator(biomeSource)
+);
 
 level.setDayTime(6000);
 level.clearWeather(20 * 60);
@@ -561,6 +570,8 @@ level.teleport(player, 0.5, 65, 0.5);
 ```
 
 Use Aerogel conveniences for common operations and continue directly with vanilla registries, chunks, recipes, particles, sounds, data components, and entity APIs when needed.
+
+An unqualified world id is automatically namespaced to the plugin, so `arena` becomes `<plugin-id>:arena`. A fully qualified id such as `shared:arena` is useful when multiple plugins intentionally share one level. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. The `createFlat` overload accepting `FlatLevelGeneratorSettings` exposes Minecraft's complete superflat layer, biome, structure, lake, and decoration rules. `createVanilla` creates a built-in overworld, Nether, or End generator with its matching dimension type. `create(id, generator)` and its seed/dimension overloads accept a vanilla-compatible `ChunkGenerator` implemented by the plugin, retaining the full 26.2 generation pipeline rather than imposing an Aerogel terrain callback. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. World creation must run on the server thread after the server is attached; use `ServerStartedEvent`, not the initial `onLoad` callback. The world remains server-owned across plugin reloads, its chunks are saved normally, and the plugin must recreate its generator and call `create` again on every full server start to restore the runtime dimension registration. Chunk generation is asynchronous: keep the generator thread-safe and deterministic, and do not read mutable live-world state from it.
 
 ### Packets
 

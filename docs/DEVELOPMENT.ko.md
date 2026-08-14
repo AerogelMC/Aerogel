@@ -520,6 +520,15 @@ server.broadcast(Component.literal("Round complete"));
 
 ```java
 ServerLevel level = context.minecraft().overworld();
+ServerLevel arena = context.worlds().createFlat("arena");
+ServerLevel seededArena = context.worlds().createFlat("practice", 12345L);
+ServerLevel empty = context.worlds().createVoid("empty");
+ServerLevel nether = context.worlds().createVanilla(
+    "nether_arena", 12345L, VanillaDimension.NETHER
+);
+ServerLevel islands = context.worlds().create(
+    "islands", 12345L, new IslandChunkGenerator(biomeSource)
+);
 
 level.setDayTime(6000);
 level.clearWeather(20 * 60);
@@ -535,6 +544,8 @@ level.teleport(player, 0.5, 65, 0.5);
 ```
 
 일반적인 작업에는 Aerogel 편의 메서드를 사용하고, 레지스트리, 청크, 레시피, 파티클, 사운드, 데이터 컴포넌트, 엔티티 세부 API가 필요하면 바닐라 API를 직접 이어서 사용하세요.
+
+네임스페이스가 없는 월드 ID에는 플러그인 ID가 자동으로 붙으므로 `arena`는 `<plugin-id>:arena`가 됩니다. 여러 플러그인이 의도적으로 같은 월드를 공유한다면 `shared:arena`처럼 전체 ID를 사용하세요. `createVoid`는 블록이나 발판을 자동 설치하지 않는 완전한 공허 월드를 만듭니다. `FlatLevelGeneratorSettings`를 받는 `createFlat` 오버로드에서는 마인크래프트 평지 월드의 레이어, 바이옴, 구조물, 호수, 장식 규칙을 모두 지정할 수 있습니다. `createVanilla`는 올바른 차원 타입과 함께 바닐라 오버월드, 네더, 엔드 생성기를 만듭니다. `create(id, generator)`와 seed·차원 타입 오버로드에는 플러그인이 구현한 바닐라 호환 `ChunkGenerator`를 직접 전달합니다. Aerogel 전용 지형 콜백으로 기능을 줄이지 않으므로 26.2 생성 파이프라인을 그대로 제어할 수 있습니다. 반환된 `ServerLevel`은 서버 소유이므로 플러그인이 직접 닫으면 안 됩니다. 월드 생성은 서버가 연결된 뒤 서버 스레드에서 실행해야 하므로 최초 `onLoad`가 아니라 `ServerStartedEvent`를 사용합니다. 생성된 월드는 플러그인 리로드 후에도 서버 소유로 유지되고 청크도 정상 저장되지만, 서버를 완전히 다시 켤 때는 생성기를 다시 만들고 `create`를 호출해 런타임 차원 등록을 복원해야 합니다. 청크 생성은 비동기로 실행될 수 있으므로 생성기는 스레드 안전하고 결정적이어야 하며, 변하는 실시간 월드 상태를 읽어 지형을 만들면 안 됩니다.
 
 ### 패킷
 

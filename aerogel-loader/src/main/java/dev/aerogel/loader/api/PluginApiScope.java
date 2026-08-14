@@ -10,6 +10,7 @@ import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
 import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
+import dev.aerogel.api.world.WorldService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -34,6 +35,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final ReflectiveDialogService dialogs;
     private final PluginTranslations translations;
     private final ManagedStorageService storage;
+    private final ReflectiveWorldService worlds;
 
     PluginApiScope(
         AerogelApiRuntime runtime,
@@ -53,6 +55,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         dialogs = new ReflectiveDialogService(this);
         translations = new PluginTranslations(pluginId, resourceLoader, logger);
         storage = new ManagedStorageService(this, dataDirectory, logger);
+        worlds = new ReflectiveWorldService(this);
     }
 
     <R extends Registration> R own(R resource) {
@@ -91,6 +94,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     @Override public DialogService dialogs() { return dialogs; }
     @Override public TranslationService translations() { return translations; }
     @Override public StorageService storage() { return storage; }
+    @Override public WorldService worlds() { return worlds; }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
