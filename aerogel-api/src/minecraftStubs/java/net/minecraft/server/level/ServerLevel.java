@@ -1,18 +1,44 @@
 package net.minecraft.server.level;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.ProgressListener;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.CustomSpawner;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.Level;
-import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.border.WorldBorder;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.dimension.LevelStem;
+import net.minecraft.world.level.storage.LevelStorageSource;
+import net.minecraft.world.level.storage.ServerLevelData;
 
+import java.io.IOException;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.function.Predicate;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class ServerLevel extends Level {
+    public ServerLevel(
+        MinecraftServer server,
+        Executor executor,
+        LevelStorageSource.LevelStorageAccess storage,
+        ServerLevelData levelData,
+        ResourceKey<Level> levelKey,
+        LevelStem stem,
+        boolean debug,
+        long biomeSeed,
+        List<CustomSpawner> customSpawners,
+        boolean tickTime
+    ) {
+    }
+
     public ServerChunkCache getChunkSource() { return null; }
     public MinecraftServer getServer() { return null; }
     public String identifier() { return null; }
@@ -41,4 +67,9 @@ public class ServerLevel extends Level {
     public long getGameTime() { return 0; }
     public long getDayTime() { return 0; }
     public void setDayTime(long time) { }
+    public List<ServerPlayer> players() { return null; }
+    public void save(ProgressListener listener, boolean flush, boolean skipSave) { }
+    public void close() throws IOException { }
+    public WorldBorder getWorldBorder() { return null; }
+    public Holder<DimensionType> dimensionTypeRegistration() { return null; }
 }

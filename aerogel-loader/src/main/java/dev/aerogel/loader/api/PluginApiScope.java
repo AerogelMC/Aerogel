@@ -35,7 +35,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final ReflectiveDialogService dialogs;
     private final PluginTranslations translations;
     private final ManagedStorageService storage;
-    private final ReflectiveWorldService worlds;
+    private final VanillaWorldService worlds;
 
     PluginApiScope(
         AerogelApiRuntime runtime,
@@ -55,7 +55,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         dialogs = new ReflectiveDialogService(this);
         translations = new PluginTranslations(pluginId, resourceLoader, logger);
         storage = new ManagedStorageService(this, dataDirectory, logger);
-        worlds = new ReflectiveWorldService(this);
+        worlds = new VanillaWorldService(this);
     }
 
     <R extends Registration> R own(R resource) {

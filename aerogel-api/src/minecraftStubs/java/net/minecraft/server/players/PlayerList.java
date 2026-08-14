@@ -4,6 +4,7 @@ import net.minecraft.network.chat.ChatType;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
 
 import java.util.List;
 
@@ -15,5 +16,8 @@ public class PlayerList {
     public void broadcastChatMessage(
         PlayerChatMessage message, ServerPlayer player, ChatType.Bound chatType
     ) {
+    }
+
+    public void addWorldborderListener(ServerLevel level) {
     }
 }

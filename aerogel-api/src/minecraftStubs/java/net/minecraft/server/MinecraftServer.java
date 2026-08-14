@@ -10,6 +10,10 @@ import net.minecraft.server.players.PlayerList;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.WorldGenSettings;
+import net.minecraft.world.level.storage.WorldData;
 
 public abstract class MinecraftServer {
     public Collection<ServerPlayer> onlinePlayers() { return null; }
@@ -23,6 +27,11 @@ public abstract class MinecraftServer {
     public Iterable<ServerLevel> getAllLevels() { return null; }
     public PlayerList getPlayerList() { return null; }
     public RegistryAccess.Frozen registryAccess() { return null; }
+    public ServerLevel getLevel(ResourceKey<Level> key) { return null; }
+    public boolean isSameThread() { return false; }
+    public int getAbsoluteMaxWorldSize() { return 0; }
+    public WorldGenSettings getWorldGenSettings() { return null; }
+    public WorldData getWorldData() { return null; }
 
     public boolean acceptsTransfers() {
         return false;
