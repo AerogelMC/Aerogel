@@ -32,6 +32,7 @@ public abstract class MinecraftServer {
     public int getAbsoluteMaxWorldSize() { return 0; }
     public WorldGenSettings getWorldGenSettings() { return null; }
     public WorldData getWorldData() { return null; }
+    public long getAverageTickTimeNanos() { return 0L; }
 
     public boolean acceptsTransfers() {
         return false;

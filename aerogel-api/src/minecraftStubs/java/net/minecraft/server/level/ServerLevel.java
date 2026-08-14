@@ -64,7 +64,6 @@ public class ServerLevel extends Level {
     public Iterable<Entity> getAllEntities() { return null; }
     public Entity getEntity(int id) { return null; }
     public Entity getEntityInAnyDimension(UUID uniqueId) { return null; }
-    public long getGameTime() { return 0; }
     public long getDayTime() { return 0; }
     public void setDayTime(long time) { }
     public List<ServerPlayer> players() { return null; }
