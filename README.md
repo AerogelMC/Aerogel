@@ -18,7 +18,7 @@ Place plugin JARs in the `plugins` directory.
 
 ## Create a plugin
 
-The [`example-plugin`](example-plugin) project is the quickest starting point. See the [API guide](docs/API.md), [event guide](docs/EVENTS.md), and [Mixin guide](docs/MIXINS.md).
+The [`example-plugin`](example-plugin) project is the quickest starting point. Read the complete development guide in [English](docs/DEVELOPMENT.md) or [한국어](docs/DEVELOPMENT.ko.md). Focused references are also available for the [API](docs/API.md), [events](docs/EVENTS.md), [Gradle plugin](docs/GRADLE_PLUGIN.md), and [Mixins](docs/MIXINS.md).
 
 ## Build from source
 
