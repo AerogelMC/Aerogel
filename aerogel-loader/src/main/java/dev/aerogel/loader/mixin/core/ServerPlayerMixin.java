@@ -1,5 +1,6 @@
 package dev.aerogel.loader.mixin.core;
 
+import com.mojang.authlib.GameProfile;
 import dev.aerogel.api.event.inventory.InventoryCloseEvent;
 import dev.aerogel.api.event.inventory.InventoryOpenEvent;
 import dev.aerogel.api.event.item.PlayerDropItemEvent;
@@ -10,6 +11,8 @@ import dev.aerogel.api.event.player.PlayerExperienceChangeEvent;
 import dev.aerogel.api.event.player.PlayerItemConsumeEvent;
 import dev.aerogel.api.event.player.PlayerTeleportEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
+import dev.aerogel.loader.internal.PlayerNameTagService;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -23,10 +26,183 @@ import java.util.Objects;
 import java.util.function.Predicate;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
-abstract class ServerPlayerMixin {
+abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
+    @Unique
+    private Component aerogel$displayName;
+
+    @Unique
+    private Component aerogel$tabListName;
+
+    @Unique
+    private Component aerogel$tabListHeader;
+
+    @Unique
+    private Component aerogel$tabListFooter;
+
+    @Unique
+    private GameProfile aerogel$packetProfile;
+
+    @Unique
+    private boolean aerogel$tabListHidden;
+
+    @Unique
+    private boolean aerogel$nameTagHidden;
+
+    @Unique
+    public void setDisplayName(Component displayName) {
+        aerogel$displayName = Objects.requireNonNull(displayName, "displayName");
+        aerogel$broadcastTabListName();
+        PlayerNameTagService.refresh((ServerPlayer) (Object) this);
+    }
+
+    @Unique
+    public void clearDisplayName() {
+        aerogel$displayName = null;
+        aerogel$broadcastTabListName();
+        PlayerNameTagService.refresh((ServerPlayer) (Object) this);
+    }
+
+    @Override
+    public Component aerogel$displayNameOverride() {
+        return aerogel$displayName;
+    }
+
+    @Override
+    public GameProfile aerogel$packetProfileOverride() {
+        return aerogel$packetProfile;
+    }
+
+    @Override
+    public void aerogel$packetProfileOverride(GameProfile profile) {
+        aerogel$packetProfile = profile;
+    }
+
+    @Override
+    public boolean aerogel$tabListHidden() {
+        return aerogel$tabListHidden;
+    }
+
+    @Override
+    public boolean aerogel$nameTagHidden() {
+        return aerogel$nameTagHidden;
+    }
+
+    @Inject(method = "restoreFrom(Lnet/minecraft/server/level/ServerPlayer;Z)V", at = @At("HEAD"))
+    private void aerogel$restoreDisplayState(
+        ServerPlayer previous, boolean keepEverything, CallbackInfo callbackInfo
+    ) {
+        ServerPlayerMixin source = (ServerPlayerMixin) (Object) previous;
+        aerogel$displayName = source.aerogel$displayName;
+        aerogel$tabListName = source.aerogel$tabListName;
+        aerogel$tabListHeader = source.aerogel$tabListHeader;
+        aerogel$tabListFooter = source.aerogel$tabListFooter;
+        aerogel$tabListHidden = source.aerogel$tabListHidden;
+        aerogel$nameTagHidden = source.aerogel$nameTagHidden;
+    }
+
+    @Unique
+    public void setTabListName(Component name) {
+        aerogel$tabListName = Objects.requireNonNull(name, "name");
+        aerogel$broadcastTabListName();
+    }
+
+    @Unique
+    public void clearTabListName() {
+        aerogel$tabListName = null;
+        aerogel$broadcastTabListName();
+    }
+
+    @Unique
+    public void setTabListHidden(boolean hidden) {
+        if (aerogel$tabListHidden == hidden) return;
+        aerogel$tabListHidden = hidden;
+        aerogel$broadcastPlayerInfo("UPDATE_LISTED");
+    }
+
+    @Unique
+    public boolean isTabListHidden() {
+        return aerogel$tabListHidden;
+    }
+
+    @Unique
+    public void setNameTagHidden(boolean hidden) {
+        if (aerogel$nameTagHidden == hidden) return;
+        aerogel$nameTagHidden = hidden;
+        PlayerNameTagService.refresh((ServerPlayer) (Object) this);
+    }
+
+    @Unique
+    public boolean isNameTagHidden() {
+        return aerogel$nameTagHidden;
+    }
+
+    @Unique
+    public void setTabListHeader(Component header) {
+        aerogel$tabListHeader = Objects.requireNonNull(header, "header");
+        aerogel$sendTabListHeaderFooter();
+    }
+
+    @Unique
+    public void setTabListFooter(Component footer) {
+        aerogel$tabListFooter = Objects.requireNonNull(footer, "footer");
+        aerogel$sendTabListHeaderFooter();
+    }
+
+    @Unique
+    public void setTabListHeaderFooter(Component header, Component footer) {
+        aerogel$tabListHeader = Objects.requireNonNull(header, "header");
+        aerogel$tabListFooter = Objects.requireNonNull(footer, "footer");
+        aerogel$sendTabListHeaderFooter();
+    }
+
+    @Unique
+    public void clearTabListHeaderFooter() {
+        aerogel$tabListHeader = null;
+        aerogel$tabListFooter = null;
+        aerogel$sendTabListHeaderFooter();
+    }
+
+    @Unique
+    private void aerogel$sendTabListHeaderFooter() {
+        Component header = aerogel$tabListHeader == null ? Component.empty() : aerogel$tabListHeader;
+        Component footer = aerogel$tabListFooter == null ? Component.empty() : aerogel$tabListFooter;
+        Object packet = EventHooks.construct(this,
+            "net.minecraft.network.protocol.game.ClientboundTabListPacket", header, footer);
+        EventHooks.call(EventHooks.field(this, "connection"), "send", packet);
+    }
+
+    @Unique
+    private void aerogel$broadcastTabListName() {
+        aerogel$broadcastPlayerInfo("UPDATE_DISPLAY_NAME");
+    }
+
+    @Unique
+    private void aerogel$broadcastPlayerInfo(String actionName) {
+        Object server = EventHooks.field(this, "server");
+        if (server == null) return;
+        Object action = EventHooks.staticField(this,
+            "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Action",
+            actionName);
+        Object packet = EventHooks.construct(this,
+            "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket", action, this);
+        Object players = EventHooks.call(EventHooks.call(server, "getPlayerList"), "getPlayers");
+        if (!(players instanceof Iterable<?> iterable)) return;
+        for (Object viewer : iterable) {
+            EventHooks.call(EventHooks.field(viewer, "connection"), "send", packet);
+        }
+    }
+
+    @Inject(method = "getTabListDisplayName()Lnet/minecraft/network/chat/Component;",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$tabListDisplayName(CallbackInfoReturnable<Component> callbackInfo) {
+        Component displayName = aerogel$tabListName != null ? aerogel$tabListName : aerogel$displayName;
+        if (displayName != null) callbackInfo.setReturnValue(displayName);
+    }
+
     @Unique
     public void sendTitle(Component title) {
         sendTitle(title, null, 10, 70, 20);

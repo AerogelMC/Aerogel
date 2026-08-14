@@ -1,5 +1,6 @@
 package net.minecraft.server;
 
+import net.minecraft.core.RegistryAccess;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.level.ServerLevel;
@@ -21,6 +22,7 @@ public abstract class MinecraftServer {
     public ServerLevel overworld() { return null; }
     public Iterable<ServerLevel> getAllLevels() { return null; }
     public PlayerList getPlayerList() { return null; }
+    public RegistryAccess.Frozen registryAccess() { return null; }
 
     public boolean acceptsTransfers() {
         return false;

@@ -358,7 +358,7 @@ public final class PluginManager {
                 stagedJar.toUri().toURL(), classLoader, dependencyLoaders);
             pluginLoader = reloadableLoader;
             runtimeDescriptor = withJar(plugin, stagedJar);
-            api = apiRuntime.openScope(plugin.id(), logger, pluginLoader);
+            api = apiRuntime.openScope(plugin.id(), logger, pluginLoader, dataDirectory);
             context = new Context(
                 plugin.id(), plugin.version(), serverDirectory, dataDirectory, logger, events, api
             );

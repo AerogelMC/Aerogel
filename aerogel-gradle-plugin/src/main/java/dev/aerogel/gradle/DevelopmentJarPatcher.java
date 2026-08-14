@@ -29,6 +29,16 @@ final class DevelopmentJarPatcher {
     private DevelopmentJarPatcher() {
     }
 
+    static String fingerprint() {
+        return METHODS.entrySet().stream()
+            .sorted(Map.Entry.comparingByKey())
+            .flatMap(entry -> entry.getValue().stream()
+                .map(method -> entry.getKey() + '#' + method.name + method.descriptor
+                    + ':' + String.valueOf(method.signature)))
+            .sorted()
+            .collect(java.util.stream.Collectors.joining("\n"));
+    }
+
     static void patch(Path classpath) throws IOException {
         try (var paths = Files.walk(classpath)) {
             for (Path jar : paths.filter(path -> path.toString().endsWith(".jar")).toList()) {
@@ -179,6 +189,18 @@ final class DevelopmentJarPatcher {
                 "(Lnet/minecraft/network/protocol/Packet<*>;)V"),
             method("restart", "()Z"));
         add(result, "net/minecraft/server/level/ServerPlayer",
+            method("setDisplayName", "(Lnet/minecraft/network/chat/Component;)V"),
+            method("clearDisplayName", "()V"),
+            method("setTabListName", "(Lnet/minecraft/network/chat/Component;)V"),
+            method("clearTabListName", "()V"),
+            method("setTabListHidden", "(Z)V"),
+            method("isTabListHidden", "()Z"),
+            method("setNameTagHidden", "(Z)V"),
+            method("isNameTagHidden", "()Z"),
+            method("setTabListHeader", "(Lnet/minecraft/network/chat/Component;)V"),
+            method("setTabListFooter", "(Lnet/minecraft/network/chat/Component;)V"),
+            method("setTabListHeaderFooter", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;)V"),
+            method("clearTabListHeaderFooter", "()V"),
             method("sendTitle", "(Lnet/minecraft/network/chat/Component;)V"),
             method("sendTitle", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;III)V"),
             method("clearTitle", "()V"), method("clearTitle", "(Z)V"),

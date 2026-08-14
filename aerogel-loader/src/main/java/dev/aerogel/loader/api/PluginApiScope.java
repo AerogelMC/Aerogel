@@ -8,9 +8,11 @@ import dev.aerogel.api.dialog.DialogService;
 import dev.aerogel.api.inventory.InventoryService;
 import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
 import net.minecraft.server.MinecraftServer;
 
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Objects;
@@ -31,9 +33,14 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final ReflectiveBossBarService bossBars;
     private final ReflectiveDialogService dialogs;
     private final PluginTranslations translations;
+    private final ManagedStorageService storage;
 
     PluginApiScope(
-        AerogelApiRuntime runtime, String pluginId, Logger logger, ClassLoader resourceLoader
+        AerogelApiRuntime runtime,
+        String pluginId,
+        Logger logger,
+        ClassLoader resourceLoader,
+        Path dataDirectory
     ) {
         this.runtime = runtime;
         this.pluginId = pluginId;
@@ -45,6 +52,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         bossBars = new ReflectiveBossBarService(this);
         dialogs = new ReflectiveDialogService(this);
         translations = new PluginTranslations(pluginId, resourceLoader, logger);
+        storage = new ManagedStorageService(this, dataDirectory, logger);
     }
 
     <R extends Registration> R own(R resource) {
@@ -59,7 +67,10 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         return resource;
     }
 
-    void serverReady() { commands.serverReady(); }
+    void serverReady() {
+        storage.serverReady();
+        commands.serverReady();
+    }
     void tick(long tick) { scheduler.tick(tick); }
     Object serverHandle() {
         Object server = runtime.server();
@@ -79,6 +90,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     @Override public BossBarService bossBars() { return bossBars; }
     @Override public DialogService dialogs() { return dialogs; }
     @Override public TranslationService translations() { return translations; }
+    @Override public StorageService storage() { return storage; }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;

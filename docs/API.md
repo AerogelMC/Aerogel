@@ -11,6 +11,8 @@ context.inventories();
 context.scoreboards();
 context.bossBars();
 context.dialogs();
+context.translations();
+context.storage();
 ```
 
 Get the live vanilla server directly:
@@ -52,6 +54,109 @@ context.scheduler().repeat(0, 20, this::updateDisplay);
 context.scheduler().async(this::loadExternalData);
 ```
 
+## Managed file storage
+
+Managed storage keeps a typed value in memory and persists it without performing file I/O on the
+server thread. Writes to the same file are serialized, rapid changes are coalesced, and completed
+files replace the previous version atomically.
+
+```java
+record PluginData(int round, Map<UUID, Integer> scores) {
+    static PluginData empty() {
+        return new PluginData(0, Map.of());
+    }
+}
+
+DataFile<PluginData> data = context.storage().json(
+    "state.json",
+    PluginData.class,
+    PluginData::empty
+);
+
+data.load().thenAccept(loaded -> context.scheduler().run(() ->
+    context.logger().info("Loaded round " + loaded.round())
+));
+
+data.update(previous -> new PluginData(previous.round() + 1, previous.scores()));
+```
+
+`set`, `update`, and `edit` mark the in-memory value dirty. Automatic saving waits 250 ms by
+default, so a burst of updates normally becomes one write. `save()` is the user-facing alias of
+`flush()`; both return a
+`CompletableFuture` that completes once all changes visible at the call have reached disk. Dirty
+files are flushed with a bounded wait when the plugin unloads.
+
+Generic types use `TypeRef`:
+
+```java
+DataFile<Map<UUID, PlayerData>> players = context.storage().json(
+    Path.of("players.json"),
+    new TypeRef<Map<UUID, PlayerData>>() { },
+    HashMap::new
+);
+```
+
+Paths are resolved under `context.dataDirectory()` and may contain subdirectories, but cannot
+escape that directory. JSON is UTF-8 and human-readable. Missing files use the supplied default;
+malformed files fail the load and are not silently overwritten. A custom `DataCodec<T>` can be
+used through `storage.open(...)` for binary or domain-specific formats.
+
+Minecraft values use their vanilla 26.2 codecs instead of reflective Gson serialization. This
+preserves an `ItemStack`'s item, count, complete data-component patch, custom data, names,
+enchantments, container contents, profiles, and any other component accepted by the active
+registry set:
+
+```java
+DataFile<ItemStack> reward = context.storage().itemStack(
+    "reward.json",
+    () -> ItemStack.EMPTY
+);
+
+DataFile<List<ItemStack>> inventory = context.storage().itemStacks(
+    "inventory.json",
+    List::of
+);
+```
+
+`itemStacks` uses `ItemStack.OPTIONAL_CODEC`, including for each list element, so empty entries and
+therefore inventory slot indices survive a round trip. Built-ins also exist for `Component`,
+`CompoundTag`, `BlockState`, `DataComponentPatch`, `GlobalPos`, `BlockPos`, and `Identifier`.
+
+Use `minecraftJson` when those values are fields inside a plugin record:
+
+```java
+record Kit(String name, Component title, List<ItemStack> slots, CompoundTag extra) { }
+
+DataFile<List<Kit>> kits = context.storage().minecraftJson(
+    "kits.json",
+    new TypeRef<List<Kit>>() { },
+    List::of
+);
+```
+
+Use `codecJson` for any other vanilla or plugin-provided Mojang `Codec<T>`:
+
+```java
+DataFile<MyRule> rule = context.storage().codecJson(
+    "rule.json",
+    MyRule.CODEC,
+    MyRule::defaults
+);
+```
+
+Registry-aware files wait until the live server registry access exists before loading. Their
+`load()` future therefore completes after server startup even if the file was opened in `onLoad`.
+Aerogel encodes through `NbtOps` and projects the result into structured JSON. Normal strings,
+integers, compounds, and lists stay ordinary JSON; values such as byte, short, long, float, and
+double, plus typed NBT arrays, carry a small `$nbt` marker so their exact tag type survives text
+parsing.
+
+JSON restores the declared type rather than arbitrary runtime subtypes. Prefer records, immutable
+state, UUIDs, resource keys, strings, numbers, lists, and maps. Only codec-backed Minecraft value
+objects are persistable; do not persist live players, worlds, entities, menus, registries, packets,
+or servers. Changes made directly to the object returned by `value()` cannot be detected; use
+`set`, `update`, or `edit`.
+
 ## Inventories
 
 ```java
@@ -73,12 +178,35 @@ ServerPlayer player = server.findPlayer("Steve").orElseThrow();
 player.sendSystemMessage(Component.literal("Hello"));
 player.sendOverlayMessage(Component.literal("Ready"));
 player.sendTitle(Component.literal("Game start"), Component.literal("Good luck"), 10, 60, 20);
+player.setDisplayName(Component.literal("Host"));
+player.setTabListName(Component.literal("[Admin] Host"));
+player.setTabListHidden(true);
+player.setNameTagHidden(true);
+player.setTabListHeaderFooter(
+    Component.literal("Aerogel"),
+    Component.literal("Players: 10")
+);
 player.giveItem(new ItemStack(Items.DIAMOND));
 player.sendPacket(packet);
 
 server.broadcast(Component.literal("Round complete"));
 server.broadcastPacket(packet);
 ```
+
+`setDisplayName` changes the component returned by the player's vanilla `getDisplayName()` and
+also synchronizes the overhead player name seen by vanilla clients. Chat, death, advancement, and
+command messages which ask vanilla for the display name therefore follow the same value. The TAB
+list follows it unless `setTabListName` supplies a TAB-only value. Use `clearDisplayName` or
+`clearTabListName` to restore the corresponding vanilla behavior.
+
+`setTabListHidden(true)` removes the player from the TAB list without disconnecting them or hiding
+their entity. Pass `false` to show them again, and use `isTabListHidden()` to inspect the state.
+`setNameTagHidden(true)` independently hides only the overhead name tag; pass `false` to restore it.
+
+TAB headers and footers are viewer-specific. `setTabListHeader` and `setTabListFooter` preserve the
+other half, while `clearTabListHeaderFooter` clears both. Aerogel synchronizes an arbitrary overhead
+`Component` with viewer-local player-info and scoreboard-team packets. It does not spawn a display
+entity or mutate the authenticated server profile or the server scoreboard.
 
 `kick`, `clearTitle`, predicate-based `removeItems`, and `clearInventory` are also available directly. Existing vanilla methods remain available alongside them.
 

@@ -118,7 +118,13 @@ class AerogelGradlePluginTest {
                 public void onLoad(PluginContext context) {
                     context.events().listen(ServerStartedEvent.class, event -> server = event.server());
                     ServerPlayer player = null;
-                    if (player != null) player.sendTitle((Component) null);
+                    if (player != null) {
+                        player.setDisplayName((Component) null);
+                        player.setTabListName((Component) null);
+                        player.setTabListHeaderFooter(
+                            (Component) null, (Component) null);
+                        player.sendTitle((Component) null);
+                    }
                 }
 
                 @EventHandler

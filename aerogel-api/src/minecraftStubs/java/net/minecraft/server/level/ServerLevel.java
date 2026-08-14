@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.Level;
+import net.minecraft.server.MinecraftServer;
 
 import java.util.Collection;
 import java.util.Optional;
@@ -12,6 +13,8 @@ import java.util.function.Predicate;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class ServerLevel extends Level {
+    public ServerChunkCache getChunkSource() { return null; }
+    public MinecraftServer getServer() { return null; }
     public String identifier() { return null; }
     public Collection<Entity> entities() { return null; }
     public Optional<Entity> findEntity(UUID uniqueId) { return Optional.empty(); }

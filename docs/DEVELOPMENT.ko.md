@@ -7,7 +7,7 @@
 
 Aerogel은 의도적으로 두 계층을 함께 사용합니다.
 
-- **Aerogel API**는 반복 작업과 플러그인 소유 자원의 생명주기를 담당합니다. 이벤트, 명령어, 작업, 인벤토리, 스코어보드, 보스바, 다이얼로그, 번역이 여기에 해당합니다.
+- **Aerogel API**는 반복 작업과 플러그인 소유 자원의 생명주기를 담당합니다. 이벤트, 명령어, 작업, 인벤토리, 스코어보드, 보스바, 다이얼로그, 번역, 관리형 파일이 여기에 해당합니다.
 - **Minecraft 서버 클래스**는 그 외 작업을 위해 그대로 열려 있습니다. 이벤트는 복사본이나 범용 래퍼가 아니라 실제 `ServerPlayer`, `ServerLevel`, `Entity`, `ItemStack`, 패킷, 컴포넌트 객체를 제공합니다.
 
 판단 기준은 간단합니다. 원하는 기능을 표현하는 Aerogel 고수준 API가 있다면 먼저 사용하고, 더 세밀한 제어가 필요하면 바닐라 API를 직접 사용하며, 둘 다 적절한 지점을 제공하지 않을 때만 Mixin을 사용합니다.
@@ -48,6 +48,7 @@ Aerogel은 의도적으로 두 계층을 함께 사용합니다.
 | 로드된 월드 읽기 또는 수정 | `ServerLevel`과 바닐라 API | Minecraft 상태에 완전하게 접근 가능 |
 | 상자 GUI, 보스바, 다이얼로그, 스코어보드 생성 | Aerogel 서비스 | 소유권과 리로드 정리를 자동 처리 |
 | 나중에 코드 실행 | Aerogel 스케줄러 | 작업 생명주기가 플러그인에 귀속됨 |
+| 플러그인 상태 저장 | `context.storage()` | 변경을 합치는 비동기 I/O와 원자적 파일 교체 |
 | 적절한 API나 이벤트가 없는 내부 동작 가로채기 | Mixin | 자유도는 가장 높지만 호환성 비용도 큼 |
 
 이미 같은 동작을 나타내는 이벤트가 있다면 Mixin을 사용하지 않는 편이 좋습니다. 이벤트는 취소가 안전한 시점을 보장하지만, Mixin 주입점은 특정 Minecraft 구현 세부 사항에 결합됩니다.
@@ -265,6 +266,7 @@ Aerogel은 플러그인 클래스 로더를 해제하기 전에 자신이 소유
 | `bossBars()` | 보스바 생성 |
 | `dialogs()` | 알림, 확인, 바닐라 다이얼로그 |
 | `translations()` | 플러그인 언어 리소스 |
+| `storage()` | 타입이 지정된 비동기 영속 데이터 |
 
 ### Aerogel이 소유하는 자원
 
@@ -276,6 +278,7 @@ Aerogel은 플러그인 클래스 로더를 해제하기 전에 자신이 소유
 - 플러그인 서비스로 생성한 스코어 목표와 팀
 - 보스바와 시청자 목록
 - 다이얼로그와 콜백
+- 제한 시간이 있는 최종 flush를 포함한 관리형 데이터 파일
 
 모든 자원은 `Registration`을 구현합니다. 언로드 전에 먼저 끝내야 할 때만 `close()`를 호출하세요. 여러 번 호출해도 안전합니다.
 
@@ -711,6 +714,101 @@ private void onChat(PlayerChatEvent event) {
 Path configFile = context.dataDirectory().resolve("config.json");
 ```
 
+구조화된 상태를 저장할 때는 `Files.read*`, `Files.write*`를 직접 호출하는 대신 관리형 저장소를 우선 사용하세요.
+
+```java
+record PluginData(int round, Map<UUID, Integer> scores) {
+    static PluginData empty() {
+        return new PluginData(0, Map.of());
+    }
+}
+
+DataFile<PluginData> data = context.storage().json(
+    "state.json",
+    PluginData.class,
+    PluginData::empty
+);
+
+data.load().thenAccept(loaded -> context.scheduler().run(() ->
+    applyLoadedState(loaded)
+));
+```
+
+파일을 열면 Aerogel 공용 저장 작업자에서 비동기 로드를 시작합니다. 서버 스레드에서 `load().join()`이나 `flush().join()`으로 기다리지 마세요. `load()`에 바로 연결한 콜백도 I/O 작업자에서 실행되므로, Minecraft 상태 변경은 위 예시처럼 `scheduler().run(...)`으로 동기 스레드에 넣어야 합니다.
+
+가능하면 불변 객체 교체 방식을 사용하세요.
+
+```java
+data.update(previous -> new PluginData(
+    previous.round() + 1,
+    previous.scores()
+));
+```
+
+변경 가능한 컬렉션은 Aerogel이 변경을 알 수 있도록 `edit`으로 수정합니다.
+
+```java
+DataFile<Map<UUID, Integer>> coins = context.storage().json(
+    Path.of("coins.json"),
+    new TypeRef<Map<UUID, Integer>>() { },
+    HashMap::new
+);
+
+coins.load().thenRun(() -> coins.edit(values -> values.put(playerId, 10)));
+```
+
+`set`, `update`, `edit`은 값을 dirty 상태로 표시합니다. 자동 저장은 기본적으로 250ms 기다린 뒤, 짧은 시간에 몰린 변경을 순서가 보장된 한 번의 쓰기로 합칩니다. `save()`는 `flush()`의 사용자용 별칭이며 둘 다 호출 시점까지 보이는 모든 변경을 즉시 디스크에 기록하고 `CompletableFuture`를 반환합니다. 플러그인 언로드 시에는 제한 시간 안에서 마지막 flush를 실행합니다.
+
+저장할 때 같은 디렉터리에 임시 파일을 만들고 내용을 디스크에 강제로 반영한 뒤, 파일 시스템이 지원하면 목적 파일을 원자적으로 교체합니다. 기존 파일 형식이 잘못되었다면 기본값으로 조용히 덮어쓰지 않고 로드에 실패합니다. 최근 로드·저장 오류는 `lastFailure()`로 확인할 수 있습니다.
+
+하위 디렉터리는 사용할 수 있지만 경로는 반드시 `context.dataDirectory()` 안에 있어야 합니다. 기본 파일 크기 제한은 64MiB입니다. `StorageOptions`로 자동 저장 지연, 언로드 대기 시간, 자동 저장 여부, 크기 제한을 바꿀 수 있습니다. `StorageOptions.manual()`은 백그라운드 자동 저장을 끄지만 언로드 시 마지막 flush는 그대로 실행됩니다.
+
+### Minecraft 값을 JSON으로 저장하기
+
+`ItemStack`을 일반 Gson 리플렉션 직렬화에 넣으면 안 됩니다. Aerogel의 Minecraft 인식 저장소는 실제 26.2 바닐라 `Codec`과 현재 서버의 고정된 레지스트리 접근을 사용합니다. 따라서 아이템 ID, 개수, 전체 데이터 컴포넌트 패치, 커스텀 데이터, 이름, 인챈트, 내부 컨테이너 내용, 프로필을 포함해 현재 레지스트리에 등록된 모든 컴포넌트가 함께 왕복 보존됩니다.
+
+```java
+DataFile<ItemStack> reward = context.storage().itemStack(
+    "reward.json",
+    () -> ItemStack.EMPTY
+);
+
+DataFile<List<ItemStack>> slots = context.storage().itemStacks(
+    "slots.json",
+    List::of
+);
+```
+
+`itemStacks`는 각 원소에도 빈 스택을 허용하는 코덱을 사용합니다. 빈 칸까지 저장되므로 List 인덱스를 인벤토리 슬롯 번호로 안전하게 사용할 수 있습니다. `Component`, `CompoundTag`, `BlockState`, `DataComponentPatch`, `GlobalPos`, `BlockPos`, `Identifier`용 내장 메서드도 있습니다.
+
+Minecraft 값이 플러그인 record 내부 필드라면 `minecraftJson`을 사용하세요.
+
+```java
+record Kit(String id, Component title, List<ItemStack> slots, CompoundTag metadata) { }
+
+DataFile<List<Kit>> kits = context.storage().minecraftJson(
+    "kits.json",
+    new TypeRef<List<Kit>>() { },
+    List::of
+);
+```
+
+Minecraft 인식 Gson 계층은 지원하는 Minecraft 값만 정식 코덱으로 처리하고, 그 바깥의 record·List·Map은 일반 플러그인 데이터로 처리합니다. 그 외 바닐라 또는 플러그인이 정의한 Mojang `Codec<T>`는 범용 연결 API로 저장할 수 있습니다.
+
+```java
+DataFile<MyRule> rule = context.storage().codecJson(
+    "rule.json",
+    MyRule.CODEC,
+    MyRule::defaults
+);
+```
+
+이 파일들은 `onLoad`에서 열어도 되지만, 실제 비동기 로드는 서버 레지스트리 접근이 준비될 때까지 기다립니다. `onLoad` 중 이미 로드되었다고 가정하지 말고 항상 `load()` 이후에 사용하세요. Aerogel은 먼저 `NbtOps`로 인코딩한 뒤 태그 트리를 구조화된 JSON으로 옮깁니다. 일반 문자열·int·compound·list는 평범한 JSON 형태를 유지하고, byte·short·long·float·double·타입이 있는 배열에만 작은 `$nbt` 표식을 붙입니다. 따라서 파일 가독성을 유지하면서 JSON 텍스트 왕복으로 NBT 타입 구분이 사라지는 문제를 막습니다.
+
+JSON은 record와 선언 타입이 명확한 POJO에 가장 적합합니다. 제네릭 Map·List에는 `TypeRef`가 필요하고, 실행 시점의 다양한 하위 타입을 보존하려면 사용자 정의 `DataCodec<T>`를 사용해야 합니다. 실제 `ServerPlayer`, `ServerLevel`, `Entity`, 메뉴, 레지스트리, 패킷 등 Minecraft 실행 객체를 저장하지 마세요. UUID와 리소스 키를 저장한 뒤 현재 서버에서 새 객체를 다시 조회해야 합니다.
+
+`value()`는 메모리에 있는 실제 객체를 반환합니다. 이 객체를 직접 수정하면 자동 저장이 변경을 감지할 수 없으므로 항상 `set`, `update`, `edit`을 통해 수정하세요.
+
 플러그인 JAR, 스테이징된 플러그인 캐시, Minecraft 자체 파일에는 쓰지 마세요. Minecraft 파일을 직접 다루는 연동 기능이라면 소유 범위와 실패 복구 방식을 명확히 해야 합니다.
 
 권장 사항:
@@ -721,8 +819,6 @@ Path configFile = context.dataDirectory().resolve("config.json");
 - 저장 데이터에 스키마 버전 포함
 - `onUnload`와 서버 종료 이벤트에서 중요한 상태 저장
 - 틱 도중 긴 동기 디스크 쓰기 금지
-
-Aerogel은 현재 데이터 디렉터리와 생명주기를 제공하며, 특정 설정 직렬화 형식을 강제하지 않습니다. 데이터에 적합한 라이브러리를 선택하고 올바르게 패키징하세요.
 
 ### 외부 라이브러리
 
@@ -946,6 +1042,7 @@ Aerogel은 발생 단계에 따라 플러그인 오류를 다르게 처리합니
 - [ ] 설정 파일이 없거나 잘못된 경우도 테스트함
 - [ ] `onUnload`에서 플러그인 스레드와 외부 자원을 정리함
 - [ ] 언로드나 재시작을 넘어 플레이어, 월드, 엔티티, 메뉴, 레지스트리 객체를 보관하지 않음
+- [ ] 저장 데이터 사용 전에 관리형 저장소 로드 실패를 기다려 확인하거나 명시적으로 처리함
 - [ ] 사용자에게 지원 Aerogel·Minecraft 버전을 명시함
 
 ## 관련 문서

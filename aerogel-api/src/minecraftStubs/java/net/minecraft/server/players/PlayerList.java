@@ -5,7 +5,10 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
 
+import java.util.List;
+
 public class PlayerList {
+    public List<ServerPlayer> getPlayers() { return null; }
     public void broadcastSystemMessage(Component message, boolean overlay) {
     }
 

@@ -41,6 +41,7 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
                 task.setGroup("aerogel");
                 task.setDescription("Downloads, verifies, and extracts the official Minecraft development classpath.");
                 task.getMinecraftVersion().set(extension.getMinecraft());
+                task.getDevelopmentPatchFingerprint().set(DevelopmentJarPatcher.fingerprint());
                 task.getServerJar().set(extension.getMinecraftServerJar());
                 task.getOutputDirectory().set(project.getLayout().dir(project.provider(() -> {
                     String version = safePath(extension.getMinecraft().get());

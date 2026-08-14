@@ -59,8 +59,7 @@ public final class AerogelServerBootstrap {
         Thread.currentThread().setContextClassLoader(target);
         ConsoleLogging.configure(target);
         for (PluginDescriptor plugin : plugins) {
-            System.out.printf("[Aerogel] Plugin %s %s (%s)%n",
-                plugin.id(), plugin.version(), plugin.jar().getFileName());
+            System.out.printf("[Aerogel] Plugin %s %s%n", plugin.id(), plugin.version());
         }
         MixinBootstrapper.initialize(target, plugins);
         invokeRuntime(target, serverDirectory, minecraftVersion, bundle.mainClass(), args);

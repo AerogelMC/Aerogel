@@ -7,6 +7,7 @@ import dev.aerogel.api.dialog.DialogService;
 import dev.aerogel.api.inventory.InventoryService;
 import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
 import net.minecraft.server.MinecraftServer;
 
@@ -39,4 +40,5 @@ public interface PluginContext {
     default BossBarService bossBars() { return server().bossBars(); }
     default DialogService dialogs() { return server().dialogs(); }
     default TranslationService translations() { return server().translations(); }
+    default StorageService storage() { return server().storage(); }
 }

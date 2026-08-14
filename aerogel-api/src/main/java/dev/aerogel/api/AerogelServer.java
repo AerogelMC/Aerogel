@@ -6,6 +6,7 @@ import dev.aerogel.api.dialog.DialogService;
 import dev.aerogel.api.inventory.InventoryService;
 import dev.aerogel.api.scheduler.Scheduler;
 import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
 import net.minecraft.server.MinecraftServer;
 
@@ -22,4 +23,5 @@ public interface AerogelServer {
     BossBarService bossBars();
     DialogService dialogs();
     TranslationService translations();
+    StorageService storage();
 }

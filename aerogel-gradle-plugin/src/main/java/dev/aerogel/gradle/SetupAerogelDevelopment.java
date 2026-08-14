@@ -42,6 +42,9 @@ public abstract class SetupAerogelDevelopment extends DefaultTask {
     @Input
     public abstract Property<String> getMinecraftVersion();
 
+    @Input
+    public abstract Property<String> getDevelopmentPatchFingerprint();
+
     @Optional
     @InputFile
     public abstract RegularFileProperty getServerJar();

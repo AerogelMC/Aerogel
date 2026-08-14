@@ -6,6 +6,7 @@ import dev.aerogel.api.event.player.PlayerQuitEvent;
 import dev.aerogel.api.event.player.PlayerRespawnEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.restart.RestartCoordinator;
+import dev.aerogel.loader.internal.PlayerNameTagService;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.Connection;
 import net.minecraft.server.level.ServerPlayer;
@@ -79,6 +80,7 @@ abstract class PlayerListMixin {
         at = @At("HEAD")
     )
     private void aerogel$playerQuit(@Coerce Object player, CallbackInfo callbackInfo) {
+        PlayerNameTagService.playerRemoved(EventHooks.cast(player));
         if (!RestartCoordinator.requested()) {
             EventHooks.post(new PlayerQuitEvent(EventHooks.cast(player)));
         }

@@ -31,6 +31,10 @@ public final class EventHooks {
         }
     }
 
+    public static Object intMapGet(Object map, int key) {
+        return call(map, "get", key);
+    }
+
     public static void setField(Object owner, String name, Object value) {
         try {
             Field field = FIELDS.computeIfAbsent(new FieldKey(owner.getClass(), name), key -> findField(key.type, key.name));

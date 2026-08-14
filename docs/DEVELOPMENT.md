@@ -7,7 +7,7 @@ This guide covers the complete plugin-development workflow: project setup, metad
 
 Aerogel is intentionally built around two layers:
 
-- **Aerogel APIs** handle repetitive work and plugin-owned lifetimes: events, commands, tasks, inventories, scoreboards, boss bars, dialogs, and translations.
+- **Aerogel APIs** handle repetitive work and plugin-owned lifetimes: events, commands, tasks, inventories, scoreboards, boss bars, dialogs, translations, and managed files.
 - **Minecraft server classes** remain directly available for everything else. Events expose live `ServerPlayer`, `ServerLevel`, `Entity`, `ItemStack`, packet, and component objects rather than copies or generic wrappers.
 
 The practical rule is simple: use the highest-level Aerogel API that expresses the operation, continue with vanilla APIs when you need more control, and use a Mixin only when neither exposes the required hook.
@@ -48,6 +48,7 @@ The practical rule is simple: use the highest-level Aerogel API that expresses t
 | Read or change a loaded world | `ServerLevel` and vanilla APIs | Full access to Minecraft state |
 | Create a chest GUI, boss bar, dialog, or scoreboard entry | Aerogel service | Ownership and reload cleanup are handled automatically |
 | Run code later | Aerogel scheduler | Tasks are tied to the plugin lifecycle |
+| Persist plugin state | `context.storage()` | Coalesced asynchronous I/O and atomic file replacement |
 | Intercept behavior with no suitable API or event | Mixin | Maximum control, with a higher compatibility cost |
 
 Avoid a Mixin when an event already represents the action. An event documents when cancellation is safe; an injection point ties the plugin to a particular implementation detail.
@@ -265,6 +266,7 @@ Do not rely on instance fields or static fields surviving reload. `onReload` exi
 | `bossBars()` | Boss-bar creation |
 | `dialogs()` | Notice, confirmation, and native dialogs |
 | `translations()` | Plugin language resources |
+| `storage()` | Typed, asynchronously persisted plugin data |
 
 ### Owned resources
 
@@ -276,6 +278,7 @@ Aerogel automatically releases these when the plugin unloads:
 - score objectives and teams created through the plugin service;
 - boss bars and their viewers;
 - dialogs and their callbacks.
+- managed data files, including a bounded final flush.
 
 Every resource implements `Registration`. Call `close()` only when it must end before plugin unload; repeated calls are safe.
 
@@ -489,10 +492,36 @@ player.sendTitle(
     Component.literal("Good luck"),
     10, 60, 20
 );
+player.setDisplayName(Component.literal("Host"));
+player.setTabListName(Component.literal("[Admin] Host"));
+player.setTabListHidden(true);
+player.setNameTagHidden(true);
+player.setTabListHeaderFooter(
+    Component.literal("Aerogel"),
+    Component.literal("Players: 10")
+);
 player.giveItem(new ItemStack(Items.DIAMOND));
 
 server.broadcast(Component.literal("Round complete"));
 ```
+
+`setDisplayName` overrides the component returned by vanilla `getDisplayName()` and synchronizes
+the overhead player name seen by vanilla clients. Vanilla chat, death messages, advancement
+announcements, and command output which resolve that display name use the override automatically.
+The TAB list follows it by default; `setTabListName` creates a TAB-only override. Clear either layer
+with `clearDisplayName` or `clearTabListName`.
+
+`setTabListHidden(true)` removes only the player's TAB-list row. The player remains connected and
+visible in the world. Pass `false` to restore the row; `isTabListHidden()` returns the current state.
+`setNameTagHidden(true)` independently hides the overhead name tag. Pass `false` to show it again;
+`isNameTagHidden()` returns the current state.
+
+TAB headers and footers belong to the receiving player. `setTabListHeader` and
+`setTabListFooter` update one side without erasing the other; `setTabListHeaderFooter` changes both.
+Call these again from the join event because a new `ServerPlayer` is created for a new connection.
+For the overhead name, Aerogel sends viewer-local player-info and scoreboard-team packets. This
+does not create a `TextDisplay`, mutate the authenticated server profile, or alter the server's
+scoreboard. Reapplying the value is automatic when another client starts tracking the player.
 
 Other conveniences include `kick`, `clearTitle`, predicate-based `removeItems`, `clearInventory`, `sendPacket`, online-player lookup, and UUID lookup. Existing vanilla methods remain available.
 
@@ -711,6 +740,128 @@ Write mutable plugin data only under `context.dataDirectory()`:
 Path configFile = context.dataDirectory().resolve("config.json");
 ```
 
+For structured state, prefer managed storage over direct `Files.read*` and `Files.write*` calls:
+
+```java
+record PluginData(int round, Map<UUID, Integer> scores) {
+    static PluginData empty() {
+        return new PluginData(0, Map.of());
+    }
+}
+
+DataFile<PluginData> data = context.storage().json(
+    "state.json",
+    PluginData.class,
+    PluginData::empty
+);
+
+data.load().thenAccept(loaded -> context.scheduler().run(() ->
+    applyLoadedState(loaded)
+));
+```
+
+Opening a file starts its load on Aerogel's shared storage workers. Never block the server thread
+with `load().join()` or `flush().join()`. A continuation attached directly to `load()` also runs on
+an I/O worker, so enqueue Minecraft work through `scheduler().run(...)` as shown above.
+
+Use immutable replacement when practical:
+
+```java
+data.update(previous -> new PluginData(
+    previous.round() + 1,
+    previous.scores()
+));
+```
+
+For mutable collections, use `edit` so Aerogel knows the value changed:
+
+```java
+DataFile<Map<UUID, Integer>> coins = context.storage().json(
+    Path.of("coins.json"),
+    new TypeRef<Map<UUID, Integer>>() { },
+    HashMap::new
+);
+
+coins.load().thenRun(() -> coins.edit(values -> values.put(playerId, 10)));
+```
+
+`set`, `update`, and `edit` mark the value dirty. Automatic saving waits 250 ms by default and
+coalesces a burst of changes into one ordered write. `save()` is the user-facing alias of
+`flush()`; both force all changes visible at the call to disk and return a `CompletableFuture`.
+Plugin unload performs a bounded final flush.
+
+Storage writes use a temporary file in the same directory, force its contents to disk, and replace
+the destination atomically when the filesystem supports it. A malformed existing file fails the
+load and is not silently replaced with a default value. `lastFailure()` exposes the most recent
+load or save error.
+
+Paths may contain subdirectories but must stay inside `context.dataDirectory()`. The default size
+limit is 64 MiB per file. `StorageOptions` can change autosave delay, close timeout, automatic-save
+behavior, and the size limit. `StorageOptions.manual()` disables background autosaves; the final
+unload flush still applies.
+
+### Minecraft values in JSON
+
+Do not send `ItemStack` through ordinary reflective Gson serialization. Aerogel's Minecraft-aware
+storage uses the exact vanilla 26.2 `Codec` with the live frozen registry access, so the item ID,
+count, complete data-component patch, custom data, names, enchantments, nested container contents,
+profiles, and every other registered component round-trip together.
+
+```java
+DataFile<ItemStack> reward = context.storage().itemStack(
+    "reward.json",
+    () -> ItemStack.EMPTY
+);
+
+DataFile<List<ItemStack>> slots = context.storage().itemStacks(
+    "slots.json",
+    List::of
+);
+```
+
+`itemStacks` uses the optional stack codec for each entry. Empty stacks are encoded too, so list
+indices can safely represent inventory slots. There are equivalent built-ins for `Component`,
+`CompoundTag`, `BlockState`, `DataComponentPatch`, `GlobalPos`, `BlockPos`, and `Identifier`.
+
+For a plugin record containing Minecraft values, use `minecraftJson`:
+
+```java
+record Kit(String id, Component title, List<ItemStack> slots, CompoundTag metadata) { }
+
+DataFile<List<Kit>> kits = context.storage().minecraftJson(
+    "kits.json",
+    new TypeRef<List<Kit>>() { },
+    List::of
+);
+```
+
+The Minecraft-aware Gson layer only adapts known value types; the surrounding records, lists, and
+maps remain normal plugin data. For every other vanilla or plugin-defined Mojang codec, use the
+generic bridge:
+
+```java
+DataFile<MyRule> rule = context.storage().codecJson(
+    "rule.json",
+    MyRule.CODEC,
+    MyRule::defaults
+);
+```
+
+These files may be opened during `onLoad`, but their asynchronous load waits for the live server's
+registry access. Always continue from `load()` instead of assuming they have loaded during
+`onLoad`. Aerogel first encodes through `NbtOps`, then projects the tag tree into structured JSON.
+Normal strings, ints, compounds, and lists remain ordinary JSON. Byte, short, long, float, double,
+and typed arrays receive a small `$nbt` marker. This prevents JSON text parsing from
+collapsing distinct NBT types while keeping the file readable.
+
+JSON works best for records and explicitly declared POJO types. Generic maps and lists require
+`TypeRef`; polymorphic runtime subtypes require a custom `DataCodec<T>`. Do not persist live
+`ServerPlayer`, `ServerLevel`, `Entity`, menu, registry, packet, or other Minecraft runtime objects.
+Persist UUIDs and resource keys, then resolve fresh objects from the current server.
+
+`value()` returns the live in-memory object. Mutating it directly cannot trigger automatic saving;
+always make changes through `set`, `update`, or `edit`.
+
 Do not write into the plugin JAR, the staged plugin cache, or Minecraft's own files unless the plugin explicitly owns that integration.
 
 Recommended practices:
@@ -721,8 +872,6 @@ Recommended practices:
 - keep a schema version in persistent data;
 - flush important state during `onUnload` and server stopping events;
 - avoid long synchronous disk writes during ticks.
-
-Aerogel currently provides the directory and lifecycle, not a configuration serialization format. Choose a library appropriate for the data and package it correctly.
 
 ### Third-party libraries
 
@@ -945,6 +1094,7 @@ Before publishing a plugin:
 - [ ] Test with missing and malformed configuration.
 - [ ] Confirm `onUnload` stops plugin-owned threads and releases external resources.
 - [ ] Avoid retaining live player, world, entity, menu, or registry objects across unload or restart.
+- [ ] Await or explicitly handle managed-storage load failures before using stored state.
 - [ ] Document supported Aerogel and Minecraft versions for users.
 
 ## Related documentation

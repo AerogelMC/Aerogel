@@ -4,6 +4,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 
 import java.util.Collection;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 public abstract class Entity {
@@ -16,6 +17,8 @@ public abstract class Entity {
     public double getX() { return 0; }
     public double getY() { return 0; }
     public double getZ() { return 0; }
+    public int getId() { return 0; }
+    public UUID getUUID() { return null; }
     public Level level() { return null; }
     public void discard() { }
 
