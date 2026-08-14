@@ -361,15 +361,7 @@ abstract class ServerGamePacketListenerMixin {
         boolean cancelled = false;
 
         if ("START_DESTROY_BLOCK".equals(action)) {
-            Object position = EventHooks.call(packet, "getPos");
-            Object direction = EventHooks.call(packet, "getDirection");
             aerogel$suppressNextSwing(InteractionHand.MAIN_HAND);
-            PlayerInteractEvent interaction = PlayerInteractEvent.block(
-                EventHooks.cast(player), PlayerInteractEvent.Action.LEFT_CLICK,
-                InteractionHand.MAIN_HAND, EventHooks.cast(position), EventHooks.cast(direction),
-                null);
-            EventHooks.post(interaction);
-            cancelled = interaction.isCancelled();
         } else if ("DROP_ITEM".equals(action) || "DROP_ALL_ITEMS".equals(action)) {
             aerogel$suppressNextSwing(InteractionHand.MAIN_HAND);
         }

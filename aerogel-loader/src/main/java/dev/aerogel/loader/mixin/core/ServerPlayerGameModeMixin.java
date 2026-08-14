@@ -8,7 +8,9 @@ import dev.aerogel.api.event.block.BlockMiningProgressEvent;
 import dev.aerogel.api.event.block.BlockMiningStartEvent;
 import dev.aerogel.api.event.block.BlockMiningStopEvent;
 import dev.aerogel.api.event.player.PlayerGameModeChangeEvent;
+import dev.aerogel.api.event.player.PlayerInteractEvent;
 import dev.aerogel.loader.event.EventHooks;
+import net.minecraft.world.InteractionHand;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -40,11 +42,17 @@ abstract class ServerPlayerGameModeMixin {
         Object level = EventHooks.field(this, "level");
         Object state = EventHooks.call(level, "getBlockState", position);
         if (aerogel$isAction(action, "START_DESTROY_BLOCK")) {
-            BlockBreakAttemptEvent event = new BlockBreakAttemptEvent(
+            PlayerInteractEvent interaction = PlayerInteractEvent.block(
+                EventHooks.cast(player), PlayerInteractEvent.Action.LEFT_CLICK,
+                InteractionHand.MAIN_HAND, EventHooks.cast(position), EventHooks.cast(direction),
+                null);
+            EventHooks.post(interaction);
+
+            BlockBreakAttemptEvent attempt = new BlockBreakAttemptEvent(
                 EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
                 EventHooks.cast(state), EventHooks.cast(direction), sequence);
-            EventHooks.post(event);
-            if (event.isCancelled()) {
+            EventHooks.post(attempt);
+            if (interaction.isCancelled() || attempt.isCancelled()) {
                 EventHooks.resyncBlock(player, level, position);
                 callbackInfo.cancel();
             }
@@ -147,7 +155,6 @@ abstract class ServerPlayerGameModeMixin {
         EventHooks.post(event);
         if (event.isCancelled()) {
             aerogel$breakingState = null;
-            EventHooks.resyncBlock(player, level, position);
             callbackInfo.setReturnValue(false);
         }
     }
