@@ -13,7 +13,9 @@ import net.minecraft.world.item.ItemStack;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Captures vanilla death output until plugins have had a chance to edit it. */
 public final class DeathDropCapture {
@@ -33,7 +35,7 @@ public final class DeathDropCapture {
             return false;
         }
         ItemStack stack = item.getItem();
-        if (!stack.isEmpty()) context.drops.add(stack.copy());
+        if (!stack.isEmpty()) context.drops.add(new CapturedDrop(item, stack));
         return true;
     }
 
@@ -59,13 +61,25 @@ public final class DeathDropCapture {
         }
         context.finalizing = true;
         try {
+            List<ItemStack> calculatedDrops = context.drops.stream()
+                .map(CapturedDrop::stack)
+                .toList();
             EntityDeathEvent event = new EntityDeathEvent(
-                entity, damageSource, context.drops, context.experience);
+                entity, damageSource, calculatedDrops, context.experience);
             EventHooks.post(event);
+            Map<ItemStack, Deque<ItemEntity>> capturedByStack = new IdentityHashMap<>();
+            for (CapturedDrop captured : context.drops) {
+                capturedByStack.computeIfAbsent(captured.stack(), ignored -> new ArrayDeque<>())
+                    .addLast(captured.entity());
+            }
             // Snapshot before spawning: spawning can call plugin listeners that mutate the
             // original list, and a directly edited live list may contain an invalid null.
             for (ItemStack drop : new ArrayList<>(event.drops())) {
-                if (drop != null && !drop.isEmpty()) entity.drop(drop.copy(), false, false);
+                if (drop == null || drop.isEmpty()) continue;
+                Deque<ItemEntity> originals = capturedByStack.get(drop);
+                ItemEntity original = originals == null ? null : originals.pollFirst();
+                if (original != null) level.addFreshEntity(original);
+                else entity.spawnAtLocation(level, drop.copy());
             }
             if (event.droppedExperience() > 0) {
                 ExperienceOrb.award(level, entity.position(), event.droppedExperience());
@@ -85,7 +99,7 @@ public final class DeathDropCapture {
         private final LivingEntity entity;
         @SuppressWarnings("unused")
         private final DamageSource damageSource;
-        private final List<ItemStack> drops = new ArrayList<>();
+        private final List<CapturedDrop> drops = new ArrayList<>();
         private int experience;
         private boolean finalizing;
 
@@ -93,5 +107,8 @@ public final class DeathDropCapture {
             this.entity = entity;
             this.damageSource = damageSource;
         }
+    }
+
+    private record CapturedDrop(ItemEntity entity, ItemStack stack) {
     }
 }

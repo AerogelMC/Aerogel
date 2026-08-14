@@ -1,6 +1,8 @@
 package net.minecraft.world.entity;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
@@ -22,6 +24,7 @@ public abstract class Entity {
     public UUID getUUID() { return null; }
     public Vec3 position() { return null; }
     public Level level() { return null; }
+    public ItemEntity spawnAtLocation(ServerLevel level, ItemStack stack) { return null; }
     public void discard() { }
 
     public enum RemovalReason {
