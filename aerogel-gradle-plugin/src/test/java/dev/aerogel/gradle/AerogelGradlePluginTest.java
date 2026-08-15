@@ -55,6 +55,10 @@ class AerogelGradlePluginTest {
         }
         assertTrue(Files.isRegularFile(project.resolve(
             "build/aerogel/minecraft/26.2/classpath/versions/26.2/server.jar")));
+        String idea = Files.readString(project.resolve(".idea/misc.xml"));
+        assertTrue(idea.contains("dev.aerogel.api.event.EventHandler"));
+        assertTrue(idea.contains("TYPE=\"class\" FQNAME=\"sample.ExamplePlugin\"")
+            || idea.contains("FQNAME=\"sample.ExamplePlugin\" TYPE=\"class\""));
         Path developmentServer = project.resolve(
             "build/aerogel/minecraft/26.2/classpath/versions/26.2/server.jar");
         try (JarFile jar = new JarFile(developmentServer.toFile())) {
@@ -79,6 +83,14 @@ class AerogelGradlePluginTest {
     }
 
     private void prepareProject() throws Exception {
+        Path idea = project.resolve(".idea/misc.xml");
+        Files.createDirectories(idea.getParent());
+        Files.writeString(idea, """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project version="4">
+              <component name="ProjectRootManager" version="2" />
+            </project>
+            """);
         Files.writeString(project.resolve("settings.gradle"), "rootProject.name = 'sample'\n");
         Files.writeString(project.resolve("build.gradle"), """
             plugins {

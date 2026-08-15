@@ -87,4 +87,10 @@ private void onJoin(PlayerJoinEvent event) {
 }
 ```
 
+For IntelliJ IDEA projects, setup also merges Aerogel entry points into
+`.idea/misc.xml`. Classes declared with `plugin.entrypoint(...)` and methods
+annotated with `@EventHandler` are then treated as reflectively used instead of
+being reported as unused. Run `./gradlew configureAerogelIdea` to refresh only
+this IDE metadata.
+
 The IDE may display decompiled Minecraft classes for navigation. Minecraft code is never copied into the built plugin JAR.

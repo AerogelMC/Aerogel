@@ -136,6 +136,12 @@ Then refresh the Gradle project in the IDE. Imports such as `ServerPlayer`, `Com
 
 The setup task also runs automatically before Java compilation, but running it explicitly makes IDE setup failures easier to diagnose.
 
+In IntelliJ IDEA, the setup task also registers `@EventHandler` methods and the
+entrypoint classes declared in the Aerogel Gradle DSL as reflective entry
+points. This prevents valid plugin callbacks and plugin classes from being
+reported as unused. Use `./gradlew configureAerogelIdea` when only this IDE
+metadata needs to be refreshed.
+
 ### 5. Create the entrypoint
 
 ```java

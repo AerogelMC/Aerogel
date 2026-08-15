@@ -136,6 +136,11 @@ aerogel {
 
 이 작업은 Java 컴파일 전에 자동 실행되기도 하지만, 처음에는 직접 실행해야 다운로드나 해시 검증 오류를 찾기 쉽습니다.
 
+IntelliJ IDEA에서는 이 작업이 `@EventHandler` 메서드와 Aerogel Gradle DSL에
+선언한 진입점 클래스도 리플렉션 진입점으로 등록합니다. 따라서 정상적인
+플러그인 콜백과 플러그인 클래스가 사용되지 않는 선언으로 표시되지 않습니다.
+IDE 메타데이터만 다시 반영하려면 `./gradlew configureAerogelIdea`를 실행합니다.
+
 ### 5. 진입점 만들기
 
 ```java

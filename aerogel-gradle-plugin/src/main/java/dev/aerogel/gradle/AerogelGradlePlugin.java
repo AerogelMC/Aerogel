@@ -36,6 +36,17 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
         configureRepositories(project);
         configureJava(project);
 
+        boolean ideaProject = project.file(".idea").isDirectory();
+        TaskProvider<ConfigureAerogelIdea> idea = project.getTasks().register(
+            "configureAerogelIdea", ConfigureAerogelIdea.class, task -> {
+                task.setGroup("aerogel");
+                task.setDescription("Registers Aerogel plugin and event entry points with IntelliJ IDEA.");
+                task.getEntrypoints().set(extension.getPlugin().getEntrypoints());
+                task.getProjectFile().set(
+                    project.getLayout().getProjectDirectory().file(".idea/misc.xml"));
+                task.onlyIf(ignored -> ideaProject);
+            });
+
         TaskProvider<SetupAerogelDevelopment> setup = project.getTasks().register(
             "setupAerogelDevelopment", SetupAerogelDevelopment.class, task -> {
                 task.setGroup("aerogel");
@@ -53,6 +64,7 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
                         "caches/aerogel/minecraft/" + version);
                 })));
             });
+        setup.configure(task -> task.dependsOn(idea));
 
         TaskProvider<GenerateAerogelMetadata> metadata = project.getTasks().register(
             "generateAerogelPluginMetadata", GenerateAerogelMetadata.class, task -> {
