@@ -409,6 +409,7 @@ public final class PluginManager {
                 instancesByClass.put(type.getName(), instance);
             }
             eventScanner.register(runtimeDescriptor, pluginLoader, context, events, instancesByClass);
+            api.completeLoading();
             return new LoadedPlugin(
                 plugin, context, List.copyOf(instances), events, api,
                 reloadableLoader, stagedJar, mixinState);
@@ -424,6 +425,7 @@ public final class PluginManager {
     }
 
     private static void unload(LoadedPlugin plugin) {
+        plugin.api().beginUnload();
         plugin.events().close();
         unloadReverse(plugin.instances(), plugin.context());
         plugin.api().close();

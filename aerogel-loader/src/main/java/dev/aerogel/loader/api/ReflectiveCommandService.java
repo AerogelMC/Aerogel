@@ -21,6 +21,9 @@ import dev.aerogel.loader.plugin.PluginFailures;
 final class ReflectiveCommandService implements CommandService {
     private final PluginApiScope scope;
     private final Set<RegistrationImpl> registrations = ConcurrentHashMap.newKeySet();
+    private int batchDepth;
+    private boolean synchronizationPending;
+    private Object pendingServer;
 
     ReflectiveCommandService(PluginApiScope scope) {
         this.scope = scope;
@@ -50,9 +53,34 @@ final class ReflectiveCommandService implements CommandService {
     }
 
     void serverReady() {
-        for (RegistrationImpl registration : registrations) {
-            if (registration.active() && !registration.installed) install(registration);
+        beginBatch();
+        try {
+            for (RegistrationImpl registration : registrations) {
+                if (registration.active() && !registration.installed) install(registration);
+            }
+        } finally {
+            endBatch();
         }
+    }
+
+    synchronized void beginBatch() {
+        batchDepth++;
+    }
+
+    void endBatch() {
+        Object server = null;
+        synchronized (this) {
+            if (batchDepth <= 0) {
+                throw new IllegalStateException("Command mutation batch is not active");
+            }
+            batchDepth--;
+            if (batchDepth == 0 && synchronizationPending) {
+                synchronizationPending = false;
+                server = pendingServer;
+                pendingServer = null;
+            }
+        }
+        if (server != null) syncCommands(server);
     }
 
     private synchronized void install(RegistrationImpl registration) {
@@ -61,7 +89,7 @@ final class ReflectiveCommandService implements CommandService {
         Object dispatcher = Reflect.invoke(Reflect.invoke(server, "getCommands"), "getDispatcher");
         Reflect.invoke(Reflect.invoke(dispatcher, "getRoot"), "addChild", registration.root);
         registration.installed = true;
-        syncCommands(server);
+        requestSynchronization(server);
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -120,6 +148,17 @@ final class ReflectiveCommandService implements CommandService {
         }
     }
 
+    private void requestSynchronization(Object server) {
+        synchronized (this) {
+            if (batchDepth > 0) {
+                synchronizationPending = true;
+                pendingServer = server;
+                return;
+            }
+        }
+        syncCommands(server);
+    }
+
     private final class RegistrationImpl implements CommandRegistration {
         private final String name;
         private final Object root;
@@ -147,7 +186,7 @@ final class ReflectiveCommandService implements CommandService {
             Object rootNode = Reflect.invoke(
                 Reflect.invoke(Reflect.invoke(server, "getCommands"), "getDispatcher"), "getRoot");
             Reflect.removeNamedChild(rootNode, name);
-            syncCommands(server);
+            requestSynchronization(server);
         }
     }
 }

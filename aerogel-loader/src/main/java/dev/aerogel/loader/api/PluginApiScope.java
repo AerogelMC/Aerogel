@@ -27,6 +27,8 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final Logger logger;
     private final Deque<Registration> resources = new ArrayDeque<>();
     private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean loadingCompleted = new AtomicBoolean();
+    private final AtomicBoolean unloadStarted = new AtomicBoolean();
     private final ReflectiveCommandService commands;
     private final TickScheduler scheduler;
     private final ReflectiveInventoryService inventories;
@@ -48,6 +50,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         this.pluginId = pluginId;
         this.logger = logger;
         commands = new ReflectiveCommandService(this);
+        commands.beginBatch();
         scheduler = new TickScheduler(this);
         inventories = new ReflectiveInventoryService(this);
         scoreboards = new ReflectiveScoreboardService(this);
@@ -74,6 +77,18 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         storage.serverReady();
         commands.serverReady();
     }
+
+    /** Completes the atomic command-registration phase for this plugin load. */
+    public void completeLoading() {
+        if (loadingCompleted.compareAndSet(false, true)) commands.endBatch();
+    }
+
+    /** Starts an atomic command-removal phase before plugin callbacks run. */
+    public void beginUnload() {
+        if (!closed.get() && unloadStarted.compareAndSet(false, true)) {
+            commands.beginBatch();
+        }
+    }
     void tick(long tick) { scheduler.tick(tick); }
     Object serverHandle() {
         Object server = runtime.server();
@@ -98,15 +113,21 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;
-        synchronized (resources) {
-            while (!resources.isEmpty()) {
-                try { resources.removeFirst().close(); }
-                catch (RuntimeException exception) {
-                    logger.log(Level.WARNING, "Could not release a plugin-owned API resource", exception);
+        if (unloadStarted.compareAndSet(false, true)) commands.beginBatch();
+        try {
+            synchronized (resources) {
+                while (!resources.isEmpty()) {
+                    try { resources.removeFirst().close(); }
+                    catch (RuntimeException exception) {
+                        logger.log(Level.WARNING, "Could not release a plugin-owned API resource", exception);
+                    }
                 }
             }
+            scheduler.close();
+            runtime.remove(this);
+        } finally {
+            if (loadingCompleted.compareAndSet(false, true)) commands.endBatch();
+            commands.endBatch();
         }
-        scheduler.close();
-        runtime.remove(this);
     }
 }
