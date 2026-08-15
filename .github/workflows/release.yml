@@ -1,0 +1,90 @@
+name: Publish Aerogel Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aerogel-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Build standalone JAR
+        run: ./gradlew clean build --no-daemon
+
+      - name: Resolve release files
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version=//p' gradle.properties | head -n 1 | tr -d '\r')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+-[1-9][0-9]*$ ]]; then
+            echo "Invalid Aerogel version: $version" >&2
+            exit 1
+          fi
+
+          jar="aerogel-loader/build/libs/Aerogel-${version}.jar"
+          if [[ ! -f "$jar" ]]; then
+            echo "Standalone JAR was not produced at $jar" >&2
+            exit 1
+          fi
+
+          cp "$jar" aerogel-loader/build/libs/Aerogel.jar
+          sha256sum "$jar" > "${jar}.sha256"
+
+          echo "AEROGEL_VERSION=$version" >> "$GITHUB_ENV"
+          echo "AEROGEL_JAR=$jar" >> "$GITHUB_ENV"
+          echo "AEROGEL_STABLE_JAR=aerogel-loader/build/libs/Aerogel.jar" >> "$GITHUB_ENV"
+          echo "AEROGEL_CHECKSUM=${jar}.sha256" >> "$GITHUB_ENV"
+
+      - name: Move release tag to this build
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force "$AEROGEL_VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/$AEROGEL_VERSION" --force
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$AEROGEL_VERSION" >/dev/null 2>&1; then
+            gh release edit "$AEROGEL_VERSION" \
+              --title "Aerogel $AEROGEL_VERSION" \
+              --target "$GITHUB_SHA" \
+              --latest
+            gh release upload "$AEROGEL_VERSION" \
+              "$AEROGEL_JAR" \
+              "$AEROGEL_STABLE_JAR" \
+              "$AEROGEL_CHECKSUM" \
+              --clobber
+          else
+            gh release create "$AEROGEL_VERSION" \
+              "$AEROGEL_JAR" \
+              "$AEROGEL_STABLE_JAR" \
+              "$AEROGEL_CHECKSUM" \
+              --verify-tag \
+              --title "Aerogel $AEROGEL_VERSION" \
+              --generate-notes \
+              --latest
+          fi
