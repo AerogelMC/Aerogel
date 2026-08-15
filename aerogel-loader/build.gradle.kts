@@ -3,8 +3,6 @@ plugins {
     `java-library`
 }
 
-evaluationDependsOn(":example-plugin")
-
 val mixinVersion: String by project
 val minecraftVersion: String by project
 val asmVersion: String by project
@@ -17,6 +15,7 @@ val apiMinecraftStubs = aerogelApiProject.extensions
 
 dependencies {
     implementation(project(":aerogel-api"))
+    implementation(project(":aerogel-mixin-dsl"))
     compileOnly(apiMinecraftStubs.output)
     testCompileOnly(apiMinecraftStubs.output)
     testRuntimeOnly(apiMinecraftStubs.output)
@@ -125,9 +124,6 @@ distributions {
             }
             from(rootProject.file("docs")) {
                 into("docs")
-            }
-            from(project(":example-plugin").tasks.named("jar")) {
-                into("examples")
             }
         }
     }

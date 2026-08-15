@@ -6,10 +6,12 @@ import com.google.gson.JsonObject;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.tasks.Input;
+import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
 
@@ -18,6 +20,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
 
 public abstract class GenerateAerogelMetadata extends DefaultTask {
@@ -29,6 +33,8 @@ public abstract class GenerateAerogelMetadata extends DefaultTask {
     @Input public abstract Property<String> getMinecraftRequirement();
     @Input public abstract ListProperty<String> getEntrypoints();
     @Input public abstract ListProperty<String> getMixins();
+    @Input public abstract Property<String> getGeneratedMixinConfiguration();
+    @InputFile public abstract RegularFileProperty getGeneratedMixinIndex();
     @Input public abstract MapProperty<String, String> getDepends();
     @OutputDirectory public abstract DirectoryProperty getOutputDirectory();
 
@@ -43,7 +49,16 @@ public abstract class GenerateAerogelMetadata extends DefaultTask {
         String version = required(getPluginVersion(), "aerogel.plugin.version");
         String minecraft = required(getMinecraftRequirement(), "aerogel.minecraft");
         validateStrings(getEntrypoints().get(), "entrypoint");
-        validateStrings(getMixins().get(), "mixin configuration");
+        List<String> mixinConfigurations = new ArrayList<>(getMixins().get());
+        try {
+            if (Files.size(getGeneratedMixinIndex().get().getAsFile().toPath()) > 0) {
+                mixinConfigurations.add(required(
+                    getGeneratedMixinConfiguration(), "generated Mixin configuration"));
+            }
+        } catch (IOException exception) {
+            throw new GradleException("Cannot inspect generated Aerogel Mixin index", exception);
+        }
+        validateStrings(mixinConfigurations, "mixin configuration");
 
         JsonObject json = new JsonObject();
         json.addProperty("schemaVersion", 1);
@@ -57,7 +72,7 @@ public abstract class GenerateAerogelMetadata extends DefaultTask {
             json.add("entrypoints", entrypoints);
         }
         JsonArray mixins = new JsonArray();
-        getMixins().get().forEach(mixins::add);
+        mixinConfigurations.forEach(mixins::add);
         if (!mixins.isEmpty()) {
             json.add("mixins", mixins);
         }

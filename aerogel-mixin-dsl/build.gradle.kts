@@ -1,27 +1,35 @@
 plugins {
+    kotlin("jvm") version "2.4.10"
     `java-library`
     `maven-publish`
 }
 
-val minecraftStubs by sourceSets.creating
+val mixinVersion: String by project
 
 dependencies {
-    compileOnly(minecraftStubs.output)
+    api(kotlin("stdlib"))
+    implementation(kotlin("scripting-common"))
+    implementation(kotlin("scripting-jvm"))
+    compileOnly("net.fabricmc:sponge-mixin:$mixinVersion")
 }
 
-tasks.compileJava {
-    dependsOn(minecraftStubs.classesTaskName)
+kotlin {
+    jvmToolchain(25)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
+        javaParameters.set(true)
+    }
 }
 
-tasks.jar {
-    archiveBaseName.set("aerogel-api")
+java {
+    withSourcesJar()
 }
 
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
-            artifactId = "aerogel-api"
+            artifactId = "aerogel-mixin-dsl"
         }
     }
     repositories {

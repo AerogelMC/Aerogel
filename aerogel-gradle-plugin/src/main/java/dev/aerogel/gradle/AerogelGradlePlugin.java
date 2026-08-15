@@ -1,6 +1,7 @@
 package dev.aerogel.gradle;
 
 import dev.aerogel.api.AerogelPlugin;
+import dev.aerogel.api.mixin.MixinDefinition;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
@@ -12,6 +13,8 @@ import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.compile.JavaCompile;
 import org.gradle.api.tasks.bundling.Jar;
 import org.gradle.jvm.toolchain.JavaLanguageVersion;
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget;
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile;
 
 import java.io.File;
 import java.net.URISyntaxException;
@@ -24,6 +27,7 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
     @Override
     public void apply(Project project) {
         project.getPluginManager().apply(JavaPlugin.class);
+        project.getPluginManager().apply("org.jetbrains.kotlin.jvm");
         AerogelExtension extension = project.getExtensions().create(
             "aerogel", AerogelExtension.class, project.getObjects());
         extension.getMinecraft().convention("26.2");
@@ -83,8 +87,61 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
             });
 
         SourceSetContainer sourceSets = project.getExtensions().getByType(SourceSetContainer.class);
+        ConfigurableFileTree mixinScripts = project.fileTree("src/main/mixins", files ->
+            files.include("**/*.mixin.kts"));
+        TaskProvider<GenerateAerogelMixinSources> mixinSources = project.getTasks().register(
+            "generateAerogelMixinSources", GenerateAerogelMixinSources.class, task -> {
+                task.setGroup("aerogel");
+                task.setDescription("Generates Kotlin compilation units from string-free Aerogel Mixin scripts.");
+                task.getScripts().from(mixinScripts);
+                task.getPluginId().set(extension.getPlugin().getId());
+                task.getOutputDirectory().set(project.getLayout().getBuildDirectory()
+                    .dir("generated/aerogel/mixin-kotlin"));
+                task.getIndexFile().set(project.getLayout().getBuildDirectory()
+                    .file("generated/aerogel/mixin-index.tsv"));
+            });
+        sourceSets.getByName("main").getJava().srcDir(
+            mixinSources.flatMap(GenerateAerogelMixinSources::getOutputDirectory));
+
+        TaskProvider<GenerateAerogelMixinConfig> mixinConfig = project.getTasks().register(
+            "generateAerogelMixinConfig", GenerateAerogelMixinConfig.class, task -> {
+                task.setGroup("aerogel");
+                task.setDescription("Generates the standard Sponge Mixin configuration for Kotlin DSL Mixins.");
+                task.dependsOn(mixinSources);
+                task.getPluginId().set(extension.getPlugin().getId());
+                task.getIndexFile().set(mixinSources.flatMap(GenerateAerogelMixinSources::getIndexFile));
+                task.getOutputDirectory().set(project.getLayout().getBuildDirectory()
+                    .dir("generated/aerogel/mixin-resources"));
+            });
+        sourceSets.getByName("main").getResources().srcDir(
+            mixinConfig.flatMap(GenerateAerogelMixinConfig::getOutputDirectory));
+        metadata.configure(task -> {
+            task.dependsOn(mixinSources);
+            task.getGeneratedMixinIndex().set(mixinSources.flatMap(GenerateAerogelMixinSources::getIndexFile));
+            task.getGeneratedMixinConfiguration().set(extension.getPlugin().getId()
+                .map(id -> id + ".generated.mixins.json"));
+        });
+
+        TaskProvider<GenerateAerogelMixinBytecode> mixinBytecode = project.getTasks().register(
+            "compileAerogelMixins", GenerateAerogelMixinBytecode.class, task -> {
+                task.setGroup("aerogel");
+                task.setDescription("Compiles Kotlin Mixin definitions to standard Sponge Mixin bytecode.");
+                task.dependsOn("compileKotlin", "compileJava");
+                task.getIndexFile().set(mixinSources.flatMap(GenerateAerogelMixinSources::getIndexFile));
+                task.getCompilationClasspath().from(
+                    project.getLayout().getBuildDirectory().dir("classes/kotlin/main"),
+                    project.getLayout().getBuildDirectory().dir("classes/java/main"),
+                    project.getConfigurations().getByName("compileClasspath")
+                );
+                task.getOutputDirectory().set(project.getLayout().getBuildDirectory()
+                    .dir("generated/aerogel/mixin-classes"));
+            });
+        sourceSets.getByName("main").getOutput().dir(
+            java.util.Map.of("builtBy", mixinBytecode),
+            mixinBytecode.flatMap(GenerateAerogelMixinBytecode::getOutputDirectory));
+
         sourceSets.getByName("main").getResources().srcDir(metadata.flatMap(GenerateAerogelMetadata::getOutputDirectory));
-        project.getTasks().named("processResources").configure(task -> task.dependsOn(metadata));
+        project.getTasks().named("processResources").configure(task -> task.dependsOn(metadata, mixinConfig));
 
         project.afterEvaluate(ignored -> {
             ConfigurableFileTree minecraft = project.fileTree(
@@ -94,11 +151,21 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
             project.getDependencies().add("compileOnly", minecraft);
         });
         project.getDependencies().add("compileOnly", project.files(apiLocation()));
+        project.getDependencies().add("compileOnly", project.files(mixinDslLocation()));
+        if (project.getConfigurations().findByName("kotlinScriptDef") != null) {
+            project.getDependencies().add("kotlinScriptDef", project.files(mixinDslLocation()));
+        }
         project.getDependencies().add("compileOnly", "net.fabricmc:sponge-mixin:" + MIXIN_VERSION);
         project.getDependencies().add("compileOnly",
             "org.jetbrains:annotations:" + JETBRAINS_ANNOTATIONS_VERSION);
 
         project.getTasks().withType(JavaCompile.class).configureEach(task -> task.dependsOn(setup));
+        project.getTasks().withType(KotlinJvmCompile.class).configureEach(task -> {
+            task.dependsOn(setup, mixinSources);
+            task.getCompilerOptions().getJvmTarget().set(JvmTarget.JVM_25);
+            task.getCompilerOptions().getJavaParameters().set(true);
+        });
+        project.getTasks().named("classes").configure(task -> task.dependsOn(mixinBytecode));
 
         TaskProvider<Jar> jar = project.getTasks().named("jar", Jar.class);
         TaskProvider<ValidateAerogelPluginJar> validate = project.getTasks().register(
@@ -132,10 +199,18 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
     }
 
     private static File apiLocation() {
+        return codeLocation(AerogelPlugin.class, "Aerogel API");
+    }
+
+    private static File mixinDslLocation() {
+        return codeLocation(MixinDefinition.class, "Aerogel Mixin DSL");
+    }
+
+    private static File codeLocation(Class<?> type, String label) {
         try {
-            return new File(AerogelPlugin.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            return new File(type.getProtectionDomain().getCodeSource().getLocation().toURI());
         } catch (URISyntaxException exception) {
-            throw new IllegalStateException("Cannot locate the Aerogel API used by the Gradle plugin", exception);
+            throw new IllegalStateException("Cannot locate " + label + " used by the Gradle plugin", exception);
         }
     }
 

@@ -1,10 +1,29 @@
 # Aerogel Gradle Plugin
 
-The Aerogel Gradle plugin prepares the official Minecraft server class path, adds Aerogel API and Mixin as compile-only dependencies, and generates plugin metadata.
+The Aerogel Gradle plugin prepares the official Minecraft server class path, adds Aerogel API and Mixin as compile-only dependencies, configures Kotlin 2.4.10, and generates plugin metadata.
+
+## Public repository
+
+Aerogel publishes the Gradle plugin, plugin marker, API, and Mixin DSL to a public Maven
+repository. No account or access token is required:
+
+```kotlin
+// settings.gradle.kts
+pluginManagement {
+    repositories {
+        maven("https://raw.githubusercontent.com/AerogelMC/Aerogel/maven/")
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+```
+
+Then apply `id("dev.aerogel.plugin") version "26.2-1"` normally. The `maven` branch is
+updated automatically after changes reach `main` and retains previously published versions.
 
 ## Local repository package
 
-Until the plugin is published to a public Gradle plugin repository, extract `aerogel-gradle-plugin-26.2-1.zip` and add that directory to `settings.gradle.kts`:
+For offline development or a pinned local mirror, extract `aerogel-gradle-plugin-26.2-1.zip` and add that directory to `settings.gradle.kts`:
 
 ```kotlin
 pluginManagement {
@@ -60,6 +79,8 @@ aerogel {
 The selected JAR must use Mojang's server-bundler format. Its embedded artifacts are still checked against the bundle index.
 
 `generateAerogelPluginMetadata` writes `aerogel.plugin.json` from the DSL. Do not keep another copy in `src/main/resources`.
+
+String-free Kotlin Mixins belong in `src/main/mixins/*.mixin.kts`. The plugin compiles them into standard Mixin bytecode and generates their Mixin JSON automatically; do not add generated configurations to `plugin.mixins`. See the [Mixin guide](MIXINS.md).
 
 `validateAerogelPluginJar` runs as part of `check` and rejects plugin JARs containing Minecraft, Sponge Mixin, or Aerogel API classes. Those components must remain compile-only.
 

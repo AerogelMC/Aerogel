@@ -6,14 +6,18 @@ plugins {
 val gsonVersion: String by project
 val asmVersion: String by project
 val junitVersion: String by project
+val kotlinVersion: String by project
 
 dependencies {
     implementation(project(":aerogel-api"))
+    implementation(project(":aerogel-mixin-dsl"))
     implementation("com.google.code.gson:gson:$gsonVersion")
     implementation("org.ow2.asm:asm:$asmVersion")
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
 
     testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation(project(":aerogel-loader"))
     testImplementation(gradleTestKit())
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -37,7 +41,10 @@ publishing {
     repositories {
         maven {
             name = "AerogelBuild"
-            url = rootProject.layout.buildDirectory.dir("aerogel-maven").get().asFile.toURI()
+            url = providers.gradleProperty("aerogelMavenRepository")
+                .map { uri(it) }
+                .orElse(rootProject.layout.buildDirectory.dir("aerogel-maven").map { it.asFile.toURI() })
+                .get()
         }
     }
 }

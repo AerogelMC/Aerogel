@@ -1,0 +1,80 @@
+name: Publish Aerogel Maven Repository
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aerogel-maven-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Aerogel
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Prepare persistent Maven branch
+        id: repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repository="$RUNNER_TEMP/aerogel-maven"
+          git init "$repository"
+          git -C "$repository" remote add origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          if git ls-remote --exit-code --heads origin maven >/dev/null 2>&1; then
+            git -C "$repository" fetch --depth=1 origin maven
+            git -C "$repository" checkout -B maven FETCH_HEAD
+          else
+            git -C "$repository" checkout --orphan maven
+          fi
+
+          echo "path=$repository" >> "$GITHUB_OUTPUT"
+
+      - name: Publish Maven artifacts
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew check publishAerogelGradleRepository \
+            -PaerogelMavenRepository="${{ steps.repository.outputs.path }}" \
+            --no-daemon --no-configuration-cache
+
+      - name: Update public Maven branch
+        shell: bash
+        env:
+          REPOSITORY: ${{ steps.repository.outputs.path }}
+        run: |
+          cat > "$REPOSITORY/README.md" <<'EOF'
+          # Aerogel Maven Repository
+
+          This branch is generated automatically. Do not edit it manually.
+          EOF
+
+          git -C "$REPOSITORY" config user.name "github-actions[bot]"
+          git -C "$REPOSITORY" config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$REPOSITORY" add --all
+
+          if git -C "$REPOSITORY" diff --cached --quiet; then
+            echo "Maven repository is already current."
+          else
+            git -C "$REPOSITORY" commit -m \
+              "Publish Aerogel Maven artifacts from ${GITHUB_SHA}"
+            git -C "$REPOSITORY" push origin HEAD:maven
+          fi

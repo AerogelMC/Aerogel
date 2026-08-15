@@ -47,6 +47,8 @@ class PluginManagerReloadTest {
         assertEquals(List.of(new PluginManager.PluginInfo("test_plugin", "Test", true)), manager.pluginInfos());
         assertFalse(manager.hasMixins("test_plugin"));
         assertTrue(manager.reload("missing_plugin").isEmpty());
+        assertFalse(Files.exists(plugins.resolve("test_plugin")),
+            "A plugin data directory must stay absent until the plugin stores data");
     }
 
     @Test

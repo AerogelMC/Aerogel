@@ -1,116 +1,193 @@
-# Aerogel Mixin 플러그인 작성 가이드
+# Mixins
 
-## 1. 대상 이름 찾기
+Aerogel supports ordinary Sponge Mixin classes and a typed Kotlin DSL. The DSL compiles to normal Mixin bytecode during the plugin build; the server does not interpret scripts and there is no second transformation engine.
 
-Minecraft 26.2부터 배포 JAR가 비난독화되었으므로 공식 클래스·필드·메서드 이름을
-그대로 사용합니다. 정확한 descriptor와 반환형을 확인하고, 오버로드가 있으면
-다음처럼 descriptor까지 지정하는 편이 안전합니다.
+Use one `.mixin.kts` file per generated Mixin:
 
-```java
-@Inject(method = "tickServer(Ljava/util/function/BooleanSupplier;)V", at = @At("HEAD"))
-```
+```kotlin
+// src/main/mixins/ServerBrand.mixin.kts
+import dev.aerogel.api.mixin.At
+import dev.aerogel.api.mixin.mixin
+import net.minecraft.server.MinecraftServer
 
-문자열 target을 사용하면 플러그인 자체는 Minecraft JAR 없이도 컴파일할 수 있습니다.
-Minecraft 타입을 콜백 인자로 직접 사용하거나 `@Shadow`의 타입으로 사용하려면 개발
-환경에서 공식 26.2 서버 클래스를 `compileOnly`로 추가해야 합니다. 공식 JAR를 플러그인
-배포물 안에 포함하면 안 됩니다.
-
-## 2. 자주 쓰는 주입 방식
-
-### 메서드 앞/뒤에 코드 실행
-
-```java
-@Inject(method = "runServer", at = @At("HEAD"))
-private void plugin$beforeRun(CallbackInfo ci) {
-}
-
-@Inject(method = "runServer", at = @At("RETURN"))
-private void plugin$afterRun(CallbackInfo ci) {
-}
-```
-
-### 호출 지점 앞에 주입
-
-```java
-@Inject(
-    method = "someMethod",
-    at = @At(
-        value = "INVOKE",
-        target = "Lsome/package/Target;calledMethod()V",
-        shift = At.Shift.BEFORE
-    )
-)
-private void plugin$beforeCall(CallbackInfo ci) {
-}
-```
-
-### 반환값 변경
-
-```java
-@Inject(method = "someBooleanMethod", at = @At("RETURN"), cancellable = true)
-private void plugin$changeResult(CallbackInfoReturnable<Boolean> cir) {
-    if (cir.getReturnValue()) {
-        cir.setReturnValue(false);
+mixin<MinecraftServer>(priority = 900) {
+    inject(
+        MinecraftServer::getServerModName,
+        at = At.HEAD,
+        cancellable = true
+    ) { callback ->
+        callback.returnValue = "example"
     }
 }
 ```
 
-### 대상 멤버 사용
+The file name becomes the generated Mixin name. Aerogel resolves every Kotlin member reference to its exact JVM owner, name, and descriptor, emits the Mixin class, creates `<plugin-id>.generated.mixins.json`, and adds it to plugin metadata automatically.
 
-```java
-@Shadow private int tickCount;
+## What the DSL supports
 
-@Shadow protected abstract void someProtectedMethod();
-```
+The DSL covers all executable injector families in Sponge Mixin 0.8.7:
 
-이름과 타입 또는 descriptor가 대상과 정확히 일치해야 합니다. `@Shadow`는 대상 멤버를
-복사하지 않고 Mixin이 그 참조를 대상 클래스의 실제 멤버로 연결합니다.
+- `inject` and `injectStatic`
+- `modifyArg` and `modifyArgStatic`
+- `modifyArgs` and `modifyArgsStatic`
+- `modifyVariable` and `modifyVariableStatic`
+- `modifyConstant` and `modifyConstantStatic`
+- `redirect` and `redirectStatic`, including method, constructor, and field access redirects
+- `overwrite` and `overwriteStatic`
 
-### 접근자 인터페이스
+It also generates standard `@Accessor`, `@Invoker`, `@Shadow`, `@Final`, `@Mutable`, and `@Unique` members. These are real members merged by Sponge Mixin, not reflective access to private Minecraft fields.
 
-```java
-@Mixin(targets = "some.package.Target")
-public interface TargetAccessor {
-    @Accessor("privateField")
-    int plugin$getPrivateField();
+Standard Java Mixin classes remain supported for unusual declaration-oriented features such as `@Pseudo`, soft `@Implements`, custom injection-point classes, and complex surrogate sets. They can coexist with generated Kotlin Mixins in the same plugin.
 
-    @Invoker("privateMethod")
-    void plugin$invokePrivateMethod();
+## Target receiver and arguments
+
+For an instance target, the handler receiver is the target object. Target method parameters precede the callback:
+
+```kotlin
+mixin<MinecraftServer> {
+    inject(MinecraftServer::tickServer, at = At.HEAD) { shouldKeepTicking, callback ->
+        if (!shouldKeepTicking.asBoolean) callback.cancel()
+    }
 }
 ```
 
-적용 이후 대상 인스턴스를 이 인터페이스로 캐스팅해 접근할 수 있습니다.
+Void methods receive `CallbackInfo`. Returning methods receive `CallbackInfoReturnable<R>`, with `R` inferred from the method reference. Use the `*Static` form for a static target; the build fails when an instance and static form are mixed.
 
-## 3. 안전 규칙
+## Injection points
 
-- 주입 메서드 이름에는 `플러그인ID$설명` 접두사를 사용해 충돌을 줄입니다.
-- `required: true`와 `defaultRequire: 1`을 유지합니다. 대상이 바뀌었는데 조용히
-  넘어가는 것보다 서버 시작을 중단하는 편이 안전합니다.
-- 필요하면 injector에 `require`, `expect`, `allow`를 명시합니다.
-- `@Overwrite`는 다른 플러그인과 합성이 어렵습니다. 가능한 한 `@Inject`,
-  `@ModifyArg`, `@ModifyVariable`, `@Redirect`처럼 작은 범위의 주입을 사용합니다.
-- `@Redirect`도 동일 호출 지점을 독점하기 쉬우므로 최소한으로 사용합니다.
-- 생성자는 `@At("RETURN")` 등 객체가 완전히 초기화된 지점을 우선합니다.
-- 서버 스레드를 막는 파일/네트워크 작업은 주입 메서드에서 직접 하지 않습니다.
-- Mixin은 보안 샌드박스가 아닙니다. 신뢰하는 플러그인만 설치하십시오.
+Built-in typed points include:
 
-## 4. 플러그인 의존성 계층
+- `At.HEAD`, `At.RETURN`, `At.TAIL`, and `At.CTOR_HEAD`
+- `At.invoke(method)` and `At.invokeAssign(method)`
+- `At.invokeString(method, literal)`
+- `At.field(property)`
+- `At.construct(Type::class.java)` and `At.construct(::Constructor)`
+- `At.jump()`, `At.load()`, `At.store()`, and `At.CONSTANT`
 
-`aerogel.plugin.json`의 `depends`는 필수 플러그인 그래프입니다.
+Configure an ordinal, opcode, shift, slice id, or injection-point arguments without replacing the typed target:
 
-```json
-"depends": {
-  "shared_api": ">=2.1.0"
+```kotlin
+val secondReturn = At.RETURN.configured(ordinal = 1)
+val afterCall = At.invoke(Target::work).configured(shift = AtShift.AFTER)
+```
+
+Use `at(first, second)` when an annotation accepts multiple points, and `MixinSlice` to bound a search. `At.explicit(...)` is an intentional low-level escape hatch for a selector that cannot exist as a Kotlin reference, not the normal API.
+
+## Constructors and class initialization
+
+Constructor references retain argument types and autocomplete:
+
+```kotlin
+mixin<Target> {
+    injectConstructor(::Target, at = At.RETURN) { callback ->
+        // `this` is the newly constructed Target.
+    }
+
+    classInitializer(at = At.TAIL) { callback ->
+        // Static initialization; there is no target receiver.
+    }
 }
 ```
 
-지원 범위 표현은 `*`, 정확한 버전, `=`, `>=`, `>`, `<=`, `<`입니다. Aerogel은
-누락, 버전 불일치, 순환 의존성을 서버 클래스 로드 전에 거부하고 의존 플러그인을
-먼저 로드합니다.
+Passing a constructor reference to `redirect` automatically emits a `NEW` selector and a constructor redirect descriptor.
 
-## 5. 호환성
+## Modifying and redirecting code
 
-Aerogel의 첫 지원 버전은 Minecraft 26.2 / Java 25입니다. Minecraft 업데이트에서
-내부 메서드 descriptor나 제어 흐름이 바뀌면 같은 이름이 남아 있어도 injection point가
-깨질 수 있습니다. 버전을 올릴 때는 `doctor`와 실제 서버 시작 테스트를 모두 수행하고,
-월드 백업을 먼저 만드십시오.
+```kotlin
+mixin<Target> {
+    modifyArg<Int>(
+        Target::calculate,
+        at = At.invoke(Helper::consume),
+        index = 0
+    ) { value -> value + 1 }
+
+    modifyConstant<Int>(
+        Target::limit,
+        constant = ConstantSelector.value(64)
+    ) { 128 }
+
+    redirect(Target::render, Renderer::draw) { renderer, value ->
+        renderer.draw(value)
+    }
+}
+```
+
+`ModifyArgs` uses Sponge's `Args` object. Field redirects choose the correct GET/SET opcode from the referenced field. Static target methods use the corresponding `*Static` function.
+
+## Accessors, invokers, shadows, and unique state
+
+```kotlin
+mixin<Target> {
+    val value = accessor(Target::value)
+    val calculate = invoker(Target::calculate)
+    val shadowed = shadow(Target::existingField)
+    val counter = uniqueField<Int>()
+
+    inject(Target::run, at = At.HEAD) { callback ->
+        value[this] = calculate(this, value[this])
+        counter[this] = counter[this] + 1
+    }
+}
+```
+
+- `accessor`/`invoker` emit public standard Mixin bridges.
+- `shadow` emits an actual shadow member and a collision-resistant bridge used by the external Kotlin handler.
+- `mutableFinalShadow` emits `@Shadow @Final @Mutable`; use it only when changing a genuinely final target field is intentional.
+- `uniqueField<T>()` adds an actual per-target-instance `@Unique` field. It is not backed by a global map. Its initial value is the JVM default for `T`.
+
+The bridge names include the generated Mixin identity, so two plugin Mixins do not share generic accessor names.
+
+## Local capture
+
+First inspect locals with `locals = LocalCapture.PRINT` on a normal injection. Then declare the exact captured types:
+
+```kotlin
+injectLocals(
+    Target::read,
+    at = At.RETURN,
+    capture = local<String>(),
+    locals = LocalCapture.CAPTURE_FAILHARD
+) { callback, localValue ->
+    callback.returnValue = localValue
+}
+```
+
+Use `locals<A, B>()` for two consecutive locals. Local capture depends on the target method's local-variable frame and is less stable across Minecraft updates than argument-only injection.
+
+## Groups, slices, and validation
+
+Every injector exposes Sponge's `require`, `expect`, `allow`, `order`, `remap`, and `constraints` settings. Group alternatives without copying a group name into each operation:
+
+```kotlin
+group("compatible-paths", min = 1, max = 1) {
+    inject(Target::firstPath, at = At.HEAD, require = 0) { callback -> }
+    inject(Target::secondPath, at = At.HEAD, require = 0) { callback -> }
+}
+```
+
+Aerogel validates direct member references, static/instance form, descriptors, fields, overwrite visibility, and generated handlers during `build`. Failures point to the Mixin file instead of being deferred to server startup whenever possible.
+
+## Standard Mixin classes
+
+For a feature whose shape is inherently a Java class declaration, use an ordinary Mixin:
+
+```java
+@Mixin(MinecraftServer.class)
+abstract class MinecraftServerMixin {
+    @Inject(method = "runServer", at = @At("HEAD"))
+    private void example$beforeRun(CallbackInfo callback) {
+    }
+}
+```
+
+Register its JSON file alongside generated Mixins:
+
+```kotlin
+aerogel {
+    plugin {
+        mixin("example.mixins.json")
+    }
+}
+```
+
+Run `./gradlew build`. Generated source, bytecode, and configuration are build outputs and should not be committed. A reload can replace ordinary plugin callbacks, but changing already-applied Mixin structure can still require a full server restart.

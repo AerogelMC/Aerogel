@@ -372,7 +372,6 @@ public final class PluginManager {
 
     private LoadedPlugin load(PluginDescriptor plugin, MixinHotSwap.Snapshot mixinState) throws Exception {
         Path dataDirectory = serverDirectory.resolve("plugins").resolve(plugin.id());
-        Files.createDirectories(dataDirectory);
         Logger logger = PluginLoggers.create(plugin.id());
         EventRegistry.OwnedEventBus events = eventRegistry.owner(plugin.id(), logger);
         Path stagedJar = null;

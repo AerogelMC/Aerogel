@@ -14,6 +14,7 @@ Aerogel uses these runtime libraries through Gradle dependency resolution:
 - Gson, Copyright Google, Apache License 2.0.
 - JLine, Copyright the JLine project contributors, BSD 3-Clause License.
 - Error Prone annotations, Copyright Google, Apache License 2.0.
+- Kotlin standard library and scripting support, Copyright JetBrains, Apache License 2.0.
 
 The complete dependency archives and license metadata are included in a built
 application distribution's `lib` directory or are obtainable from the Maven

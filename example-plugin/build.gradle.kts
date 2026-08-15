@@ -1,20 +1,18 @@
 plugins {
-    java
+    id("dev.aerogel.plugin") version "26.2-1"
 }
 
-val mixinVersion: String by project
-val aerogelApiProject = project(":aerogel-api")
-val apiMinecraftStubs = aerogelApiProject.extensions
-    .getByType<SourceSetContainer>()["minecraftStubs"]
+group = "dev.aerogel.example"
+version = "1.0.0"
 
-dependencies {
-    compileOnly(project(":aerogel-api"))
-    compileOnly(apiMinecraftStubs.output)
-    compileOnly("net.fabricmc:sponge-mixin:$mixinVersion")
-}
+aerogel {
+    minecraft.set("26.2")
 
-tasks.compileJava {
-    dependsOn(":aerogel-api:minecraftStubsClasses")
+    plugin {
+        id.set("aerogel_example")
+        name.set("Aerogel Example Plugin")
+        entrypoint("dev.aerogel.example.ExamplePlugin")
+    }
 }
 
 tasks.jar {

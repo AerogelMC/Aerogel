@@ -33,16 +33,11 @@ subprojects {
     }
 }
 
-tasks.register<Copy>("collectExamplePlugin") {
-    dependsOn(":example-plugin:jar")
-    from(project(":example-plugin").tasks.named("jar"))
-    into(layout.buildDirectory.dir("example"))
-}
-
 val publishAerogelGradleRepository by tasks.registering {
     group = "distribution"
     description = "Publishes the Aerogel API and Gradle plugin marker to a local Maven repository."
     dependsOn(":aerogel-api:publishMavenJavaPublicationToAerogelBuildRepository")
+    dependsOn(":aerogel-mixin-dsl:publishMavenJavaPublicationToAerogelBuildRepository")
     dependsOn(":aerogel-gradle-plugin:publishAllPublicationsToAerogelBuildRepository")
 }
 
