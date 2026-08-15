@@ -7,6 +7,7 @@ import dev.aerogel.api.event.inventory.InventoryButtonClickEvent;
 import dev.aerogel.api.event.inventory.RecipePlaceEvent;
 import dev.aerogel.api.event.inventory.TradeSelectEvent;
 import dev.aerogel.api.event.player.PlayerAbilitiesChangeEvent;
+import dev.aerogel.api.event.player.PlayerFlightChangeEvent;
 import dev.aerogel.api.event.player.PlayerAdvancementsScreenEvent;
 import dev.aerogel.api.event.player.PlayerActionEvent;
 import dev.aerogel.api.event.player.PlayerAttackEntityEvent;
@@ -54,6 +55,7 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.objectweb.asm.Opcodes;
 
 import java.util.List;
 import java.util.Optional;
@@ -218,6 +220,37 @@ abstract class ServerGamePacketListenerMixin {
         at = @At("HEAD"), cancellable = true)
     private void aerogel$abilities(@Coerce Object packet, CallbackInfo callbackInfo) {
         post(new PlayerAbilitiesChangeEvent(player(), EventHooks.cast(packet)), callbackInfo);
+    }
+
+    @Inject(
+        method = "handlePlayerAbilities("
+            + "Lnet/minecraft/network/protocol/game/ServerboundPlayerAbilitiesPacket;)V",
+        at = @At(
+            value = "FIELD",
+            target = "Lnet/minecraft/world/entity/player/Abilities;flying:Z",
+            opcode = Opcodes.PUTFIELD
+        ),
+        cancellable = true
+    )
+    private void aerogel$flightChanged(@Coerce Object packet, CallbackInfo callbackInfo) {
+        Object player = EventHooks.field(this, "player");
+        Object abilities = EventHooks.call(player, "getAbilities");
+        boolean previous = (Boolean) EventHooks.field(abilities, "flying");
+        boolean requested = (Boolean) EventHooks.call(packet, "isFlying")
+            && (Boolean) EventHooks.field(abilities, "mayfly");
+        if (previous == requested) return;
+
+        PlayerFlightChangeEvent event = new PlayerFlightChangeEvent(
+            EventHooks.cast(player), previous, requested);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            EventHooks.call(player, "onUpdateAbilities");
+            callbackInfo.cancel();
+        } else if (event.flying() != requested) {
+            EventHooks.setField(abilities, "flying", event.flying());
+            EventHooks.call(player, "onUpdateAbilities");
+            callbackInfo.cancel();
+        }
     }
 
     @Inject(method = "handleSetCarriedItem(Lnet/minecraft/network/protocol/game/ServerboundSetCarriedItemPacket;)V",

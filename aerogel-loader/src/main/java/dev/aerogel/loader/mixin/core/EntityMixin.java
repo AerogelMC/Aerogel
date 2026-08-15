@@ -1,10 +1,19 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.api.event.entity.EntityCombustEvent;
+import dev.aerogel.api.event.entity.EntityAirSupplyChangeEvent;
+import dev.aerogel.api.event.entity.EntityCustomNameChangeEvent;
 import dev.aerogel.api.event.entity.EntityDismountEvent;
+import dev.aerogel.api.event.entity.EntityFreezeTicksChangeEvent;
+import dev.aerogel.api.event.entity.EntityGravityChangeEvent;
 import dev.aerogel.api.event.entity.EntityMountEvent;
+import dev.aerogel.api.event.entity.EntityPoseChangeEvent;
 import dev.aerogel.api.event.entity.EntityRemoveEvent;
+import dev.aerogel.api.event.entity.EntitySilentChangeEvent;
 import dev.aerogel.api.event.entity.EntityTeleportEvent;
+import dev.aerogel.api.event.entity.EntityVisibilityChangeEvent;
+import dev.aerogel.api.event.player.PlayerSneakChangeEvent;
+import dev.aerogel.api.event.player.PlayerSwimChangeEvent;
 import dev.aerogel.loader.event.EventHooks;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -28,6 +37,14 @@ abstract class EntityMixin {
     @Unique private boolean aerogel$combustOverride;
     @Unique private boolean aerogel$teleportOverride;
     @Unique private boolean aerogel$mountOverride;
+    @Unique private boolean aerogel$airOverride;
+    @Unique private boolean aerogel$freezeOverride;
+    @Unique private boolean aerogel$poseOverride;
+    @Unique private boolean aerogel$customNameOverride;
+    @Unique private boolean aerogel$visibilityOverride;
+    @Unique private boolean aerogel$gravityOverride;
+    @Unique private boolean aerogel$silentOverride;
+    @Unique private boolean aerogel$playerStateOverride;
 
     @Unique
     public Collection<Entity> nearbyEntities(double radius) {
@@ -138,6 +155,199 @@ abstract class EntityMixin {
             } finally {
                 aerogel$teleportOverride = false;
             }
+        }
+    }
+
+    @Inject(method = "setAirSupply(I)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$airSupply(int airSupply, CallbackInfo callbackInfo) {
+        if (aerogel$airOverride) return;
+        int previous = ((Number) EventHooks.call(this, "getAirSupply")).intValue();
+        if (previous == airSupply) return;
+        EntityAirSupplyChangeEvent event = new EntityAirSupplyChangeEvent(
+            EventHooks.cast(this), previous, airSupply);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.airSupply() != airSupply) {
+            aerogel$airOverride = true;
+            try {
+                EventHooks.call(this, "setAirSupply", event.airSupply());
+            } finally {
+                aerogel$airOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setTicksFrozen(I)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$freezeTicks(int frozenTicks, CallbackInfo callbackInfo) {
+        if (aerogel$freezeOverride) return;
+        int previous = ((Number) EventHooks.call(this, "getTicksFrozen")).intValue();
+        if (previous == frozenTicks) return;
+        EntityFreezeTicksChangeEvent event = new EntityFreezeTicksChangeEvent(
+            EventHooks.cast(this), previous, frozenTicks);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.frozenTicks() != frozenTicks) {
+            aerogel$freezeOverride = true;
+            try {
+                EventHooks.call(this, "setTicksFrozen", event.frozenTicks());
+            } finally {
+                aerogel$freezeOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setPose(Lnet/minecraft/world/entity/Pose;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$pose(@Coerce Object pose, CallbackInfo callbackInfo) {
+        if (aerogel$poseOverride) return;
+        Object previous = EventHooks.call(this, "getPose");
+        if (previous == pose) return;
+        EntityPoseChangeEvent event = new EntityPoseChangeEvent(
+            EventHooks.cast(this), EventHooks.cast(previous), EventHooks.cast(pose));
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.pose() != pose) {
+            aerogel$poseOverride = true;
+            try {
+                EventHooks.call(this, "setPose", event.pose());
+            } finally {
+                aerogel$poseOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setCustomName(Lnet/minecraft/network/chat/Component;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$customName(@Coerce Object customName, CallbackInfo callbackInfo) {
+        if (aerogel$customNameOverride) return;
+        Object previous = EventHooks.call(this, "getCustomName");
+        if (Objects.equals(previous, customName)) return;
+        EntityCustomNameChangeEvent event = new EntityCustomNameChangeEvent(
+            EventHooks.cast(this), EventHooks.cast(previous), EventHooks.cast(customName));
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (!Objects.equals(event.customName(), customName)) {
+            aerogel$customNameOverride = true;
+            try {
+                EventHooks.call(this, "setCustomName", event.customName());
+            } finally {
+                aerogel$customNameOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setInvisible(Z)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$visibility(boolean invisible, CallbackInfo callbackInfo) {
+        if (aerogel$visibilityOverride) return;
+        boolean previous = (Boolean) EventHooks.call(this, "isInvisible");
+        if (previous == invisible) return;
+        EntityVisibilityChangeEvent event = new EntityVisibilityChangeEvent(
+            EventHooks.cast(this), previous, invisible);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.invisible() != invisible) {
+            aerogel$visibilityOverride = true;
+            try {
+                EventHooks.call(this, "setInvisible", event.invisible());
+            } finally {
+                aerogel$visibilityOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setNoGravity(Z)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$gravity(boolean noGravity, CallbackInfo callbackInfo) {
+        if (aerogel$gravityOverride) return;
+        boolean previous = (Boolean) EventHooks.call(this, "isNoGravity");
+        if (previous == noGravity) return;
+        EntityGravityChangeEvent event = new EntityGravityChangeEvent(
+            EventHooks.cast(this), previous, noGravity);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.noGravity() != noGravity) {
+            aerogel$gravityOverride = true;
+            try {
+                EventHooks.call(this, "setNoGravity", event.noGravity());
+            } finally {
+                aerogel$gravityOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setSilent(Z)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$silent(boolean silent, CallbackInfo callbackInfo) {
+        if (aerogel$silentOverride) return;
+        boolean previous = (Boolean) EventHooks.call(this, "isSilent");
+        if (previous == silent) return;
+        EntitySilentChangeEvent event = new EntitySilentChangeEvent(
+            EventHooks.cast(this), previous, silent);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.silent() != silent) {
+            aerogel$silentOverride = true;
+            try {
+                EventHooks.call(this, "setSilent", event.silent());
+            } finally {
+                aerogel$silentOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setShiftKeyDown(Z)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$sneaking(boolean sneaking, CallbackInfo callbackInfo) {
+        if (aerogel$playerStateOverride
+            || !EventHooks.isInstance(this, "net.minecraft.server.level.ServerPlayer")) return;
+        boolean previous = (Boolean) EventHooks.call(this, "isShiftKeyDown");
+        if (previous == sneaking) return;
+        PlayerSneakChangeEvent event = new PlayerSneakChangeEvent(
+            EventHooks.cast(this), previous, sneaking);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.sneaking() != sneaking) {
+            aerogel$playerStateOverride = true;
+            try {
+                EventHooks.call(this, "setShiftKeyDown", event.sneaking());
+            } finally {
+                aerogel$playerStateOverride = false;
+            }
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(method = "setSwimming(Z)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$swimming(boolean swimming, CallbackInfo callbackInfo) {
+        if (aerogel$playerStateOverride
+            || !EventHooks.isInstance(this, "net.minecraft.server.level.ServerPlayer")) return;
+        boolean previous = (Boolean) EventHooks.call(this, "isSwimming");
+        if (previous == swimming) return;
+        PlayerSwimChangeEvent event = new PlayerSwimChangeEvent(
+            EventHooks.cast(this), previous, swimming);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            callbackInfo.cancel();
+        } else if (event.swimming() != swimming) {
+            aerogel$playerStateOverride = true;
+            try {
+                EventHooks.call(this, "setSwimming", event.swimming());
+            } finally {
+                aerogel$playerStateOverride = false;
+            }
+            callbackInfo.cancel();
         }
     }
 }

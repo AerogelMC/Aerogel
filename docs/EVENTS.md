@@ -63,8 +63,8 @@ Aerogel marks an event cancellable only when its hook can prevent the correspond
 
 - All `PlayerPacketEvent` subtypes, including movement, input, attacks, interactions, item use, inventory input, book/sign edits, client settings, resource-pack responses, custom payloads, recipe-book actions, spectator actions, and creative-slot changes
 - Block intent and processing: `BlockBreakAttemptEvent`, `BlockMiningStartEvent`, `BlockMiningProgressEvent`, `BlockMiningStopEvent`, `BlockMiningAbortEvent`, `BlockBreakEvent`, `BlockPlaceEvent`, `BlockStateChangeEvent`, and `PistonMoveEvent`
-- Entity changes: `EntitySpawnEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityTargetEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, and `EntityBreedEvent`
-- Player and inventory operations: `PlayerLoginEvent`, `PlayerChatEvent`, `PlayerInteractEvent`, `PlayerGameModeChangeEvent`, `PlayerTeleportEvent`, `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`, `InventoryOpenEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, and `AnvilRenameEvent`
+- Entity changes: `EntitySpawnEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityTargetEvent`, `EntityAirSupplyChangeEvent`, `EntityFreezeTicksChangeEvent`, `EntityPoseChangeEvent`, `EntityCustomNameChangeEvent`, `EntityVisibilityChangeEvent`, `EntityGravityChangeEvent`, `EntitySilentChangeEvent`, `EntityHealthChangeEvent`, `EntityAbsorptionChangeEvent`, `EntityKnockbackEvent`, `EntityJumpEvent`, `EntityRandomTeleportEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, and `EntityBreedEvent`
+- Player and inventory operations: `PlayerLoginEvent`, `PlayerChatEvent`, `PlayerInteractEvent`, `PlayerGameModeChangeEvent`, `PlayerTeleportEvent`, `PlayerSneakChangeEvent`, `PlayerSprintChangeEvent`, `PlayerSwimChangeEvent`, `PlayerFlightChangeEvent`, `PlayerItemUseStartEvent`, `PlayerItemUseEndEvent`, `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`, `InventoryOpenEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, and `AnvilRenameEvent`
 - Server/world operations: `CommandExecuteEvent`, `ServerSaveStartEvent`, `ExplosionEvent`, `ChunkPreLoadEvent`, `RainChangeEvent`, and `ThunderChangeEvent`
 
 Result and lifecycle notifications remain observation-only. Examples include `BlockBrokenEvent`, join/quit, respawn, entity removal, inventory close, save completion, ticks, and world load/unload. At those hook points the vanilla result already exists, or cancelling it would leave server state inconsistent. `EntityDeathEvent` is a deliberate exception: it is not cancellable, but Aerogel holds the calculated loot and experience until listeners have edited the result.
@@ -94,9 +94,9 @@ Minecraft 26.2 currently provides these concrete events:
 
 - Server: `ServerStartingEvent`, `ServerStartedEvent`, `ServerTickStartEvent`, `ServerTickEndEvent`, `ServerSaveStartEvent`, `ServerSaveEndEvent`, `ServerStoppingEvent`, `ServerStoppedEvent`
 - Commands: `CommandRegistrationEvent`, `CommandExecuteEvent`
-- Players: `PlayerLoginEvent`, `PlayerJoinEvent`, `PlayerQuitEvent`, `PlayerRespawnEvent`, `PlayerDeathEvent`, `PlayerTeleportEvent`, `PlayerGameModeChangeEvent`, `PlayerChatEvent`, `PlayerInteractEvent`, `PlayerActionEvent`, `PlayerMoveEvent`, `PlayerInputEvent`, `PlayerVehicleMoveEvent`, `PlayerInteractEntityEvent`, `PlayerAttackEntityEvent`, `PlayerSwingEvent`, `PlayerCommandActionEvent`, `PlayerClientCommandEvent`, `PlayerAbilitiesChangeEvent`, `PlayerHotbarSlotChangeEvent`, `PlayerEditBookEvent`, `PlayerSignUpdateEvent`, `PlayerClientInformationEvent`, `PlayerUseItemEvent`, `PlayerUseItemOnBlockEvent`, `PlayerSwapHandItemsEvent`, `PlayerSpectatorActionEvent`, `PlayerPaddleBoatEvent`, `PlayerRecipeSeenEvent`, `PlayerRecipeBookSettingsEvent`, `PlayerAdvancementsScreenEvent`, `PlayerBundleSelectionEvent`, `PlayerCommandSuggestionEvent`, `PlayerResourcePackStatusEvent`, `PlayerCustomPayloadEvent`, `PlayerCustomClickActionEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`
+- Players: `PlayerLoginEvent`, `PlayerJoinEvent`, `PlayerQuitEvent`, `PlayerRespawnEvent`, `PlayerDeathEvent`, `PlayerTeleportEvent`, `PlayerGameModeChangeEvent`, `PlayerChatEvent`, `PlayerInteractEvent`, `PlayerActionEvent`, `PlayerMoveEvent`, `PlayerInputEvent`, `PlayerVehicleMoveEvent`, `PlayerInteractEntityEvent`, `PlayerAttackEntityEvent`, `PlayerSwingEvent`, `PlayerCommandActionEvent`, `PlayerClientCommandEvent`, `PlayerAbilitiesChangeEvent`, `PlayerSneakChangeEvent`, `PlayerSprintChangeEvent`, `PlayerSwimChangeEvent`, `PlayerFlightChangeEvent`, `PlayerItemUseStartEvent`, `PlayerItemUseEndEvent`, `PlayerHotbarSlotChangeEvent`, `PlayerEditBookEvent`, `PlayerSignUpdateEvent`, `PlayerClientInformationEvent`, `PlayerUseItemEvent`, `PlayerUseItemOnBlockEvent`, `PlayerSwapHandItemsEvent`, `PlayerSpectatorActionEvent`, `PlayerPaddleBoatEvent`, `PlayerRecipeSeenEvent`, `PlayerRecipeBookSettingsEvent`, `PlayerAdvancementsScreenEvent`, `PlayerBundleSelectionEvent`, `PlayerCommandSuggestionEvent`, `PlayerResourcePackStatusEvent`, `PlayerCustomPayloadEvent`, `PlayerCustomClickActionEvent`, `PlayerBedEnterEvent`, `PlayerBedLeaveEvent`, `PlayerExperienceChangeEvent`, `PlayerFoodExhaustionEvent`, `PlayerItemConsumeEvent`
 - Blocks: `BlockBreakAttemptEvent`, `BlockMiningStartEvent`, `BlockMiningProgressEvent`, `BlockMiningStopEvent`, `BlockMiningAbortEvent`, `BlockBreakEvent`, `BlockBrokenEvent`, `BlockPlaceEvent`, `BlockStateChangeEvent`, `PistonMoveEvent`
-- Entities: `EntitySpawnEvent`, `EntityRemoveEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityDeathEvent`, `EntityTargetEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, `EntityBreedEvent`
+- Entities: `EntitySpawnEvent`, `EntityRemoveEvent`, `EntityDamageEvent`, `EntityHealEvent`, `EntityEffectAddEvent`, `EntityEffectRemoveEvent`, `EntityEquipmentChangeEvent`, `EntityMountEvent`, `EntityDismountEvent`, `EntityCombustEvent`, `EntityDeathEvent`, `EntityTargetEvent`, `EntityAirSupplyChangeEvent`, `EntityFreezeTicksChangeEvent`, `EntityPoseChangeEvent`, `EntityCustomNameChangeEvent`, `EntityVisibilityChangeEvent`, `EntityGravityChangeEvent`, `EntitySilentChangeEvent`, `EntityHealthChangeEvent`, `EntityAbsorptionChangeEvent`, `EntityKnockbackEvent`, `EntityJumpEvent`, `EntityRandomTeleportEvent`, `ProjectileLaunchEvent`, `ProjectileHitEvent`, `EntityTeleportEvent`, `EntityTameEvent`, `EntityBreedEvent`
 - Items and inventories: `PlayerDropItemEvent`, `PlayerPickupItemEvent`, `InventoryOpenEvent`, `InventoryCloseEvent`, `InventoryClickEvent`, `CreativeInventorySlotEvent`, `InventoryButtonClickEvent`, `RecipePlaceEvent`, `TradeSelectEvent`, `AnvilRenameEvent`
 - Worlds: `WorldLoadEvent`, `WorldUnloadEvent`, `ChunkPreLoadEvent`, `ChunkLoadEvent`, `ChunkPreUnloadEvent`, `ChunkUnloadEvent`, `RainChangeEvent`, `ThunderChangeEvent`, `ExplosionEvent`
 
@@ -127,6 +127,34 @@ and rendered, including its colors, in the server console.
 `InventoryClickEvent` also exposes `containerId()`, `stateId()`, `slot()`, `button()`, and the vanilla `ContainerInput` through `input()`.
 
 World and entity events are hooked at the vanilla operation they describe instead of being inferred from a generic packet. For example, `EntityTargetEvent` covers AI target changes, `ProjectileLaunchEvent` covers a projectile entering a level, and weather events cover natural rain and thunder transitions. Packet-backed inventory events retain their exact vanilla packet through `event.packet()` so plugins can use every Minecraft 26.2 field.
+
+### Item-use lifecycle
+
+`PlayerItemUseStartEvent` runs after vanilla has accepted a non-empty item and confirmed that the player is not already using another item. It exposes the accepted hand and item and can cancel entry into active use. `PlayerItemUseEndEvent` reports the exact end path through `reason()`:
+
+- `COMPLETED`: vanilla is about to call `ItemStack.finishUsingItem`.
+- `RELEASED`: the player released an item whose behavior supports release.
+- `INTERRUPTED`: vanilla stopped the use for another reason, such as an explicit state reset.
+
+Cancelling an end event preserves the active-use state. When delaying `COMPLETED`, set a positive `remainingTicks` value as well; leaving it at zero intentionally lets vanilla attempt completion again on the next tick.
+
+### Global block-state changes
+
+`BlockStateChangeEvent` is the common pre-commit event for every state replacement routed through the vanilla level. It catches placement, removal, state-only replacement, fluid flow, explosions, piston movement, random and scheduled ticks, and entity-driven changes such as endermen taking or placing blocks. Cancelling it makes the underlying `setBlock` operation return `false`; changing `state`, `flags`, or `recursionLeft` changes the actual vanilla call.
+
+Use `changeType()` for `PLACE`, `REMOVE`, or `REPLACE`, and use `reason()` for the initiating operation. Known operations supply all applicable origin data:
+
+```java
+@EventHandler
+private void onBlockChange(BlockStateChangeEvent event) {
+    if (event.reason() == BlockStateChangeEvent.Reason.ENTITY_ACTION) {
+        event.sourceEntity().ifPresent(entity ->
+            logger.info("{} changed {}", entity.getUUID(), event.position()));
+    }
+}
+```
+
+Reasons distinguish player placement, player breaking, other player interactions, entity actions, explosions, pistons, fluids, random ticks, scheduled ticks, and direct setters. `sourceEntity()` is present for player and entity actions and for explosions with an entity source. `sourcePosition()` identifies an originating block or tick position. `sourceLocation()` retains a precise actor or explosion origin. Direct calls to the vanilla setter have `DIRECT`; Aerogel does not guess a cause from stack traces. Nested changes inherit the current operation until a more specific nested reason overrides it.
 
 The chunk lifecycle distinguishes requests from completed state changes:
 

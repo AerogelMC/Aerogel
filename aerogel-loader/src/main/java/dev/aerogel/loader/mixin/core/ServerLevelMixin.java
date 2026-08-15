@@ -1,5 +1,6 @@
 package dev.aerogel.loader.mixin.core;
 
+import dev.aerogel.api.event.block.BlockStateChangeEvent;
 import dev.aerogel.api.event.entity.EntitySpawnEvent;
 import dev.aerogel.api.event.entity.ProjectileLaunchEvent;
 import dev.aerogel.api.event.world.ChunkLoadEvent;
@@ -11,6 +12,7 @@ import dev.aerogel.api.event.world.ThunderChangeEvent;
 import dev.aerogel.api.event.world.WorldLoadEvent;
 import dev.aerogel.api.event.world.WorldUnloadEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.event.BlockChangeContext;
 import dev.aerogel.loader.internal.DeathDropCapture;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -37,6 +39,95 @@ import java.util.function.Predicate;
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin {
     @Unique private boolean aerogel$explosionOverride;
+
+    @Redirect(
+        method = "tickBlock(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/Block;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/"
+            + "BlockState;tick(Lnet/minecraft/server/level/ServerLevel;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
+    )
+    private void aerogel$scheduledBlockTick(
+        @Coerce Object state, @Coerce Object level, @Coerce Object position,
+        @Coerce Object random
+    ) {
+        BlockChangeContext.run(
+            BlockStateChangeEvent.Reason.SCHEDULED_TICK, null, position, null,
+            () -> EventHooks.call(state, "tick", level, position, random));
+    }
+
+    @Redirect(
+        method = "tickFluid(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/material/Fluid;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/"
+            + "FluidState;tick(Lnet/minecraft/server/level/ServerLevel;"
+            + "Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;)V")
+    )
+    private void aerogel$scheduledFluidTick(
+        @Coerce Object fluidState, @Coerce Object level, @Coerce Object position,
+        @Coerce Object blockState
+    ) {
+        BlockChangeContext.run(
+            BlockStateChangeEvent.Reason.FLUID, null, position, null,
+            () -> EventHooks.call(fluidState, "tick", level, position, blockState));
+    }
+
+    @Redirect(
+        method = "tickChunk(Lnet/minecraft/world/level/chunk/LevelChunk;I)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/"
+            + "BlockState;randomTick(Lnet/minecraft/server/level/ServerLevel;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
+    )
+    private void aerogel$randomBlockTick(
+        @Coerce Object state, @Coerce Object level, @Coerce Object position,
+        @Coerce Object random
+    ) {
+        BlockChangeContext.run(
+            BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
+            () -> EventHooks.call(state, "randomTick", level, position, random));
+    }
+
+    @Redirect(
+        method = "tickChunk(Lnet/minecraft/world/level/chunk/LevelChunk;I)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/material/"
+            + "FluidState;randomTick(Lnet/minecraft/server/level/ServerLevel;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
+    )
+    private void aerogel$randomFluidTick(
+        @Coerce Object state, @Coerce Object level, @Coerce Object position,
+        @Coerce Object random
+    ) {
+        BlockChangeContext.run(
+            BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
+            () -> EventHooks.call(state, "randomTick", level, position, random));
+    }
+
+    @Redirect(
+        method = "tickNonPassenger(Lnet/minecraft/world/entity/Entity;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;tick()V")
+    )
+    private void aerogel$entityTick(@Coerce Object entity) {
+        aerogel$withEntityBlockChangeContext(entity, "tick");
+    }
+
+    @Redirect(
+        method = "tickPassenger(Lnet/minecraft/world/entity/Entity;"
+            + "Lnet/minecraft/world/entity/Entity;)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;rideTick()V")
+    )
+    private void aerogel$passengerTick(@Coerce Object entity) {
+        aerogel$withEntityBlockChangeContext(entity, "rideTick");
+    }
+
+    @Unique
+    private void aerogel$withEntityBlockChangeContext(Object entity, String method) {
+        Object position = EventHooks.call(entity, "blockPosition");
+        Object location = EventHooks.call(entity, "position");
+        BlockChangeContext.run(
+            BlockStateChangeEvent.Reason.ENTITY_ACTION, entity, position, location,
+            () -> EventHooks.call(entity, method));
+    }
 
     @Unique
     public String identifier() {

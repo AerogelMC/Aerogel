@@ -7,17 +7,22 @@ import dev.aerogel.api.event.block.BlockMiningAbortEvent;
 import dev.aerogel.api.event.block.BlockMiningProgressEvent;
 import dev.aerogel.api.event.block.BlockMiningStartEvent;
 import dev.aerogel.api.event.block.BlockMiningStopEvent;
+import dev.aerogel.api.event.block.BlockStateChangeEvent;
 import dev.aerogel.api.event.player.PlayerGameModeChangeEvent;
 import dev.aerogel.api.event.player.PlayerInteractEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.event.BlockChangeContext;
 import net.minecraft.world.InteractionHand;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.util.function.Supplier;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayerGameMode")
 abstract class ServerPlayerGameModeMixin {
@@ -157,6 +162,93 @@ abstract class ServerPlayerGameModeMixin {
             aerogel$breakingState = null;
             callbackInfo.setReturnValue(false);
         }
+    }
+
+    @Redirect(
+        method = "destroyBlock(Lnet/minecraft/core/BlockPos;)Z",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "removeBlock(Lnet/minecraft/core/BlockPos;Z)Z")
+    )
+    private boolean aerogel$removePlayerBrokenBlock(
+        @Coerce Object level, @Coerce Object position, boolean moving
+    ) {
+        Object player = EventHooks.field(this, "player");
+        Object location = EventHooks.call(player, "position");
+        return BlockChangeContext.call(
+            BlockStateChangeEvent.Reason.PLAYER_BREAK, player, position, location,
+            () -> (Boolean) EventHooks.call(level, "removeBlock", position, moving));
+    }
+
+    @Redirect(
+        method = "useItemOn(Lnet/minecraft/server/level/ServerPlayer;"
+            + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/item/ItemStack;"
+            + "Lnet/minecraft/world/InteractionHand;"
+            + "Lnet/minecraft/world/phys/BlockHitResult;)"
+            + "Lnet/minecraft/world/InteractionResult;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/"
+            + "BlockState;useItemOn(Lnet/minecraft/world/item/ItemStack;"
+            + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/entity/player/Player;"
+            + "Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/phys/BlockHitResult;)"
+            + "Lnet/minecraft/world/InteractionResult;")
+    )
+    @Coerce
+    private Object aerogel$playerUsesItemOnBlock(
+        @Coerce Object state, @Coerce Object item, @Coerce Object level,
+        @Coerce Object player, @Coerce Object hand, @Coerce Object hitResult
+    ) {
+        return aerogel$playerInteraction(player, EventHooks.call(hitResult, "getBlockPos"),
+            () -> EventHooks.call(state, "useItemOn", item, level, player, hand, hitResult));
+    }
+
+    @Redirect(
+        method = "useItemOn(Lnet/minecraft/server/level/ServerPlayer;"
+            + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/item/ItemStack;"
+            + "Lnet/minecraft/world/InteractionHand;"
+            + "Lnet/minecraft/world/phys/BlockHitResult;)"
+            + "Lnet/minecraft/world/InteractionResult;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/"
+            + "BlockState;useWithoutItem(Lnet/minecraft/world/level/Level;"
+            + "Lnet/minecraft/world/entity/player/Player;"
+            + "Lnet/minecraft/world/phys/BlockHitResult;)"
+            + "Lnet/minecraft/world/InteractionResult;")
+    )
+    @Coerce
+    private Object aerogel$playerUsesBlock(
+        @Coerce Object state, @Coerce Object level,
+        @Coerce Object player, @Coerce Object hitResult
+    ) {
+        return aerogel$playerInteraction(player, EventHooks.call(hitResult, "getBlockPos"),
+            () -> EventHooks.call(state, "useWithoutItem", level, player, hitResult));
+    }
+
+    @Redirect(
+        method = "useItemOn(Lnet/minecraft/server/level/ServerPlayer;"
+            + "Lnet/minecraft/world/level/Level;Lnet/minecraft/world/item/ItemStack;"
+            + "Lnet/minecraft/world/InteractionHand;"
+            + "Lnet/minecraft/world/phys/BlockHitResult;)"
+            + "Lnet/minecraft/world/InteractionResult;",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/item/ItemStack;"
+            + "useOn(Lnet/minecraft/world/item/context/UseOnContext;)"
+            + "Lnet/minecraft/world/InteractionResult;")
+    )
+    @Coerce
+    private Object aerogel$playerUsesStackOnBlock(
+        @Coerce Object item, @Coerce Object context
+    ) {
+        Object player = EventHooks.call(context, "getPlayer");
+        Object position = EventHooks.call(context, "getClickedPos");
+        return aerogel$playerInteraction(player, position,
+            () -> EventHooks.call(item, "useOn", context));
+    }
+
+    @Unique
+    private Object aerogel$playerInteraction(
+        Object player, Object position, Supplier<Object> action
+    ) {
+        Object location = player == null ? null : EventHooks.call(player, "position");
+        return BlockChangeContext.call(
+            BlockStateChangeEvent.Reason.PLAYER_INTERACTION,
+            player, position, location, action);
     }
 
     @Inject(

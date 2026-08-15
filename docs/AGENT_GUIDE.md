@@ -299,12 +299,14 @@ Callback exceptions are logged against the owning plugin; the plugin normally re
 - Use `BlockMiningStart/Progress/Stop/AbortEvent` for mining phases.
 - Use cancellable `BlockBreakEvent` at the confirmed pre-removal point.
 - Use `BlockBrokenEvent` only to observe successful removal.
+- Use `BlockStateChangeEvent` to observe or replace every pending vanilla state change. Branch on `changeType()` and `reason()`; use `sourceEntity()`, `sourcePosition()`, and `sourceLocation()` instead of inferring an actor from a stack trace.
+- Use `PlayerItemUseStartEvent` and `PlayerItemUseEndEvent` for the accepted vanilla item-use lifecycle. End reasons are `COMPLETED`, `RELEASED`, and `INTERRUPTED`; cancelling preserves active use.
 - Use `PlayerChatEvent#setMessage` for the message body and a chat renderer for the entire prefix/name/body/suffix presentation.
 - `EntityDeathEvent` is not cancellable, but its final drops and experience are mutable.
 - Packet events run before vanilla packet handling; cancellation skips handling. Prefer a semantic event when one exists.
 - Cancelling `ChunkPreLoadEvent` is a real load denial, not a fake empty chunk. Mandatory synchronous callers may fail and ticket callers may retry.
 
-Built-in categories include server lifecycle and ticks; command registration and execution; login, join, quit, respawn, death, teleport, game mode, chat, interactions, movement, input, vehicle, inventory and client-action player events; block mining, breaking, placement, state, and piston events; entity spawn, removal, damage, healing, effects, equipment, mount, combustion, death, target, projectile, teleport, tame, and breed events; item drop/pickup and inventory/menu events; and world, chunk, weather, and explosion events.
+Built-in categories include server lifecycle and ticks; command registration and execution; login, join, quit, respawn, death, teleport, game mode, chat, interactions, movement, input, item-use lifecycle, posture, flight, vehicle, inventory and client-action player events; block mining, breaking, placement, global state, and piston events; entity spawn, removal, damage, healing, health, absorption, air, freezing, pose, identity, visibility, gravity, silence, knockback, jumping, effects, equipment, mount, combustion, death, target, projectile, teleport, tame, and breed events; item drop/pickup and inventory/menu events; and world, chunk, weather, and explosion events.
 
 Events expose live vanilla types. Do not search for an Aerogel `Player` or `World` wrapper.
 
