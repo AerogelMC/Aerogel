@@ -293,7 +293,7 @@ Callback exceptions are logged against the owning plugin; the plugin normally re
 
 ### Event selection rules
 
-- Use `PlayerInteractEvent` for player clicks. `action()` is left/right and `target()` is `AIR`, `BLOCK`, or `ENTITY`.
+- Use `PlayerInteractEvent` for player clicks. `action()` is left/right and `target()` is `AIR`, `BLOCK`, or `ENTITY`. Block left-clicks follow Minecraft's block-action packets; mining swing animations are not emitted as repeated air clicks.
 - Do not infer interaction from `PlayerSwingEvent`; swing packets can also be caused by dropping items and other animations.
 - Use `BlockBreakAttemptEvent` for raw client intent.
 - Use `BlockMiningStart/Progress/Stop/AbortEvent` for mining phases.

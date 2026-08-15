@@ -46,6 +46,7 @@ import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.phys.HitResult;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -61,7 +62,7 @@ import java.util.logging.Logger;
 
 @Mixin(targets = "net.minecraft.server.network.ServerGamePacketListenerImpl")
 abstract class ServerGamePacketListenerMixin {
-    @Unique private long aerogel$suppressedSwingTick = Long.MIN_VALUE;
+    @Unique private boolean aerogel$hasSuppressedSwing;
     @Unique private Object aerogel$suppressedSwingHand;
 
     @Redirect(
@@ -195,7 +196,9 @@ abstract class ServerGamePacketListenerMixin {
         EventHooks.post(swing);
 
         boolean cancelled = swing.isCancelled();
-        if (!aerogel$consumeSuppressedSwing(hand)) {
+        boolean suppressed = aerogel$consumeSuppressedSwing(hand)
+            || aerogel$isBlockTargeted(player);
+        if (!suppressed) {
             PlayerInteractEvent interaction = PlayerInteractEvent.air(
                 EventHooks.cast(player), PlayerInteractEvent.Action.LEFT_CLICK,
                 EventHooks.cast(hand));
@@ -445,24 +448,26 @@ abstract class ServerGamePacketListenerMixin {
 
     @Unique
     private void aerogel$suppressNextSwing(Object hand) {
-        aerogel$suppressedSwingTick = aerogel$connectionTick();
+        aerogel$hasSuppressedSwing = true;
         aerogel$suppressedSwingHand = hand;
     }
 
     @Unique
     private boolean aerogel$consumeSuppressedSwing(Object hand) {
-        if (aerogel$suppressedSwingTick != aerogel$connectionTick()
+        if (!aerogel$hasSuppressedSwing
             || !java.util.Objects.equals(aerogel$suppressedSwingHand, hand)) {
             return false;
         }
-        aerogel$suppressedSwingTick = Long.MIN_VALUE;
+        aerogel$hasSuppressedSwing = false;
         aerogel$suppressedSwingHand = null;
         return true;
     }
 
     @Unique
-    private long aerogel$connectionTick() {
-        return ((Number) EventHooks.field(this, "tickCount")).longValue();
+    private boolean aerogel$isBlockTargeted(Object playerObject) {
+        ServerPlayer player = EventHooks.cast(playerObject);
+        HitResult hit = player.pick(player.blockInteractionRange(), 1.0F, false);
+        return hit.getType() == HitResult.Type.BLOCK;
     }
 
     private ServerPlayer player() {

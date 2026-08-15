@@ -16,7 +16,9 @@ import java.util.Optional;
  *
  * <p>This is the semantic interaction event. Unlike {@link PlayerSwingEvent}, it does not fire
  * for a swing caused by dropping an item or for another packet action which merely happens to
- * play the hand animation.</p>
+ * play the hand animation. A left-clicked block is reported from Minecraft's block-action
+ * packet, while the per-tick swing animations produced during mining are not misreported as
+ * repeated air clicks.</p>
  */
 public final class PlayerInteractEvent implements PlayerEvent, CancellableEvent {
     public enum Action {

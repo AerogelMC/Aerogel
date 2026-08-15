@@ -7,4 +7,5 @@ import net.minecraft.world.scores.PlayerTeam;
 public abstract class Player extends LivingEntity {
     public GameProfile getGameProfile() { return null; }
     public PlayerTeam getTeam() { return null; }
+    public double blockInteractionRange() { return 0.0; }
 }

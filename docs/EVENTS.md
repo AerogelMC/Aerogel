@@ -112,8 +112,10 @@ Events run on the thread of the underlying vanilla operation. Tick, server lifec
 `PlayerInteractEvent` is the high-level click event. Its `action()` is `LEFT_CLICK` or
 `RIGHT_CLICK`, while `target()` is `AIR`, `BLOCK`, or `ENTITY`. Block positions and faces,
 entities, exact client interaction positions, and the used hand are exposed without requiring a
-plugin to correlate raw packets. `PlayerSwingEvent` intentionally remains a low-level animation
-packet event and can also occur for actions such as dropping an item.
+plugin to correlate raw packets. Left-clicked blocks follow Minecraft's block-action packets;
+per-tick mining swing animations do not produce repeated `AIR` interactions. `PlayerSwingEvent`
+intentionally remains a low-level animation packet event and can also occur for actions such as
+dropping an item.
 
 `PlayerPacketEvent` subtypes run before their serverbound packet is handled. Cancelling one skips vanilla packet handling. The typed packet remains available through `event.packet()`, so a plugin can inspect every vanilla field without waiting for an Aerogel wrapper API. High-frequency events such as `PlayerMoveEvent` and `PlayerInputEvent` should use small, non-blocking listeners.
 

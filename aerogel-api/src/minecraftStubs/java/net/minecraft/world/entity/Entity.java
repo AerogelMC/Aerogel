@@ -5,6 +5,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.HitResult;
 
 import java.util.Collection;
 import java.util.UUID;
@@ -23,6 +24,7 @@ public abstract class Entity {
     public int getId() { return 0; }
     public UUID getUUID() { return null; }
     public Vec3 position() { return null; }
+    public HitResult pick(double distance, float partialTick, boolean includeFluids) { return null; }
     public Level level() { return null; }
     public ItemEntity spawnAtLocation(ServerLevel level, ItemStack stack) { return null; }
     public void discard() { }
