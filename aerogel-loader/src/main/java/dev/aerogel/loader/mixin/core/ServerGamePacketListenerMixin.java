@@ -99,7 +99,13 @@ abstract class ServerGamePacketListenerMixin implements RestartGameListenerBridg
         if (RestartCoordinator.requested()) return;
 
         if (EventHooks.hasListeners(PlayerQuitEvent.class)) {
-            PlayerQuitEvent event = new PlayerQuitEvent(player, message);
+            int previousPlayerCount = players.getPlayers().size();
+            PlayerQuitEvent event = new PlayerQuitEvent(
+                player,
+                message,
+                previousPlayerCount,
+                Math.max(0, previousPlayerCount - 1)
+            );
             EventHooks.post(event);
             if (event.isCancelled()) return;
             message = event.message();

@@ -109,6 +109,12 @@ ServerPlayer player = event.player();
 
 Events run on the thread of the underlying vanilla operation. Tick, server lifecycle, command registration, join, and quit events therefore run synchronously and must not perform blocking work.
 
+`PlayerJoinEvent` and `PlayerQuitEvent` snapshot the online-player count around the lifecycle
+change. Use `previousPlayerCount()` for the count before the change and `updatedPlayerCount()`
+for the count after it. These values remain stable even if the live player list changes later.
+Cancelling either event suppresses only its announcement; use `setMessage(Component)` to replace
+the complete vanilla announcement.
+
 `PlayerInteractEvent` is the high-level click event. Its `action()` is `LEFT_CLICK` or
 `RIGHT_CLICK`, while `target()` is `AIR`, `BLOCK`, or `ENTITY`. Block positions and faces,
 entities, exact client interaction positions, and the used hand are exposed without requiring a

@@ -13,6 +13,8 @@ import java.util.Objects;
  */
 public final class PlayerQuitEvent implements PlayerEvent, CancellableEvent {
     private final ServerPlayer player;
+    private final int previousPlayerCount;
+    private final int updatedPlayerCount;
     private Component message;
     private boolean cancelled;
 
@@ -28,13 +30,37 @@ public final class PlayerQuitEvent implements PlayerEvent, CancellableEvent {
     public PlayerQuitEvent(ServerPlayer player, Component message) {
         this.player = Objects.requireNonNull(player, "player");
         this.message = Objects.requireNonNull(message, "message");
+        int previousCount = player.level().getServer().getPlayerList().getPlayers().size();
+        this.previousPlayerCount = previousCount;
+        this.updatedPlayerCount = Math.max(0, previousCount - 1);
+    }
+
+    public PlayerQuitEvent(
+        ServerPlayer player,
+        Component message,
+        int previousPlayerCount,
+        int updatedPlayerCount
+    ) {
+        this.player = Objects.requireNonNull(player, "player");
+        this.message = Objects.requireNonNull(message, "message");
+        this.previousPlayerCount = requirePlayerCount(previousPlayerCount, "previousPlayerCount");
+        this.updatedPlayerCount = requirePlayerCount(updatedPlayerCount, "updatedPlayerCount");
     }
 
     @Override public ServerPlayer player() { return player; }
+    /** Number of online players immediately before this player leaves. */
+    public int previousPlayerCount() { return previousPlayerCount; }
+    /** Projected online-player count after this player leaves. */
+    public int updatedPlayerCount() { return updatedPlayerCount; }
     public Component message() { return message; }
     public void setMessage(Component message) {
         this.message = Objects.requireNonNull(message, "message");
     }
     @Override public boolean isCancelled() { return cancelled; }
     @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }
+
+    private static int requirePlayerCount(int count, String name) {
+        if (count < 0) throw new IllegalArgumentException(name + " must not be negative");
+        return count;
+    }
 }

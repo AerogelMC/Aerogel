@@ -87,7 +87,14 @@ abstract class PlayerListMixin {
 
         try {
             if (message != null && !RestartCoordinator.isReturningPlayer(player)) {
-                PlayerJoinEvent event = new PlayerJoinEvent(player, connection, message);
+                int updatedPlayerCount = ((PlayerList) (Object) this).getPlayers().size();
+                PlayerJoinEvent event = new PlayerJoinEvent(
+                    player,
+                    connection,
+                    message,
+                    Math.max(0, updatedPlayerCount - 1),
+                    updatedPlayerCount
+                );
                 EventHooks.post(event);
                 if (!event.isCancelled()) {
                     ((PlayerList) (Object) this).broadcastSystemMessage(event.message(), overlay);
