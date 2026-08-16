@@ -20,6 +20,7 @@ import dev.aerogel.api.event.player.PlayerCommandSuggestionEvent;
 import dev.aerogel.api.event.player.PlayerEditBookEvent;
 import dev.aerogel.api.event.player.PlayerHotbarSlotChangeEvent;
 import dev.aerogel.api.event.player.PlayerInputEvent;
+import dev.aerogel.api.event.player.PlayerQuitEvent;
 import dev.aerogel.api.event.player.PlayerBundleSelectionEvent;
 import dev.aerogel.api.event.player.PlayerInteractEvent;
 import dev.aerogel.api.event.player.PlayerPaddleBoatEvent;
@@ -94,10 +95,17 @@ abstract class ServerGamePacketListenerMixin implements RestartGameListenerBridg
             target = "Lnet/minecraft/server/players/PlayerList;broadcastSystemMessage(Lnet/minecraft/network/chat/Component;Z)V"
         )
     )
-    private void aerogel$suppressRestartQuitMessage(PlayerList players, Component message, boolean overlay) {
-        if (!RestartCoordinator.requested()) {
-            players.broadcastSystemMessage(message, overlay);
+    private void aerogel$handleQuitAnnouncement(PlayerList players, Component message, boolean overlay) {
+        if (RestartCoordinator.requested()) return;
+
+        if (EventHooks.hasListeners(PlayerQuitEvent.class)) {
+            PlayerQuitEvent event = new PlayerQuitEvent(player, message);
+            EventHooks.post(event);
+            if (event.isCancelled()) return;
+            message = event.message();
         }
+
+        players.broadcastSystemMessage(message, overlay);
     }
 
     @Inject(method = "handleMovePlayer(Lnet/minecraft/network/protocol/game/ServerboundMovePlayerPacket;)V",

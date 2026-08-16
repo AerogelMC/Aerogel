@@ -18,6 +18,7 @@ public class ServerPlayer extends Player {
     public ServerGamePacketListenerImpl connection;
     public AbstractContainerMenu containerMenu;
     @Override public ServerLevel level() { return null; }
+    public Component getDisplayName() { return null; }
     public void setDisplayName(Component displayName) { }
     public void clearDisplayName() { }
     public void setTabListName(Component name) { }

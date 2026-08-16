@@ -2,7 +2,6 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.api.event.player.PlayerJoinEvent;
 import dev.aerogel.api.event.player.PlayerLoginEvent;
-import dev.aerogel.api.event.player.PlayerQuitEvent;
 import dev.aerogel.api.event.player.PlayerRespawnEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.restart.RestartCoordinator;
@@ -14,6 +13,7 @@ import net.minecraft.server.players.PlayerList;
 import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -23,6 +23,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.minecraft.server.players.PlayerList")
 abstract class PlayerListMixin {
+    @Unique private Component aerogel$pendingJoinMessage;
+    @Unique private boolean aerogel$pendingJoinOverlay;
+
     @Inject(method = "canPlayerLogin", at = @At("RETURN"), cancellable = true)
     private void aerogel$loginCheck(
         java.net.SocketAddress address,
@@ -46,7 +49,7 @@ abstract class PlayerListMixin {
             target = "Lnet/minecraft/server/players/PlayerList;broadcastSystemMessage(Lnet/minecraft/network/chat/Component;Z)V"
         )
     )
-    private void aerogel$suppressRestartJoinMessage(
+    private void aerogel$handleJoinAnnouncement(
         PlayerList players,
         Component message,
         boolean overlay,
@@ -54,9 +57,16 @@ abstract class PlayerListMixin {
         ServerPlayer player,
         @Coerce Object cookie
     ) {
-        if (!RestartCoordinator.isReturningPlayer(player)) {
+        if (RestartCoordinator.isReturningPlayer(player)) return;
+        if (!EventHooks.hasListeners(PlayerJoinEvent.class)) {
             players.broadcastSystemMessage(message, overlay);
+            return;
         }
+
+        // Vanilla announces the join before its placement routine has fully returned. Hold that
+        // one announcement until RETURN so PlayerJoinEvent retains its lifecycle semantics.
+        aerogel$pendingJoinMessage = message;
+        aerogel$pendingJoinOverlay = overlay;
     }
 
     @Inject(
@@ -70,11 +80,22 @@ abstract class PlayerListMixin {
         @Coerce Object cookie,
         CallbackInfo callbackInfo
     ) {
-        if (!RestartCoordinator.isReturningPlayer(player)
-            && EventHooks.hasListeners(PlayerJoinEvent.class)) {
-            EventHooks.post(new PlayerJoinEvent(player, connection));
+        Component message = aerogel$pendingJoinMessage;
+        boolean overlay = aerogel$pendingJoinOverlay;
+        aerogel$pendingJoinMessage = null;
+        aerogel$pendingJoinOverlay = false;
+
+        try {
+            if (message != null && !RestartCoordinator.isReturningPlayer(player)) {
+                PlayerJoinEvent event = new PlayerJoinEvent(player, connection, message);
+                EventHooks.post(event);
+                if (!event.isCancelled()) {
+                    ((PlayerList) (Object) this).broadcastSystemMessage(event.message(), overlay);
+                }
+            }
+        } finally {
+            RestartCoordinator.playerJoined(player);
         }
-        RestartCoordinator.playerJoined(player);
     }
 
     @Inject(
@@ -83,9 +104,6 @@ abstract class PlayerListMixin {
     )
     private void aerogel$playerQuit(ServerPlayer player, CallbackInfo callbackInfo) {
         PlayerNameTagService.playerRemoved(player);
-        if (!RestartCoordinator.requested() && EventHooks.hasListeners(PlayerQuitEvent.class)) {
-            EventHooks.post(new PlayerQuitEvent(player));
-        }
     }
 
     @Inject(
