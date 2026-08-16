@@ -1,9 +1,18 @@
 package dev.aerogel.loader.internal;
 
 import dev.aerogel.api.persistence.PersistentDataContainer;
-import dev.aerogel.api.persistence.PersistentDataType;
 import dev.aerogel.api.persistence.PersistentDataView;
+import net.minecraft.nbt.ByteArrayTag;
+import net.minecraft.nbt.ByteTag;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.DoubleTag;
+import net.minecraft.nbt.FloatTag;
+import net.minecraft.nbt.IntArrayTag;
+import net.minecraft.nbt.IntTag;
+import net.minecraft.nbt.LongArrayTag;
+import net.minecraft.nbt.LongTag;
+import net.minecraft.nbt.ShortTag;
+import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
@@ -15,7 +24,9 @@ import net.minecraft.world.item.component.CustomData;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** Creates direct persistent-data views for vanilla objects extended by Aerogel. */
 public final class PersistentDataViews {
@@ -146,7 +157,7 @@ public final class PersistentDataViews {
         }
     }
 
-    private static final class EntityContainer implements PersistentDataContainer {
+    private static final class EntityContainer extends TypedContainer {
         private final PersistentDataHolderBridge holder;
         private final String namespace;
 
@@ -155,34 +166,11 @@ public final class PersistentDataViews {
             this.namespace = namespace;
         }
 
-        @Override
-        public <T> void set(String key, PersistentDataType<T> type, T value) {
-            validateKey(key);
-            Objects.requireNonNull(type, "type");
-            Tag encoded = Objects.requireNonNull(
-                type.encode(Objects.requireNonNull(value, "value")), "encoded value");
-            edit(tag -> tag.put(key, encoded.copy()));
-        }
-
-        @Override
-        public <T> Optional<T> get(String key, PersistentDataType<T> type) {
-            validateKey(key);
-            Objects.requireNonNull(type, "type");
-            Tag value = read().get(key);
-            return value == null ? Optional.empty() : Optional.of(type.decode(value.copy()));
-        }
-
-        @Override public boolean contains(String key) { validateKey(key); return read().contains(key); }
-        @Override public void remove(String key) { validateKey(key); edit(tag -> tag.remove(key)); }
-        @Override public Set<String> keys() { return Set.copyOf(read().keySet()); }
-        @Override public void clear() { edit(tag -> Set.copyOf(tag.keySet()).forEach(tag::remove)); }
-        @Override public CompoundTag snapshot() { return read(); }
-
-        private CompoundTag read() {
+        @Override protected CompoundTag read() {
             return holder.aerogel$persistentData(namespace);
         }
 
-        private void edit(Consumer<CompoundTag> editor) {
+        @Override protected void edit(Consumer<CompoundTag> editor) {
             holder.aerogel$editPersistentData(namespace, editor);
         }
     }
@@ -240,24 +228,119 @@ public final class PersistentDataViews {
         protected abstract CompoundTag read();
         protected abstract void edit(Consumer<CompoundTag> editor);
 
-        @Override public <T> void set(String key, PersistentDataType<T> type, T value) {
-            validateKey(key);
-            Objects.requireNonNull(type, "type");
-            Tag encoded = Objects.requireNonNull(
-                type.encode(Objects.requireNonNull(value, "value")), "encoded value");
-            edit(tag -> tag.put(key, encoded.copy()));
+        @Override public void set(String key, byte value) { put(key, ByteTag.valueOf(value)); }
+        @Override public void set(String key, short value) { put(key, ShortTag.valueOf(value)); }
+        @Override public void set(String key, int value) { put(key, IntTag.valueOf(value)); }
+        @Override public void set(String key, long value) { put(key, LongTag.valueOf(value)); }
+        @Override public void set(String key, float value) { put(key, FloatTag.valueOf(value)); }
+        @Override public void set(String key, double value) { put(key, DoubleTag.valueOf(value)); }
+        @Override public void set(String key, boolean value) { put(key, ByteTag.valueOf(value)); }
+        @Override public void set(String key, String value) {
+            put(key, StringTag.valueOf(Objects.requireNonNull(value, "value")));
         }
-        @Override public <T> Optional<T> get(String key, PersistentDataType<T> type) {
-            validateKey(key);
-            Objects.requireNonNull(type, "type");
-            Tag value = read().get(key);
-            return value == null ? Optional.empty() : Optional.of(type.decode(value.copy()));
+        @Override public void set(String key, UUID value) {
+            Objects.requireNonNull(value, "value");
+            put(key, new IntArrayTag(new int[] {
+                (int) (value.getMostSignificantBits() >> 32),
+                (int) value.getMostSignificantBits(),
+                (int) (value.getLeastSignificantBits() >> 32),
+                (int) value.getLeastSignificantBits()
+            }));
         }
+        @Override public void set(String key, byte[] value) {
+            put(key, new ByteArrayTag(Objects.requireNonNull(value, "value")));
+        }
+        @Override public void set(String key, int[] value) {
+            put(key, new IntArrayTag(Objects.requireNonNull(value, "value")));
+        }
+        @Override public void set(String key, long[] value) {
+            put(key, new LongArrayTag(Objects.requireNonNull(value, "value")));
+        }
+        @Override public void set(String key, CompoundTag value) {
+            put(key, Objects.requireNonNull(value, "value").copy());
+        }
+
+        @Override public Optional<Byte> getByte(String key) {
+            return decode(key, Tag.TAG_BYTE, tag -> number(tag).byteValue());
+        }
+        @Override public Optional<Short> getShort(String key) {
+            return decode(key, Tag.TAG_SHORT, tag -> number(tag).shortValue());
+        }
+        @Override public Optional<Integer> getInt(String key) {
+            return decode(key, Tag.TAG_INT, tag -> number(tag).intValue());
+        }
+        @Override public Optional<Long> getLong(String key) {
+            return decode(key, Tag.TAG_LONG, tag -> number(tag).longValue());
+        }
+        @Override public Optional<Float> getFloat(String key) {
+            return decode(key, Tag.TAG_FLOAT, tag -> number(tag).floatValue());
+        }
+        @Override public Optional<Double> getDouble(String key) {
+            return decode(key, Tag.TAG_DOUBLE, tag -> number(tag).doubleValue());
+        }
+        @Override public Optional<Boolean> getBoolean(String key) {
+            return decode(key, Tag.TAG_BYTE, tag -> number(tag).byteValue() != 0);
+        }
+        @Override public Optional<String> getString(String key) {
+            return decode(key, Tag.TAG_STRING, tag -> tag.asString()
+                .orElseThrow(() -> mismatch(Tag.TAG_STRING, tag)));
+        }
+        @Override public Optional<UUID> getUUID(String key) {
+            return decode(key, Tag.TAG_INT_ARRAY, tag -> {
+                int[] values = tag.asIntArray()
+                    .orElseThrow(() -> mismatch(Tag.TAG_INT_ARRAY, tag));
+                if (values.length != 4) {
+                    throw new IllegalArgumentException(
+                        "Persistent UUID must contain four integers");
+                }
+                return new UUID(((long) values[0] << 32) | (values[1] & 0xffffffffL),
+                    ((long) values[2] << 32) | (values[3] & 0xffffffffL));
+            });
+        }
+        @Override public Optional<byte[]> getByteArray(String key) {
+            return decode(key, Tag.TAG_BYTE_ARRAY, tag -> tag.asByteArray()
+                .orElseThrow(() -> mismatch(Tag.TAG_BYTE_ARRAY, tag)).clone());
+        }
+        @Override public Optional<int[]> getIntArray(String key) {
+            return decode(key, Tag.TAG_INT_ARRAY, tag -> tag.asIntArray()
+                .orElseThrow(() -> mismatch(Tag.TAG_INT_ARRAY, tag)).clone());
+        }
+        @Override public Optional<long[]> getLongArray(String key) {
+            return decode(key, Tag.TAG_LONG_ARRAY, tag -> tag.asLongArray()
+                .orElseThrow(() -> mismatch(Tag.TAG_LONG_ARRAY, tag)).clone());
+        }
+        @Override public Optional<CompoundTag> getCompound(String key) {
+            return decode(key, Tag.TAG_COMPOUND, tag -> tag.asCompound()
+                .orElseThrow(() -> mismatch(Tag.TAG_COMPOUND, tag)).copy());
+        }
+
         @Override public boolean contains(String key) { validateKey(key); return read().contains(key); }
         @Override public void remove(String key) { validateKey(key); edit(tag -> tag.remove(key)); }
         @Override public Set<String> keys() { return Set.copyOf(read().keySet()); }
         @Override public void clear() { edit(tag -> Set.copyOf(tag.keySet()).forEach(tag::remove)); }
         @Override public CompoundTag snapshot() { return read(); }
+
+        private void put(String key, Tag value) {
+            validateKey(key);
+            edit(tag -> tag.put(key, value.copy()));
+        }
+
+        private <T> Optional<T> decode(String key, byte expected, Function<Tag, T> decoder) {
+            validateKey(key);
+            Tag value = read().get(key);
+            if (value == null) return Optional.empty();
+            if (value.getId() != expected) throw mismatch(expected, value);
+            return Optional.of(decoder.apply(value));
+        }
+
+        private static Number number(Tag tag) {
+            return tag.asNumber().orElseThrow(() -> mismatch(tag.getId(), tag));
+        }
+
+        private static IllegalArgumentException mismatch(byte expected, Tag actual) {
+            return new IllegalArgumentException("Persistent data tag type mismatch: expected "
+                + expected + ", got " + actual.getId());
+        }
     }
 
     private static void requireServerThread(ServerLevel level) {

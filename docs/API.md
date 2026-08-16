@@ -189,11 +189,10 @@ reward.data().namespace(context)
 ```
 
 Built-in types cover all numeric NBT types, booleans, strings, UUIDs, primitive arrays, and copied
-`CompoundTag` values. A plugin may implement `PersistentDataType<T>` for another lossless NBT
-representation and use the explicit three-argument `set`/`get` overload for it. Built-in values use
-compile-time overloads rather than runtime type guessing; reads are available as `getInt`,
-`getString`, `getUUID`, and the other matching methods. Use these containers on the server thread. UUID-only player or entity containers
-are intentionally not provided: pass the live object so its data is owned by its vanilla save.
+`CompoundTag` values. Values use compile-time overloads rather than runtime type guessing; reads
+are available as `getInt`, `getString`, `getUUID`, and the other matching methods. Use these
+containers on the server thread. UUID-only player or entity containers are intentionally not
+provided: pass the live object so its data is owned by its vanilla save.
 
 ## Items
 

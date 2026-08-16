@@ -511,8 +511,8 @@ Minecraft-aware files use live registry access and may finish loading only after
   and coordinate data uses the owning world's vanilla `SavedData`. Nothing is mirrored into the
   plugin data directory. Keys are already isolated by plugin. Access these containers on the
   Minecraft server thread and pass live player/entity objects rather than UUIDs.
-  Built-in values use `data.set("key", value)` and typed reads such as `getInt` or `getString`;
-  pass an explicit `PersistentDataType<T>` only for custom encodings.
+  Values use `data.set("key", value)` and typed reads such as `getInt` or `getString`. Do not
+  invent a second type-token API around these overloads.
 - Use `new ItemStack(item).edit()` or `stack.edit()` to edit real `ItemStack` instances. Common
   fields are fluent and `component(...)` accepts every vanilla `DataComponentType`. There is no
   separate item service.

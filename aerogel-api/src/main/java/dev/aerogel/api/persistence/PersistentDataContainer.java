@@ -8,36 +8,33 @@ import java.util.UUID;
 
 /** A plugin-namespaced persistent data view backed by vanilla save data. */
 public interface PersistentDataContainer {
-    <T> void set(String key, PersistentDataType<T> type, T value);
-    <T> Optional<T> get(String key, PersistentDataType<T> type);
+    void set(String key, byte value);
+    void set(String key, short value);
+    void set(String key, int value);
+    void set(String key, long value);
+    void set(String key, float value);
+    void set(String key, double value);
+    void set(String key, boolean value);
+    void set(String key, String value);
+    void set(String key, UUID value);
+    void set(String key, byte[] value);
+    void set(String key, int[] value);
+    void set(String key, long[] value);
+    void set(String key, CompoundTag value);
 
-    default void set(String key, byte value) { set(key, PersistentDataTypes.BYTE, value); }
-    default void set(String key, short value) { set(key, PersistentDataTypes.SHORT, value); }
-    default void set(String key, int value) { set(key, PersistentDataTypes.INTEGER, value); }
-    default void set(String key, long value) { set(key, PersistentDataTypes.LONG, value); }
-    default void set(String key, float value) { set(key, PersistentDataTypes.FLOAT, value); }
-    default void set(String key, double value) { set(key, PersistentDataTypes.DOUBLE, value); }
-    default void set(String key, boolean value) { set(key, PersistentDataTypes.BOOLEAN, value); }
-    default void set(String key, String value) { set(key, PersistentDataTypes.STRING, value); }
-    default void set(String key, UUID value) { set(key, PersistentDataTypes.UUID, value); }
-    default void set(String key, byte[] value) { set(key, PersistentDataTypes.BYTE_ARRAY, value); }
-    default void set(String key, int[] value) { set(key, PersistentDataTypes.INTEGER_ARRAY, value); }
-    default void set(String key, long[] value) { set(key, PersistentDataTypes.LONG_ARRAY, value); }
-    default void set(String key, CompoundTag value) { set(key, PersistentDataTypes.COMPOUND, value); }
-
-    default Optional<Byte> getByte(String key) { return get(key, PersistentDataTypes.BYTE); }
-    default Optional<Short> getShort(String key) { return get(key, PersistentDataTypes.SHORT); }
-    default Optional<Integer> getInt(String key) { return get(key, PersistentDataTypes.INTEGER); }
-    default Optional<Long> getLong(String key) { return get(key, PersistentDataTypes.LONG); }
-    default Optional<Float> getFloat(String key) { return get(key, PersistentDataTypes.FLOAT); }
-    default Optional<Double> getDouble(String key) { return get(key, PersistentDataTypes.DOUBLE); }
-    default Optional<Boolean> getBoolean(String key) { return get(key, PersistentDataTypes.BOOLEAN); }
-    default Optional<String> getString(String key) { return get(key, PersistentDataTypes.STRING); }
-    default Optional<UUID> getUUID(String key) { return get(key, PersistentDataTypes.UUID); }
-    default Optional<byte[]> getByteArray(String key) { return get(key, PersistentDataTypes.BYTE_ARRAY); }
-    default Optional<int[]> getIntArray(String key) { return get(key, PersistentDataTypes.INTEGER_ARRAY); }
-    default Optional<long[]> getLongArray(String key) { return get(key, PersistentDataTypes.LONG_ARRAY); }
-    default Optional<CompoundTag> getCompound(String key) { return get(key, PersistentDataTypes.COMPOUND); }
+    Optional<Byte> getByte(String key);
+    Optional<Short> getShort(String key);
+    Optional<Integer> getInt(String key);
+    Optional<Long> getLong(String key);
+    Optional<Float> getFloat(String key);
+    Optional<Double> getDouble(String key);
+    Optional<Boolean> getBoolean(String key);
+    Optional<String> getString(String key);
+    Optional<UUID> getUUID(String key);
+    Optional<byte[]> getByteArray(String key);
+    Optional<int[]> getIntArray(String key);
+    Optional<long[]> getLongArray(String key);
+    Optional<CompoundTag> getCompound(String key);
 
     default byte getByte(String key, byte fallback) { return getByte(key).orElse(fallback); }
     default short getShort(String key, short fallback) { return getShort(key).orElse(fallback); }
