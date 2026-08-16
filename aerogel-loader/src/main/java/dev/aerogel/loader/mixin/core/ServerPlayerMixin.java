@@ -15,6 +15,8 @@ import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
 import dev.aerogel.loader.internal.PlayerNameTagService;
 import dev.aerogel.loader.internal.DeathDropCapture;
+import dev.aerogel.loader.internal.PlayerViewService;
+import dev.aerogel.loader.internal.RespawnGameListenerBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
@@ -36,22 +38,55 @@ import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
 import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.network.protocol.game.ClientboundTabListPacket;
+import net.minecraft.network.protocol.game.ClientboundAnimatePacket;
+import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockEventPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
+import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
+import net.minecraft.network.protocol.game.ClientboundInitializeBorderPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.network.protocol.game.ClientboundSetCameraPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityLinkPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
+import net.minecraft.network.protocol.game.ClientboundSetExperiencePacket;
+import net.minecraft.network.protocol.game.ClientboundSetHealthPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.resources.Identifier;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Unit;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.Relative;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.border.WorldBorder;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.scores.TeamColor;
 import net.minecraft.world.MenuProvider;
 import net.minecraft.world.damagesource.DamageSource;
 import java.util.Set;
+import java.util.Collection;
+import java.util.Map;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
 abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
@@ -132,6 +167,7 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         aerogel$tabListFooter = source.aerogel$tabListFooter;
         aerogel$tabListHidden = source.aerogel$tabListHidden;
         aerogel$nameTagHidden = source.aerogel$nameTagHidden;
+        PlayerViewService.transfer(previous, self());
     }
 
     @Unique
@@ -285,6 +321,315 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     @Unique
     public void clearInventory() {
         self().getInventory().clearContent();
+    }
+
+    @Unique
+    public ServerPlayer respawn() {
+        return respawn(false);
+    }
+
+    @Unique
+    public ServerPlayer respawn(boolean keepEverything) {
+        ServerPlayer current = self();
+        if (!server.isSameThread()) {
+            throw new IllegalStateException("Player respawn must run on the Minecraft server thread");
+        }
+        if (connection.player != current) {
+            throw new IllegalStateException("Cannot respawn a stale ServerPlayer instance");
+        }
+        ServerPlayer replacement = server.getPlayerList().respawn(
+            current, keepEverything, Entity.RemovalReason.KILLED);
+        connection.player = replacement;
+        connection.resetPosition();
+        ((RespawnGameListenerBridge) connection).aerogel$restartClientLoadTimerAfterRespawn();
+        return replacement;
+    }
+
+    @Unique
+    public void setBlock(BlockPos position, BlockState state) {
+        Objects.requireNonNull(position, "position");
+        Objects.requireNonNull(state, "state");
+        PlayerViewService.rememberBlock(self(), position);
+        connection.send(new ClientboundBlockUpdatePacket(position, state));
+    }
+
+    @Unique
+    public void setBlocks(Map<BlockPos, BlockState> blocks) {
+        Objects.requireNonNull(blocks, "blocks");
+        for (Map.Entry<BlockPos, BlockState> entry : blocks.entrySet()) {
+            setBlock(entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Unique
+    public void resetBlock(BlockPos position) {
+        Objects.requireNonNull(position, "position");
+        PlayerViewService.forgetBlock(self(), position);
+        connection.send(new ClientboundBlockUpdatePacket(
+            position, self().level().getBlockState(position)));
+    }
+
+    @Unique
+    public void resetBlocks(Collection<BlockPos> positions) {
+        Objects.requireNonNull(positions, "positions");
+        for (BlockPos position : positions) resetBlock(position);
+    }
+
+    @Unique
+    public void setBlockEntity(BlockEntity blockEntity) {
+        Objects.requireNonNull(blockEntity, "blockEntity");
+        PlayerViewService.rememberBlock(self(), blockEntity.getBlockPos());
+        connection.send(ClientboundBlockEntityDataPacket.create(blockEntity));
+    }
+
+    @Unique
+    public void setBlockBreakProgress(BlockPos position, int progress) {
+        Objects.requireNonNull(position, "position");
+        if (progress < 0 || progress > 9) {
+            throw new IllegalArgumentException("progress must be between 0 and 9");
+        }
+        PlayerViewService.rememberBreak(self(), position);
+        connection.send(new ClientboundBlockDestructionPacket(
+            PlayerViewService.breakId(position), position, progress));
+    }
+
+    @Unique
+    public void clearBlockBreakProgress(BlockPos position) {
+        Objects.requireNonNull(position, "position");
+        PlayerViewService.forgetBreak(self(), position);
+        connection.send(new ClientboundBlockDestructionPacket(
+            PlayerViewService.breakId(position), position, -1));
+    }
+
+    @Unique
+    public void playBlockEvent(BlockPos position, Block block, int type, int data) {
+        connection.send(new ClientboundBlockEventPacket(
+            Objects.requireNonNull(position, "position"),
+            Objects.requireNonNull(block, "block"), type, data));
+    }
+
+    @Unique
+    public void setVisible(Entity entity, boolean visible) {
+        PlayerViewService.setVisible(self(), entity, visible);
+    }
+
+    @Unique
+    public boolean isVisible(Entity entity) {
+        return PlayerViewService.isVisible(self(), Objects.requireNonNull(entity, "entity"));
+    }
+
+    @Unique
+    public void setGlowing(Entity entity, boolean glowing) {
+        PlayerViewService.setGlowing(self(), entity, glowing);
+    }
+
+    @Unique
+    public void resetGlowing(Entity entity) {
+        PlayerViewService.resetGlowing(self(), entity);
+    }
+
+    @Unique
+    public void setGlowColorOverride(Entity entity, TeamColor color) {
+        PlayerViewService.setGlowColorOverride(self(), entity, color);
+    }
+
+    @Unique
+    public void resetGlowColorOverride(Entity entity) {
+        PlayerViewService.resetGlowColorOverride(self(), entity);
+    }
+
+    @Unique
+    public void setInvisible(Entity entity, boolean invisible) {
+        PlayerViewService.setInvisible(self(), entity, invisible);
+    }
+
+    @Unique
+    public void resetInvisible(Entity entity) {
+        PlayerViewService.resetInvisible(self(), entity);
+    }
+
+    @Unique
+    public void setOnFire(Entity entity, boolean onFire) {
+        PlayerViewService.setOnFire(self(), entity, onFire);
+    }
+
+    @Unique
+    public void resetOnFire(Entity entity) {
+        PlayerViewService.resetOnFire(self(), entity);
+    }
+
+    @Unique
+    public void setEquipment(LivingEntity entity, EquipmentSlot slot, ItemStack item) {
+        PlayerViewService.setEquipment(self(), entity, slot, item);
+    }
+
+    @Unique
+    public void resetEquipment(LivingEntity entity, EquipmentSlot slot) {
+        PlayerViewService.resetEquipment(self(), entity, slot);
+    }
+
+    @Unique
+    public void setEntityVelocity(Entity entity, Vec3 velocity) {
+        Objects.requireNonNull(entity, "entity");
+        connection.send(new ClientboundSetEntityMotionPacket(
+            entity.getId(), Objects.requireNonNull(velocity, "velocity")));
+    }
+
+    @Unique
+    public void setEntityPosition(
+        Entity entity, double x, double y, double z, float yaw, float pitch
+    ) {
+        Objects.requireNonNull(entity, "entity");
+        connection.send(new ClientboundEntityPositionSyncPacket(
+            entity.getId(), new PositionMoveRotation(
+                new Vec3(x, y, z), entity.getDeltaMovement(), yaw, pitch), entity.onGround()));
+    }
+
+    @Unique
+    public void setEntityHeadRotation(Entity entity, float yaw) {
+        Objects.requireNonNull(entity, "entity");
+        byte rotation = (byte) Math.floor(yaw * 256.0F / 360.0F);
+        connection.send(new ClientboundRotateHeadPacket(entity, rotation));
+    }
+
+    @Unique
+    public void playHandSwing(Entity entity, InteractionHand hand) {
+        Objects.requireNonNull(entity, "entity");
+        int animation = Objects.requireNonNull(hand, "hand") == InteractionHand.MAIN_HAND ? 0 : 3;
+        connection.send(new ClientboundAnimatePacket(entity, animation));
+    }
+
+    @Unique
+    public void playCriticalHit(Entity entity, boolean magic) {
+        connection.send(new ClientboundAnimatePacket(
+            Objects.requireNonNull(entity, "entity"), magic ? 5 : 4));
+    }
+
+    @Unique
+    public void playWakeUp(Entity entity) {
+        connection.send(new ClientboundAnimatePacket(
+            Objects.requireNonNull(entity, "entity"), 2));
+    }
+
+    @Unique
+    public void playEntityEvent(Entity entity, byte eventId) {
+        connection.send(new ClientboundEntityEventPacket(
+            Objects.requireNonNull(entity, "entity"), eventId));
+    }
+
+    @Unique
+    public void setEntityLeash(Entity entity, Entity holder) {
+        connection.send(new ClientboundSetEntityLinkPacket(
+            Objects.requireNonNull(entity, "entity"), holder));
+    }
+
+    @Unique
+    public void setCameraView(Entity entity) {
+        connection.send(new ClientboundSetCameraPacket(
+            Objects.requireNonNull(entity, "entity")));
+    }
+
+    @Unique
+    public void resetCameraView() {
+        connection.send(new ClientboundSetCameraPacket(self()));
+    }
+
+    @Unique
+    public void spawnParticle(
+        ParticleOptions particle, double x, double y, double z, int count,
+        double offsetX, double offsetY, double offsetZ, double speed
+    ) {
+        if (count < 0) throw new IllegalArgumentException("count must not be negative");
+        connection.send(new ClientboundLevelParticlesPacket(
+            Objects.requireNonNull(particle, "particle"), true, true, x, y, z,
+            (float) offsetX, (float) offsetY, (float) offsetZ, (float) speed, count));
+    }
+
+    @Unique
+    public void playSound(
+        Holder<SoundEvent> sound, SoundSource source,
+        double x, double y, double z, float volume, float pitch
+    ) {
+        if (volume < 0.0F) throw new IllegalArgumentException("volume must not be negative");
+        if (pitch < 0.0F) throw new IllegalArgumentException("pitch must not be negative");
+        connection.send(new ClientboundSoundPacket(
+            Objects.requireNonNull(sound, "sound"), Objects.requireNonNull(source, "source"),
+            x, y, z, volume, pitch, java.util.concurrent.ThreadLocalRandom.current().nextLong()));
+    }
+
+    @Unique
+    public void stopSound(Identifier sound, SoundSource source) {
+        connection.send(new ClientboundStopSoundPacket(
+            Objects.requireNonNull(sound, "sound"), Objects.requireNonNull(source, "source")));
+    }
+
+    @Unique
+    public void stopSounds() {
+        connection.send(new ClientboundStopSoundPacket(null, null));
+    }
+
+    @Unique
+    public void setExperienceBar(float progress, int level, int totalExperience) {
+        if (progress < 0.0F || progress > 1.0F) {
+            throw new IllegalArgumentException("progress must be between 0 and 1");
+        }
+        if (level < 0 || totalExperience < 0) {
+            throw new IllegalArgumentException("experience values must not be negative");
+        }
+        connection.send(new ClientboundSetExperiencePacket(progress, totalExperience, level));
+    }
+
+    @Unique
+    public void resetExperienceBar() {
+        connection.send(new ClientboundSetExperiencePacket(
+            self().experienceProgress, self().totalExperience, self().experienceLevel));
+    }
+
+    @Unique
+    public void setHealthBar(float health, int food, float saturation) {
+        if (health < 0.0F || food < 0 || food > 20 || saturation < 0.0F) {
+            throw new IllegalArgumentException("invalid health bar values");
+        }
+        connection.send(new ClientboundSetHealthPacket(health, food, saturation));
+    }
+
+    @Unique
+    public void resetHealthBar() {
+        connection.send(new ClientboundSetHealthPacket(
+            self().getHealth(), self().getFoodData().getFoodLevel(),
+            self().getFoodData().getSaturationLevel()));
+    }
+
+    @Unique
+    public void setWeather(float rainLevel, float thunderLevel) {
+        if (rainLevel < 0.0F || rainLevel > 1.0F
+            || thunderLevel < 0.0F || thunderLevel > 1.0F) {
+            throw new IllegalArgumentException("weather levels must be between 0 and 1");
+        }
+        PlayerViewService.sendWeather(self(), rainLevel, thunderLevel);
+    }
+
+    @Unique
+    public void resetWeather() {
+        ServerLevel level = self().level();
+        PlayerViewService.sendWeather(
+            self(), level.getRainLevel(1.0F), level.getThunderLevel(1.0F));
+    }
+
+    @Unique
+    public void setWorldBorder(WorldBorder border) {
+        connection.send(new ClientboundInitializeBorderPacket(
+            Objects.requireNonNull(border, "border")));
+    }
+
+    @Unique
+    public void resetWorldBorder() {
+        connection.send(new ClientboundInitializeBorderPacket(self().level().getWorldBorder()));
+    }
+
+    @Unique
+    public void clearViewOverrides() {
+        PlayerViewService.clear(self());
     }
 
     @Inject(method = "startSleepInBed(Lnet/minecraft/core/BlockPos;)Lcom/mojang/datafixers/util/Either;",

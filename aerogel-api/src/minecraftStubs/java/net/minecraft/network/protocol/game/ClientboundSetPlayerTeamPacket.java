@@ -11,4 +11,9 @@ public class ClientboundSetPlayerTeamPacket implements Packet<ClientGamePacketLi
     public static ClientboundSetPlayerTeamPacket createRemovePacket(PlayerTeam team) {
         return null;
     }
+    public static ClientboundSetPlayerTeamPacket createPlayerPacket(
+        PlayerTeam team, String player, Action action
+    ) { return null; }
+
+    public enum Action { ADD, REMOVE }
 }

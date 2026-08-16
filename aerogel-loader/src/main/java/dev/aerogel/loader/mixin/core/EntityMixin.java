@@ -15,7 +15,9 @@ import dev.aerogel.api.event.entity.EntityVisibilityChangeEvent;
 import dev.aerogel.api.event.player.PlayerSneakChangeEvent;
 import dev.aerogel.api.event.player.PlayerSwimChangeEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.EntityViewBridge;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -26,6 +28,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.portal.TeleportTransition;
@@ -37,7 +41,8 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 @Mixin(targets = "net.minecraft.world.entity.Entity")
-abstract class EntityMixin {
+abstract class EntityMixin implements EntityViewBridge {
+    @Shadow protected static EntityDataAccessor<Byte> DATA_SHARED_FLAGS_ID;
     @Unique private boolean aerogel$combustOverride;
     @Unique private boolean aerogel$teleportOverride;
     @Unique private boolean aerogel$mountOverride;
@@ -49,6 +54,16 @@ abstract class EntityMixin {
     @Unique private boolean aerogel$gravityOverride;
     @Unique private boolean aerogel$silentOverride;
     @Unique private boolean aerogel$playerStateOverride;
+
+    @Override
+    public byte aerogel$sharedFlags() {
+        return ((Entity) (Object) this).getEntityData().get(DATA_SHARED_FLAGS_ID);
+    }
+
+    @Override
+    public SynchedEntityData.DataValue<Byte> aerogel$sharedFlagsValue(byte flags) {
+        return SynchedEntityData.DataValue.create(DATA_SHARED_FLAGS_ID, flags);
+    }
 
     @Unique
     public Collection<Entity> nearbyEntities(double radius) {

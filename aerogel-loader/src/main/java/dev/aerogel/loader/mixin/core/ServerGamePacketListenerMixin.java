@@ -40,6 +40,7 @@ import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.plugin.PluginFailures;
 import dev.aerogel.loader.restart.RestartCoordinator;
 import dev.aerogel.loader.internal.RestartGameListenerBridge;
+import dev.aerogel.loader.internal.RespawnGameListenerBridge;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ServerboundAttackPacket;
@@ -79,12 +80,17 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Mixin(targets = "net.minecraft.server.network.ServerGamePacketListenerImpl")
-abstract class ServerGamePacketListenerMixin implements RestartGameListenerBridge {
+abstract class ServerGamePacketListenerMixin
+    implements RestartGameListenerBridge, RespawnGameListenerBridge {
     @Shadow public ServerPlayer player;
 
     @Override
     @Invoker("removePlayerFromWorld")
     public abstract void aerogel$removePlayerFromWorld();
+
+    @Override
+    @Invoker("restartClientLoadTimerAfterRespawn")
+    public abstract void aerogel$restartClientLoadTimerAfterRespawn();
     @Unique private boolean aerogel$hasSuppressedSwing;
     @Unique private InteractionHand aerogel$suppressedSwingHand;
 

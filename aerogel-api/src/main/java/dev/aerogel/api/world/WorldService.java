@@ -5,9 +5,13 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 
 import java.util.Optional;
+import java.util.Collection;
 
 /** Creates and locates server levels owned by the running Minecraft server. */
 public interface WorldService {
+    /** Returns an immutable snapshot of every level currently loaded by the server. */
+    Collection<ServerLevel> loaded();
+
     /** Finds a loaded level. An unqualified id uses the calling plugin's namespace. */
     Optional<ServerLevel> find(String id);
 

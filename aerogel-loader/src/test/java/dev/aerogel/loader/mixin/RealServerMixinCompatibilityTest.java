@@ -75,6 +75,7 @@ final class RealServerMixinCompatibilityTest {
         "dev/aerogel/loader/event/EventHooks.class",
         "dev/aerogel/loader/internal/DeathDropCapture.class",
         "dev/aerogel/loader/internal/PlayerNameTagService.class",
+        "dev/aerogel/loader/internal/PlayerViewService.class",
         "dev/aerogel/loader/restart/RestartCoordinator.class"
     );
 

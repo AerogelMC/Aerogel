@@ -34,7 +34,8 @@ final class DevelopmentJarPatcher {
             .sorted(Map.Entry.comparingByKey())
             .flatMap(entry -> entry.getValue().stream()
                 .map(method -> entry.getKey() + '#' + method.name + method.descriptor
-                    + ':' + String.valueOf(method.signature)))
+                    + ':' + String.valueOf(method.signature) + ':'
+                    + String.join(",", method.parameterNames)))
             .sorted()
             .collect(java.util.stream.Collectors.joining("\n"));
     }
@@ -137,6 +138,9 @@ final class DevelopmentJarPatcher {
     private static void addMethod(ClassWriter writer, InjectedMethod method) {
         MethodVisitor visitor = writer.visitMethod(
             Opcodes.ACC_PUBLIC, method.name, method.descriptor, method.signature, null);
+        for (String parameterName : method.parameterNames) {
+            visitor.visitParameter(parameterName, 0);
+        }
         visitor.visitCode();
         Type returnType = Type.getReturnType(method.descriptor);
         switch (returnType.getSort()) {
@@ -178,64 +182,114 @@ final class DevelopmentJarPatcher {
         add(result, "net/minecraft/server/MinecraftServer",
             method("onlinePlayers", "()Ljava/util/Collection;",
                 "()Ljava/util/Collection<Lnet/minecraft/server/level/ServerPlayer;>;"),
-            method("findPlayer", "(Ljava/lang/String;)Ljava/util/Optional;",
-                "(Ljava/lang/String;)Ljava/util/Optional<Lnet/minecraft/server/level/ServerPlayer;>;"),
-            method("findPlayer", "(Ljava/util/UUID;)Ljava/util/Optional;",
-                "(Ljava/util/UUID;)Ljava/util/Optional<Lnet/minecraft/server/level/ServerPlayer;>;"),
+            namedGeneric("findPlayer", "(Ljava/lang/String;)Ljava/util/Optional;",
+                "(Ljava/lang/String;)Ljava/util/Optional<Lnet/minecraft/server/level/ServerPlayer;>;", "name"),
+            namedGeneric("findPlayer", "(Ljava/util/UUID;)Ljava/util/Optional;",
+                "(Ljava/util/UUID;)Ljava/util/Optional<Lnet/minecraft/server/level/ServerPlayer;>;", "uniqueId"),
             method("loadedLevels", "()Ljava/util/Collection;",
                 "()Ljava/util/Collection<Lnet/minecraft/server/level/ServerLevel;>;"),
-            method("broadcast", "(Lnet/minecraft/network/chat/Component;)V"),
-            method("broadcastPacket", "(Lnet/minecraft/network/protocol/Packet;)V",
-                "(Lnet/minecraft/network/protocol/Packet<*>;)V"),
+            named("broadcast", "(Lnet/minecraft/network/chat/Component;)V", "message"),
+            namedGeneric("broadcastPacket", "(Lnet/minecraft/network/protocol/Packet;)V",
+                "(Lnet/minecraft/network/protocol/Packet<*>;)V", "packet"),
             method("restart", "()Z"));
         add(result, "net/minecraft/server/level/ServerPlayer",
-            method("setDisplayName", "(Lnet/minecraft/network/chat/Component;)V"),
+            named("setDisplayName", "(Lnet/minecraft/network/chat/Component;)V", "displayName"),
             method("clearDisplayName", "()V"),
-            method("setTabListName", "(Lnet/minecraft/network/chat/Component;)V"),
+            named("setTabListName", "(Lnet/minecraft/network/chat/Component;)V", "name"),
             method("clearTabListName", "()V"),
-            method("setTabListHidden", "(Z)V"),
+            named("setTabListHidden", "(Z)V", "hidden"),
             method("isTabListHidden", "()Z"),
-            method("setNameTagHidden", "(Z)V"),
+            named("setNameTagHidden", "(Z)V", "hidden"),
             method("isNameTagHidden", "()Z"),
-            method("setTabListHeader", "(Lnet/minecraft/network/chat/Component;)V"),
-            method("setTabListFooter", "(Lnet/minecraft/network/chat/Component;)V"),
-            method("setTabListHeaderFooter", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;)V"),
+            named("setTabListHeader", "(Lnet/minecraft/network/chat/Component;)V", "header"),
+            named("setTabListFooter", "(Lnet/minecraft/network/chat/Component;)V", "footer"),
+            named("setTabListHeaderFooter", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;)V", "header", "footer"),
             method("clearTabListHeaderFooter", "()V"),
-            method("sendTitle", "(Lnet/minecraft/network/chat/Component;)V"),
-            method("sendTitle", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;III)V"),
-            method("clearTitle", "()V"), method("clearTitle", "(Z)V"),
-            method("kick", "(Lnet/minecraft/network/chat/Component;)V"),
-            method("sendPacket", "(Lnet/minecraft/network/protocol/Packet;)V",
-                "(Lnet/minecraft/network/protocol/Packet<*>;)V"),
-            method("giveItem", "(Lnet/minecraft/world/item/ItemStack;)Z"),
-            method("removeItems", "(Ljava/util/function/Predicate;I)I",
-                "(Ljava/util/function/Predicate<Lnet/minecraft/world/item/ItemStack;>;I)I"),
-            method("clearInventory", "()V"));
+            named("sendTitle", "(Lnet/minecraft/network/chat/Component;)V", "title"),
+            named("sendTitle", "(Lnet/minecraft/network/chat/Component;Lnet/minecraft/network/chat/Component;III)V", "title", "subtitle", "fadeInTicks", "stayTicks", "fadeOutTicks"),
+            method("clearTitle", "()V"), named("clearTitle", "(Z)V", "resetTimes"),
+            named("kick", "(Lnet/minecraft/network/chat/Component;)V", "reason"),
+            namedGeneric("sendPacket", "(Lnet/minecraft/network/protocol/Packet;)V",
+                "(Lnet/minecraft/network/protocol/Packet<*>;)V", "packet"),
+            named("giveItem", "(Lnet/minecraft/world/item/ItemStack;)Z", "stack"),
+            namedGeneric("removeItems", "(Ljava/util/function/Predicate;I)I",
+                "(Ljava/util/function/Predicate<Lnet/minecraft/world/item/ItemStack;>;I)I", "filter", "maximum"),
+            method("clearInventory", "()V"),
+            method("respawn", "()Lnet/minecraft/server/level/ServerPlayer;"),
+            named("respawn", "(Z)Lnet/minecraft/server/level/ServerPlayer;", "keepEverything"),
+            named("setBlock", "(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;)V", "position", "state"),
+            namedGeneric("setBlocks", "(Ljava/util/Map;)V",
+                "(Ljava/util/Map<Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/state/BlockState;>;)V", "blocks"),
+            named("resetBlock", "(Lnet/minecraft/core/BlockPos;)V", "position"),
+            namedGeneric("resetBlocks", "(Ljava/util/Collection;)V",
+                "(Ljava/util/Collection<Lnet/minecraft/core/BlockPos;>;)V", "positions"),
+            named("setBlockEntity", "(Lnet/minecraft/world/level/block/entity/BlockEntity;)V", "blockEntity"),
+            named("setBlockBreakProgress", "(Lnet/minecraft/core/BlockPos;I)V", "position", "progress"),
+            named("clearBlockBreakProgress", "(Lnet/minecraft/core/BlockPos;)V", "position"),
+            named("playBlockEvent", "(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/Block;II)V", "position", "block", "type", "data"),
+            named("setVisible", "(Lnet/minecraft/world/entity/Entity;Z)V", "entity", "visible"),
+            named("isVisible", "(Lnet/minecraft/world/entity/Entity;)Z", "entity"),
+            named("setGlowing", "(Lnet/minecraft/world/entity/Entity;Z)V", "entity", "glowing"),
+            named("resetGlowing", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            named("setGlowColorOverride", "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/scores/TeamColor;)V", "entity", "color"),
+            named("resetGlowColorOverride", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            named("setInvisible", "(Lnet/minecraft/world/entity/Entity;Z)V", "entity", "invisible"),
+            named("resetInvisible", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            named("setOnFire", "(Lnet/minecraft/world/entity/Entity;Z)V", "entity", "onFire"),
+            named("resetOnFire", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            named("setEquipment", "(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/entity/EquipmentSlot;Lnet/minecraft/world/item/ItemStack;)V", "entity", "slot", "item"),
+            named("resetEquipment", "(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/entity/EquipmentSlot;)V", "entity", "slot"),
+            named("setEntityVelocity", "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/phys/Vec3;)V", "entity", "velocity"),
+            named("setEntityPosition", "(Lnet/minecraft/world/entity/Entity;DDDFF)V", "entity", "x", "y", "z", "yaw", "pitch"),
+            named("setEntityHeadRotation", "(Lnet/minecraft/world/entity/Entity;F)V", "entity", "yaw"),
+            named("playHandSwing", "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/InteractionHand;)V", "entity", "hand"),
+            named("playCriticalHit", "(Lnet/minecraft/world/entity/Entity;Z)V", "entity", "magic"),
+            named("playWakeUp", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            named("playEntityEvent", "(Lnet/minecraft/world/entity/Entity;B)V", "entity", "eventId"),
+            named("setEntityLeash", "(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/world/entity/Entity;)V", "entity", "holder"),
+            named("setCameraView", "(Lnet/minecraft/world/entity/Entity;)V", "entity"),
+            method("resetCameraView", "()V"),
+            named("spawnParticle", "(Lnet/minecraft/core/particles/ParticleOptions;DDDIDDDD)V", "particle", "x", "y", "z", "count", "offsetX", "offsetY", "offsetZ", "speed"),
+            namedGeneric("playSound", "(Lnet/minecraft/core/Holder;Lnet/minecraft/sounds/SoundSource;DDDFF)V",
+                "(Lnet/minecraft/core/Holder<Lnet/minecraft/sounds/SoundEvent;>;Lnet/minecraft/sounds/SoundSource;DDDFF)V", "sound", "source", "x", "y", "z", "volume", "pitch"),
+            named("stopSound", "(Lnet/minecraft/resources/Identifier;Lnet/minecraft/sounds/SoundSource;)V", "sound", "source"),
+            method("stopSounds", "()V"),
+            named("setExperienceBar", "(FII)V", "progress", "level", "totalExperience"),
+            method("resetExperienceBar", "()V"),
+            named("setHealthBar", "(FIF)V", "health", "food", "saturation"),
+            method("resetHealthBar", "()V"),
+            named("setWeather", "(FF)V", "rainLevel", "thunderLevel"),
+            method("resetWeather", "()V"),
+            named("setWorldBorder", "(Lnet/minecraft/world/level/border/WorldBorder;)V", "border"),
+            method("resetWorldBorder", "()V"),
+            method("clearViewOverrides", "()V"));
         add(result, "net/minecraft/server/level/ServerLevel",
             method("identifier", "()Ljava/lang/String;"),
             method("entities", "()Ljava/util/Collection;",
                 "()Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
-            method("findEntity", "(Ljava/util/UUID;)Ljava/util/Optional;",
-                "(Ljava/util/UUID;)Ljava/util/Optional<Lnet/minecraft/world/entity/Entity;>;"),
-            method("findEntity", "(I)Ljava/util/Optional;",
-                "(I)Ljava/util/Optional<Lnet/minecraft/world/entity/Entity;>;"),
-            method("nearbyEntities", "(DDDD)Ljava/util/Collection;",
-                "(DDDD)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
-            method("nearbyEntities", "(DDDDLjava/util/function/Predicate;)Ljava/util/Collection;",
-                "(DDDDLjava/util/function/Predicate<Lnet/minecraft/world/entity/Entity;>;)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
-            method("clearWeather", "(I)V"), method("rain", "(I)V"), method("thunder", "(I)V"),
-            method("block", "(III)Lnet/minecraft/world/level/block/state/BlockState;"),
-            method("block", "(IIILnet/minecraft/world/level/block/state/BlockState;I)Z"),
-            method("spawn", "(Lnet/minecraft/world/entity/Entity;)Z"),
-            method("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDD)Z"),
-            method("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDDFF)Z"));
+            namedGeneric("findEntity", "(Ljava/util/UUID;)Ljava/util/Optional;",
+                "(Ljava/util/UUID;)Ljava/util/Optional<Lnet/minecraft/world/entity/Entity;>;", "uniqueId"),
+            namedGeneric("findEntity", "(I)Ljava/util/Optional;",
+                "(I)Ljava/util/Optional<Lnet/minecraft/world/entity/Entity;>;", "entityId"),
+            namedGeneric("nearbyEntities", "(DDDD)Ljava/util/Collection;",
+                "(DDDD)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "x", "y", "z", "radius"),
+            namedGeneric("nearbyEntities", "(DDDDLjava/util/function/Predicate;)Ljava/util/Collection;",
+                "(DDDDLjava/util/function/Predicate<Lnet/minecraft/world/entity/Entity;>;)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "x", "y", "z", "radius", "filter"),
+            named("clearWeather", "(I)V", "durationTicks"),
+            named("rain", "(I)V", "durationTicks"),
+            named("thunder", "(I)V", "durationTicks"),
+            named("block", "(III)Lnet/minecraft/world/level/block/state/BlockState;", "x", "y", "z"),
+            named("block", "(IIILnet/minecraft/world/level/block/state/BlockState;I)Z", "x", "y", "z", "state", "flags"),
+            named("spawn", "(Lnet/minecraft/world/entity/Entity;)Z", "entity"),
+            named("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDD)Z", "player", "x", "y", "z"),
+            named("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDDFF)Z", "player", "x", "y", "z", "yaw", "pitch"));
         add(result, "net/minecraft/world/entity/Entity",
-            method("nearbyEntities", "(D)Ljava/util/Collection;",
-                "(D)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
-            method("nearbyEntities", "(DLjava/util/function/Predicate;)Ljava/util/Collection;",
-                "(DLjava/util/function/Predicate<Lnet/minecraft/world/entity/Entity;>;)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
-            method("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDD)Z"),
-            method("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDDFF)Z"));
+            namedGeneric("nearbyEntities", "(D)Ljava/util/Collection;",
+                "(D)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "radius"),
+            namedGeneric("nearbyEntities", "(DLjava/util/function/Predicate;)Ljava/util/Collection;",
+                "(DLjava/util/function/Predicate<Lnet/minecraft/world/entity/Entity;>;)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "radius", "filter"),
+            named("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDD)Z", "destination", "x", "y", "z"),
+            named("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDDFF)Z", "destination", "x", "y", "z", "yaw", "pitch"));
         return Map.copyOf(result);
     }
 
@@ -244,13 +298,30 @@ final class DevelopmentJarPatcher {
     }
 
     private static InjectedMethod method(String name, String descriptor) {
-        return new InjectedMethod(name, descriptor, null);
+        return new InjectedMethod(name, descriptor, null, List.of());
     }
 
     private static InjectedMethod method(String name, String descriptor, String signature) {
-        return new InjectedMethod(name, descriptor, signature);
+        return new InjectedMethod(name, descriptor, signature, List.of());
     }
 
-    private record InjectedMethod(String name, String descriptor, String signature) {
+    private static InjectedMethod named(String name, String descriptor, String... parameterNames) {
+        return namedGeneric(name, descriptor, null, parameterNames);
+    }
+
+    private static InjectedMethod namedGeneric(
+        String name, String descriptor, String signature, String... parameterNames
+    ) {
+        int parameterCount = Type.getArgumentTypes(descriptor).length;
+        if (parameterNames.length != parameterCount) {
+            throw new IllegalArgumentException(name + descriptor + " has " + parameterCount
+                + " parameters, not " + parameterNames.length);
+        }
+        return new InjectedMethod(name, descriptor, signature, List.of(parameterNames));
+    }
+
+    private record InjectedMethod(
+        String name, String descriptor, String signature, List<String> parameterNames
+    ) {
     }
 }

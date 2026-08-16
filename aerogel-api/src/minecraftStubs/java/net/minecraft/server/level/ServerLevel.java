@@ -77,6 +77,8 @@ public class ServerLevel extends Level {
     public void save(ProgressListener listener, boolean flush, boolean skipSave) { }
     public void close() throws IOException { }
     public WorldBorder getWorldBorder() { return null; }
+    public float getRainLevel(float partialTick) { return 0; }
+    public float getThunderLevel(float partialTick) { return 0; }
     public Holder<DimensionType> dimensionTypeRegistration() { return null; }
     public WeatherData getWeatherData() { return null; }
     public void explode(Entity source, DamageSource damageSource,

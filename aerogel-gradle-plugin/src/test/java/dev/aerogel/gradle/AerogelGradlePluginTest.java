@@ -148,6 +148,11 @@ class AerogelGradlePluginTest {
                         player.setTabListHeaderFooter(
                             (Component) null, (Component) null);
                         player.sendTitle((Component) null);
+                        player.resetCameraView();
+                        player.resetWeather();
+                        player.stopSounds();
+                        player.clearViewOverrides();
+                        player = player.respawn();
                     }
                 }
 

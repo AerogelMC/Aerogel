@@ -378,6 +378,10 @@ player.setNameTagHidden(true)
 player.setTabListHeaderFooter(header, footer)
 player.giveItem(stack)
 player.sendPacket(packet)
+player.setBlock(position, Blocks.DIAMOND_BLOCK.defaultBlockState())
+player.setVisible(target, false)
+player.setGlowing(target, true)
+player.setGlowColorOverride(target, TeamColor.AQUA)
 
 server.broadcast(Component.literal("Round complete"))
 server.findPlayer("Steve")
@@ -385,6 +389,13 @@ server.broadcastPacket(packet)
 ```
 
 `setDisplayName` affects vanilla display-name consumers and synchronizes the overhead name. The TAB name follows it unless a TAB-only name is set. TAB visibility and overhead-name visibility are independent. These APIs do not spawn TextDisplay entities or rewrite authenticated profiles.
+
+Viewer-local methods change only the receiving player's client. Visibility, shared entity flags,
+equipment, and glow color are persistent overrides; use their `reset...` methods to resume vanilla
+state. Glow color is limited to the 16 vanilla `TeamColor` values. Fake blocks and visual packet
+snapshots can be superseded by later vanilla world synchronization. `clearViewOverrides()` restores
+everything Aerogel tracks for that viewer. `respawn()` returns a replacement `ServerPlayer`; never
+continue using the old instance.
 
 Use vanilla level and entity methods directly, plus Aerogel conveniences such as player teleportation, nearby-entity lookup, UUID lookup, spawn, block changes, time, and weather. Do not invent Bukkit locations or materials; use `BlockPos`, `Vec3`, `BlockState`, `Blocks`, `ItemStack`, and resource keys.
 
@@ -417,6 +428,7 @@ World APIs return live `ServerLevel` objects:
 
 ```kotlin
 val flat = context.worlds().createFlat("arena")
+val loaded = context.worlds().loaded()
 val empty = context.worlds().createVoid("empty")
 val nether = context.worlds().createVanilla("nether_arena", seed, VanillaDimension.NETHER)
 val custom = context.worlds().create("islands", seed, generator)

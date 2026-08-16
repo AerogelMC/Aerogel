@@ -521,10 +521,24 @@ server.broadcast(Component.literal("Round complete"));
 
 `kick`, `clearTitle`, 조건 기반 `removeItems`, `clearInventory`, `sendPacket`, 온라인 플레이어 목록, 이름·UUID 조회도 제공됩니다. 기존 바닐라 메서드도 함께 사용할 수 있습니다.
 
+`ServerPlayer replacement = player.respawn()`은 바닐라의 전체 리스폰 절차를 실행합니다.
+호출 직후 기존 `player` 객체는 오래된 인스턴스가 되므로 반드시 반환된 객체를 사용하세요.
+boolean 오버로드는 바닐라의 `keepEverything` 경로를 선택하며 서버 스레드에서 호출해야 합니다.
+
+특정 클라이언트에게만 보이는 표현도 수신자인 `ServerPlayer`에 있습니다. 가짜 블록은
+`setBlock`/`resetBlock`, 엔티티 표시 여부는 `setVisible`, 발광·투명·불·장비 오버라이드는
+`setGlowing`, `setInvisible`, `setOnFire`, `setEquipment`을 사용합니다. `false`도 명시적인
+강제 값이므로 실제 엔티티 상태를 다시 따르려면 각각의 `reset...` 메서드를 사용하세요.
+`setGlowColorOverride`는 바닐라 `TeamColor`를 받으며 순정 클라이언트에서는 임의 RGB
+외곽선을 지원하지 않습니다. `clearViewOverrides`는 Aerogel이 추적하는 해당 플레이어의
+표현 오버라이드를 한 번에 실제 상태로 복원합니다. 위치·애니메이션·파티클·사운드·HUD·
+날씨·월드 경계 메서드는 스냅샷 패킷이므로 이후 바닐라 동기화로 바뀔 수 있습니다.
+
 ### 월드와 엔티티
 
 ```java
 ServerLevel level = context.minecraft().overworld();
+Collection<ServerLevel> loaded = context.worlds().loaded();
 ServerLevel arena = context.worlds().createFlat("arena");
 ServerLevel seededArena = context.worlds().createFlat("practice", 12345L);
 ServerLevel empty = context.worlds().createVoid("empty");
@@ -550,7 +564,7 @@ level.teleport(player, 0.5, 65, 0.5);
 
 일반적인 작업에는 Aerogel 편의 메서드를 사용하고, 레지스트리, 청크, 레시피, 파티클, 사운드, 데이터 컴포넌트, 엔티티 세부 API가 필요하면 바닐라 API를 직접 이어서 사용하세요.
 
-네임스페이스가 없는 월드 ID에는 플러그인 ID가 자동으로 붙으므로 `arena`는 `<plugin-id>:arena`가 됩니다. 여러 플러그인이 의도적으로 같은 월드를 공유한다면 `shared:arena`처럼 전체 ID를 사용하세요. `createVoid`는 블록이나 발판을 자동 설치하지 않는 완전한 공허 월드를 만듭니다. `FlatLevelGeneratorSettings`를 받는 `createFlat` 오버로드에서는 마인크래프트 평지 월드의 레이어, 바이옴, 구조물, 호수, 장식 규칙을 모두 지정할 수 있습니다. `createVanilla`는 올바른 차원 타입과 함께 바닐라 오버월드, 네더, 엔드 생성기를 만듭니다. `create(id, generator)`와 seed·차원 타입 오버로드에는 플러그인이 구현한 바닐라 호환 `ChunkGenerator`를 직접 전달합니다. Aerogel 전용 지형 콜백으로 기능을 줄이지 않으므로 26.2 생성 파이프라인을 그대로 제어할 수 있습니다. 반환된 `ServerLevel`은 서버 소유이므로 플러그인이 직접 닫으면 안 됩니다. 월드 생성은 서버가 연결된 뒤 서버 스레드에서 실행해야 하므로 최초 `onLoad`가 아니라 `ServerStartedEvent`를 사용합니다. 생성된 월드는 플러그인 리로드 후에도 서버 소유로 유지되고 청크도 정상 저장되지만, 서버를 완전히 다시 켤 때는 생성기를 다시 만들고 `create`를 호출해 런타임 차원 등록을 복원해야 합니다. 청크 생성은 비동기로 실행될 수 있으므로 생성기는 스레드 안전하고 결정적이어야 하며, 변하는 실시간 월드 상태를 읽어 지형을 만들면 안 됩니다.
+`worlds().loaded()`는 현재 로드된 모든 월드의 불변 스냅샷을 반환합니다. 네임스페이스가 없는 월드 ID에는 플러그인 ID가 자동으로 붙으므로 `arena`는 `<plugin-id>:arena`가 됩니다. 여러 플러그인이 의도적으로 같은 월드를 공유한다면 `shared:arena`처럼 전체 ID를 사용하세요. `createVoid`는 블록이나 발판을 자동 설치하지 않는 완전한 공허 월드를 만듭니다. `FlatLevelGeneratorSettings`를 받는 `createFlat` 오버로드에서는 마인크래프트 평지 월드의 레이어, 바이옴, 구조물, 호수, 장식 규칙을 모두 지정할 수 있습니다. `createVanilla`는 올바른 차원 타입과 함께 바닐라 오버월드, 네더, 엔드 생성기를 만듭니다. `create(id, generator)`와 seed·차원 타입 오버로드에는 플러그인이 구현한 바닐라 호환 `ChunkGenerator`를 직접 전달합니다. Aerogel 전용 지형 콜백으로 기능을 줄이지 않으므로 26.2 생성 파이프라인을 그대로 제어할 수 있습니다. 반환된 `ServerLevel`은 서버 소유이므로 플러그인이 직접 닫으면 안 됩니다. 월드 생성은 서버가 연결된 뒤 서버 스레드에서 실행해야 하므로 최초 `onLoad`가 아니라 `ServerStartedEvent`를 사용합니다. 생성된 월드는 플러그인 리로드 후에도 서버 소유로 유지되고 청크도 정상 저장되지만, 서버를 완전히 다시 켤 때는 생성기를 다시 만들고 `create`를 호출해 런타임 차원 등록을 복원해야 합니다. 청크 생성은 비동기로 실행될 수 있으므로 생성기는 스레드 안전하고 결정적이어야 하며, 변하는 실시간 월드 상태를 읽어 지형을 만들면 안 됩니다.
 
 `context.worlds().unload(id)`는 동적 월드를 저장한 뒤 남아 있는 플레이어를 기본 오버월드 스폰으로 이동시키고 안전하게 언로드합니다. `delete(id)`는 같은 안전 언로드를 수행한 다음 해당 차원의 저장 폴더를 영구 삭제합니다. 두 함수 모두 마인크래프트 기본 오버월드·네더·엔드를 거부하며 서버 스레드에서 호출해야 합니다. `delete`는 복구할 수 없으므로 저장된 월드가 다시 필요하지 않을 때만 사용하세요.
 

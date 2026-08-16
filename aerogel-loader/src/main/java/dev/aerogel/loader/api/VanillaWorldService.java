@@ -30,6 +30,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Collection;
 
 /** Vanilla-backed dynamic world service. Private lifecycle state is owned by a Mixin bridge. */
 final class VanillaWorldService implements WorldService {
@@ -37,6 +38,11 @@ final class VanillaWorldService implements WorldService {
 
     VanillaWorldService(PluginApiScope scope) {
         this.scope = scope;
+    }
+
+    @Override
+    public Collection<ServerLevel> loaded() {
+        return List.copyOf(server().loadedLevels());
     }
 
     @Override

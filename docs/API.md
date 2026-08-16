@@ -210,6 +210,42 @@ entity or mutate the authenticated server profile or the server scoreboard.
 
 `kick`, `clearTitle`, predicate-based `removeItems`, and `clearInventory` are also available directly. Existing vanilla methods remain available alongside them.
 
+`player.respawn()` runs Minecraft's real death-respawn pipeline and returns the replacement
+`ServerPlayer`. The old object is stale immediately afterward. `respawn(true)` preserves all player
+state through vanilla's `keepEverything` path; the default `false` follows normal death retention
+rules. Call it on the server thread and continue with the returned instance.
+
+### Per-player views
+
+`ServerPlayer` can change what one client sees without mutating the real level or target entity:
+
+```java
+viewer.setBlock(position, Blocks.DIAMOND_BLOCK.defaultBlockState());
+viewer.setGlowing(target, true);
+viewer.setGlowColorOverride(target, TeamColor.AQUA);
+viewer.setVisible(hiddenNpc, false);
+viewer.setEquipment(target, EquipmentSlot.HEAD, new ItemStack(Items.DIAMOND_HELMET));
+
+viewer.resetBlock(position);
+viewer.resetGlowing(target);
+viewer.resetGlowColorOverride(target);
+viewer.setVisible(hiddenNpc, true);
+viewer.resetEquipment(target, EquipmentSlot.HEAD);
+```
+
+Persistent overrides are available for entity visibility, the glowing/invisible/on-fire shared
+flags, equipment slots, and glow color. Aerogel reapplies those values when vanilla sends later
+tracking packets. `false` is an explicit override; use the corresponding `reset...` method to
+follow the real entity state again. Glow color uses vanilla `TeamColor`, so a stock client supports
+the 16 Minecraft team colors rather than arbitrary RGB.
+
+The same viewer API includes batch fake blocks, block-entity data, break progress, block events,
+entity velocity/position/head rotation, hand and hit animations, entity events, leash and camera
+packets, particles, sounds, temporary experience and health bars, weather, and world borders.
+Position, animation, HUD, weather, and border packets are visual snapshots and may naturally be
+replaced by a later vanilla update. `clearViewOverrides()` restores all tracked fake blocks and
+persistent overrides owned by that viewer.
+
 ## Entities and items
 
 Levels expose their live entities directly, and an entity can query its own surroundings:
@@ -281,6 +317,7 @@ Notice and confirmation dialogs have high-level builders. `nativeDialog` accepts
 ```java
 MinecraftServer server = context.minecraft();
 ServerLevel world = server.overworld();
+Collection<ServerLevel> loaded = context.worlds().loaded();
 ServerLevel arena = context.worlds().createFlat("arena");
 ServerLevel empty = context.worlds().createVoid("empty");
 ServerLevel nether = context.worlds().createVanilla(
@@ -296,7 +333,7 @@ world.block(0, 64, 0, Blocks.STONE.defaultBlockState(), 3);
 world.teleport(player, 0.5, 65, 0.5);
 ```
 
-`createFlat("arena")` uses the plugin-local id `<plugin-id>:arena` and the server seed. Use `createFlat(id, seed, settings)` with a vanilla `FlatLevelGeneratorSettings` for the same layers, biome, structures, lakes, and decoration controls used by Minecraft superflat generation. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. `createVanilla` clones the complete built-in overworld, Nether, or End stem, including the correct dimension type. `create(id, generator)` and its seed/dimension overloads accept a plugin-defined vanilla `ChunkGenerator` directly, without reducing it to an Aerogel callback model. Repeating a call returns the loaded world when its generator and dimension types match and fails on a type collision. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. Call world creation from the server thread after the server becomes ready, normally from `ServerStartedEvent` or a synchronous scheduled task. The Minecraft server is not attached yet during the initial `onLoad` callback.
+`worlds().loaded()` returns an immutable snapshot of every level currently loaded by the server. `createFlat("arena")` uses the plugin-local id `<plugin-id>:arena` and the server seed. Use `createFlat(id, seed, settings)` with a vanilla `FlatLevelGeneratorSettings` for the same layers, biome, structures, lakes, and decoration controls used by Minecraft superflat generation. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. `createVanilla` clones the complete built-in overworld, Nether, or End stem, including the correct dimension type. `create(id, generator)` and its seed/dimension overloads accept a plugin-defined vanilla `ChunkGenerator` directly, without reducing it to an Aerogel callback model. Repeating a call returns the loaded world when its generator and dimension types match and fails on a type collision. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. Call world creation from the server thread after the server becomes ready, normally from `ServerStartedEvent` or a synchronous scheduled task. The Minecraft server is not attached yet during the initial `onLoad` callback.
 
 The dimension folder is saved by vanilla, while the runtime dimension registration is recreated by the plugin on every server start. Reloading or unloading the plugin does not unload the world. Recreate the same generator and call `create` again on each full server start. Generation may execute away from the server thread, so a custom generator must be thread-safe and must derive repeatable output from its seed and coordinates instead of reading mutable live-world state. `MinecraftServer.loadedLevels`, `ServerLevel.identifier`, entity lookup, radius queries, block access, spawning, `rain`, and `thunder` are also provided. Registries, recipes, particles, sounds, and data components continue to use vanilla APIs directly.
 

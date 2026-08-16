@@ -7,6 +7,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.level.portal.TeleportTransition;
 
 import java.util.Collection;
@@ -27,8 +29,13 @@ public abstract class Entity {
     public float getYRot() { return 0; }
     public float getXRot() { return 0; }
     public int getId() { return 0; }
+    public SynchedEntityData getEntityData() { return null; }
     public UUID getUUID() { return null; }
+    public String getScoreboardName() { return null; }
+    public PlayerTeam getTeam() { return null; }
     public Vec3 position() { return null; }
+    public Vec3 getDeltaMovement() { return null; }
+    public boolean onGround() { return false; }
     public HitResult pick(double distance, float partialTick, boolean includeFluids) { return null; }
     public Level level() { return null; }
     public boolean teleportTo(ServerLevel destination, double x, double y, double z,
@@ -61,5 +68,6 @@ public abstract class Entity {
     public void discard() { }
 
     public enum RemovalReason {
+        KILLED
     }
 }

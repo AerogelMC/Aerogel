@@ -548,10 +548,24 @@ scoreboard. Reapplying the value is automatic when another client starts trackin
 
 Other conveniences include `kick`, `clearTitle`, predicate-based `removeItems`, `clearInventory`, `sendPacket`, online-player lookup, and UUID lookup. Existing vanilla methods remain available.
 
+`ServerPlayer replacement = player.respawn()` invokes vanilla's complete respawn path. Always use
+the returned player afterward; the original instance is stale. The boolean overload selects
+vanilla's `keepEverything` path and, like all lifecycle changes, must run on the server thread.
+
+Viewer-local rendering also lives directly on the receiving `ServerPlayer`. Use `setBlock` and
+`resetBlock` for fake blocks; `setVisible` for per-viewer entity tracking; and `setGlowing`,
+`setInvisible`, `setOnFire`, or `setEquipment` for persistent client overrides. Each state-changing
+method has an explicit reset where `false` would otherwise mean “force the false value.”
+`setGlowColorOverride` accepts vanilla `TeamColor`; arbitrary RGB outlines are not supported by a
+stock Minecraft client. `clearViewOverrides` restores everything Aerogel tracks for that viewer.
+Movement, animation, particles, sounds, HUD values, weather, and border methods send snapshots and
+can be superseded by subsequent vanilla synchronization.
+
 ### Worlds and entities
 
 ```java
 ServerLevel level = context.minecraft().overworld();
+Collection<ServerLevel> loaded = context.worlds().loaded();
 ServerLevel arena = context.worlds().createFlat("arena");
 ServerLevel seededArena = context.worlds().createFlat("practice", 12345L);
 ServerLevel empty = context.worlds().createVoid("empty");
@@ -577,7 +591,7 @@ level.teleport(player, 0.5, 65, 0.5);
 
 Use Aerogel conveniences for common operations and continue directly with vanilla registries, chunks, recipes, particles, sounds, data components, and entity APIs when needed.
 
-An unqualified world id is automatically namespaced to the plugin, so `arena` becomes `<plugin-id>:arena`. A fully qualified id such as `shared:arena` is useful when multiple plugins intentionally share one level. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. The `createFlat` overload accepting `FlatLevelGeneratorSettings` exposes Minecraft's complete superflat layer, biome, structure, lake, and decoration rules. `createVanilla` creates a built-in overworld, Nether, or End generator with its matching dimension type. `create(id, generator)` and its seed/dimension overloads accept a vanilla-compatible `ChunkGenerator` implemented by the plugin, retaining the full 26.2 generation pipeline rather than imposing an Aerogel terrain callback. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. World creation must run on the server thread after the server is attached; use `ServerStartedEvent`, not the initial `onLoad` callback. The world remains server-owned across plugin reloads, its chunks are saved normally, and the plugin must recreate its generator and call `create` again on every full server start to restore the runtime dimension registration. Chunk generation is asynchronous: keep the generator thread-safe and deterministic, and do not read mutable live-world state from it.
+`worlds().loaded()` returns an immutable snapshot of every currently loaded level. An unqualified world id is automatically namespaced to the plugin, so `arena` becomes `<plugin-id>:arena`. A fully qualified id such as `shared:arena` is useful when multiple plugins intentionally share one level. `createVoid` creates a completely empty overworld-type level and does not add a spawn platform. The `createFlat` overload accepting `FlatLevelGeneratorSettings` exposes Minecraft's complete superflat layer, biome, structure, lake, and decoration rules. `createVanilla` creates a built-in overworld, Nether, or End generator with its matching dimension type. `create(id, generator)` and its seed/dimension overloads accept a vanilla-compatible `ChunkGenerator` implemented by the plugin, retaining the full 26.2 generation pipeline rather than imposing an Aerogel terrain callback. The returned `ServerLevel` remains server-owned and must not be closed by the plugin. World creation must run on the server thread after the server is attached; use `ServerStartedEvent`, not the initial `onLoad` callback. The world remains server-owned across plugin reloads, its chunks are saved normally, and the plugin must recreate its generator and call `create` again on every full server start to restore the runtime dimension registration. Chunk generation is asynchronous: keep the generator thread-safe and deterministic, and do not read mutable live-world state from it.
 
 `context.worlds().unload(id)` safely saves and unloads a dynamic level, moving any remaining players to the primary overworld spawn first. `delete(id)` safely unloads it and permanently removes its dimension directory. Both reject Minecraft's built-in overworld, Nether, and End and must run on the server thread. Never use `delete` when the saved world may still be needed.
 

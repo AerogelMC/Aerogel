@@ -5,6 +5,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.PlayerChatMessage;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,4 +24,7 @@ public class PlayerList {
 
     public void addWorldborderListener(ServerLevel level) {
     }
+    public ServerPlayer respawn(
+        ServerPlayer player, boolean keepEverything, Entity.RemovalReason reason
+    ) { return null; }
 }

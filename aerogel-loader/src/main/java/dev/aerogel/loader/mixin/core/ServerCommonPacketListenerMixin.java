@@ -2,6 +2,7 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.api.DialogCallbackRegistry;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.PlayerViewService;
 import dev.aerogel.api.event.player.PlayerCustomClickActionEvent;
 import dev.aerogel.api.event.player.PlayerCustomPayloadEvent;
 import dev.aerogel.api.event.player.PlayerResourcePackStatusEvent;
@@ -13,10 +14,22 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.server.network.ServerCommonPacketListenerImpl")
 abstract class ServerCommonPacketListenerMixin {
+    @ModifyVariable(
+        method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
+        at = @At("HEAD"), argsOnly = true
+    )
+    private net.minecraft.network.protocol.Packet<?> aerogel$applyViewerOverrides(
+        net.minecraft.network.protocol.Packet<?> packet
+    ) {
+        ServerPlayer player = playerOrNull();
+        return player == null ? packet : PlayerViewService.transform(player, packet);
+    }
+
     @Inject(method = "handleCustomClickAction", at = @At("HEAD"), cancellable = true)
     private void aerogel$dialogAction(
         ServerboundCustomClickActionPacket packet, CallbackInfo callbackInfo
