@@ -503,6 +503,35 @@ Use `TypeRef` for generic collections. Use built-ins for exact Minecraft values:
 
 Minecraft-aware files use live registry access and may finish loading only after server startup. They preserve complete vanilla codec state, including an `ItemStack`'s data-component patch. Never serialize live server runtime objects.
 
+## Persistent data and advanced gameplay services
+
+- Use `context.persistentData()` for small typed values attached to server, player, entity, block
+  entity, world, block coordinates, or item identities. Player, entity, and block-entity data is serialized with the owning
+  vanilla object; item data follows the vanilla stack through `CUSTOM_DATA`; and server, world,
+  and coordinate data uses the owning world's vanilla `SavedData`. Nothing is mirrored into the
+  plugin data directory. Keys are already isolated by plugin. Access these containers on the
+  Minecraft server thread and pass live player/entity objects rather than UUIDs.
+  Built-in values use `data.set("key", value)` and typed reads such as `getInt` or `getString`;
+  pass an explicit `PersistentDataType<T>` only for custom encodings.
+- Use `new ItemStack(item).edit()` or `stack.edit()` to edit real `ItemStack` instances. Common
+  fields are fluent and `component(...)` accepts every vanilla `DataComponentType`. There is no
+  separate item service.
+- Register real vanilla `Recipe<?>` and `LootTable` objects through `context.recipes()` and
+  `context.loot()`. Prefer their String path overloads so the plugin namespace is automatic.
+- Use `context.menus()` for chest GUIs with read-only slots, typed click handlers, viewer refresh,
+  and unload cleanup. Do not duplicate its packet handling in a plugin Mixin.
+- Use `context.virtualEntities()` only with an unspawned entity created for a `ServerLevel`. Use
+  `ServerPlayer` view overrides for an entity already tracked by the level.
+- Use `context.blockBatches()` on the server thread for many block changes. It retains vanilla
+  `setBlock` behavior and events, then synchronizes each affected chunk once.
+
+When the vanilla object is already available, prefer the direct extensions: `server.data()`,
+`level.data()`, `level.data(pos)`, `level.batch()`, `entity.data()`,
+`entity.virtual(context, viewers)`, `blockEntity.data()`, `stack.data()`, `stack.edit()`, and
+`player.openMenu(menu)`. `RecipeHolder.register(context)` and `LootTable.register(context, path)`
+retain explicit plugin ownership. Never infer a plugin namespace from a thread, stack trace,
+classloader lookup, or mutable global current-plugin value.
+
 ## Kotlin Mixin DSL
 
 Place generated Mixins in `src/main/mixins/*.mixin.kts`. One file produces one ordinary Sponge Mixin class and one generated config entry.

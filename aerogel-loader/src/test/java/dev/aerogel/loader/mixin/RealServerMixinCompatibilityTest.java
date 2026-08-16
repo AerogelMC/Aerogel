@@ -33,6 +33,7 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Entry",
         "net.minecraft.server.Main",
         "net.minecraft.server.MinecraftServer",
+        "net.minecraft.server.ReloadableServerRegistries$Holder",
         "net.minecraft.server.dedicated.DedicatedServer",
         "net.minecraft.server.dedicated.DedicatedServer$1",
         "net.minecraft.server.level.ChunkMap",
@@ -57,8 +58,13 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.world.entity.player.Player",
         "net.minecraft.world.entity.projectile.Projectile",
         "net.minecraft.world.item.BlockItem",
+        "net.minecraft.world.item.ItemStack",
+        "net.minecraft.world.item.crafting.RecipeHolder",
+        "net.minecraft.world.item.crafting.RecipeManager",
         "net.minecraft.world.level.Level",
         "net.minecraft.world.level.ServerExplosion",
+        "net.minecraft.world.level.block.entity.BlockEntity",
+        "net.minecraft.world.level.storage.loot.LootTable",
         "net.minecraft.world.level.block.piston.PistonBaseBlock"
     );
     private static final List<String> DIRECT_LINKAGE_CLASSES = List.of(
@@ -72,6 +78,24 @@ final class RealServerMixinCompatibilityTest {
         "dev/aerogel/loader/api/DirectScoreboardService.class",
         "dev/aerogel/loader/api/PluginTranslations.class",
         "dev/aerogel/loader/api/AerogelApiRuntime.class",
+        "dev/aerogel/loader/api/DirectPersistentDataService.class",
+        "dev/aerogel/loader/internal/AerogelPersistentSavedData.class",
+        "dev/aerogel/loader/internal/PersistentDataViews.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$EntityView.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$EntityContainer.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$ItemView.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$SavedView.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$ItemContainer.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$SavedContainer.class",
+        "dev/aerogel/loader/internal/PersistentDataViews$TypedContainer.class",
+        "dev/aerogel/loader/internal/ItemBuilders.class",
+        "dev/aerogel/loader/internal/ItemBuilders$Builder.class",
+        "dev/aerogel/loader/api/DirectRecipeService.class",
+        "dev/aerogel/loader/api/DirectLootService.class",
+        "dev/aerogel/loader/api/DirectMenuService.class",
+        "dev/aerogel/loader/api/DirectVirtualEntityService.class",
+        "dev/aerogel/loader/api/DirectVirtualEntityService$Virtual.class",
+        "dev/aerogel/loader/api/DirectBlockBatchService$Batch.class",
         "dev/aerogel/loader/event/EventHooks.class",
         "dev/aerogel/loader/internal/DeathDropCapture.class",
         "dev/aerogel/loader/internal/PlayerNameTagService.class",
@@ -96,6 +120,8 @@ final class RealServerMixinCompatibilityTest {
             try {
                 MixinBootstrapper.initialize(loader, List.of());
                 for (String target : TARGETS) Class.forName(target, false, loader);
+                Class.forName(
+                    "dev.aerogel.loader.internal.AerogelPersistentSavedData", true, loader);
                 verifyDirectMinecraftLinkage(loader);
             } finally {
                 current.setContextClassLoader(previous);

@@ -10,6 +10,12 @@ import dev.aerogel.api.scoreboard.ScoreboardService;
 import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
 import dev.aerogel.api.world.WorldService;
+import dev.aerogel.api.persistence.PersistentDataService;
+import dev.aerogel.api.recipe.RecipeService;
+import dev.aerogel.api.loot.LootService;
+import dev.aerogel.api.menu.MenuService;
+import dev.aerogel.api.virtualentity.VirtualEntityService;
+import dev.aerogel.api.blockbatch.BlockBatchService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -43,4 +49,10 @@ public interface PluginContext {
     default TranslationService translations() { return server().translations(); }
     default StorageService storage() { return server().storage(); }
     default WorldService worlds() { return server().worlds(); }
+    default PersistentDataService persistentData() { return server().persistentData(); }
+    default RecipeService recipes() { return server().recipes(); }
+    default LootService loot() { return server().loot(); }
+    default MenuService menus() { return server().menus(); }
+    default VirtualEntityService virtualEntities() { return server().virtualEntities(); }
+    default BlockBatchService blockBatches() { return server().blockBatches(); }
 }

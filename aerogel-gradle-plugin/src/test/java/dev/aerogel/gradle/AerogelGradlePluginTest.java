@@ -2,6 +2,7 @@ package dev.aerogel.gradle;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.aerogel.api.PluginContext;
 import dev.aerogel.loader.mixin.MixinBootstrapper;
 import dev.aerogel.loader.plugin.PluginDescriptor;
 import dev.aerogel.loader.runtime.TransformingClassLoader;
@@ -95,6 +96,8 @@ class AerogelGradlePluginTest {
     }
 
     private void prepareProject() throws Exception {
+        String currentApi = Path.of(PluginContext.class.getProtectionDomain().getCodeSource()
+            .getLocation().toURI()).toString().replace('\\', '/');
         Path idea = project.resolve(".idea/misc.xml");
         Files.createDirectories(idea.getParent());
         Files.writeString(idea, """
@@ -112,6 +115,10 @@ class AerogelGradlePluginTest {
             group = 'sample'
             version = '1.2.3'
 
+            dependencies {
+                compileOnly files('%s')
+            }
+
             aerogel {
                 minecraft.set('26.2')
                 minecraftServerJar.set(layout.projectDirectory.file('fake-server.jar'))
@@ -121,7 +128,7 @@ class AerogelGradlePluginTest {
                     entrypoint('sample.ExamplePlugin')
                 }
             }
-            """);
+            """.formatted(currentApi));
         Path source = project.resolve("src/main/java/sample/ExamplePlugin.java");
         Files.createDirectories(source.getParent());
         Files.writeString(source, """
@@ -134,6 +141,7 @@ class AerogelGradlePluginTest {
             import net.minecraft.server.MinecraftServer;
             import net.minecraft.server.level.ServerPlayer;
             import net.minecraft.network.chat.Component;
+            import net.minecraft.world.item.ItemStack;
 
             public final class ExamplePlugin implements AerogelPlugin {
                 private MinecraftServer server;
@@ -154,12 +162,33 @@ class AerogelGradlePluginTest {
                         player.clearViewOverrides();
                         player = player.respawn();
                     }
+                    ItemStack stack = null;
+                    if (stack != null) {
+                        stack.edit().glint(true);
+                        stack.data().namespace(context).set("level", 10);
+                        stack.data().namespace(context).getInt("level", 0);
+                    }
                 }
 
                 @EventHandler
                 private void started(ServerStartedEvent event) {
                     server = event.server();
                 }
+            }
+            """);
+        Path kotlinSource = project.resolve("src/main/kotlin/sample/PersistentDataUsage.kt");
+        Files.createDirectories(kotlinSource.getParent());
+        Files.writeString(kotlinSource, """
+            package sample
+
+            import dev.aerogel.api.PluginContext
+            import net.minecraft.world.item.ItemStack
+
+            fun persistentDataUsage(context: PluginContext, stack: ItemStack): Int {
+                val data = stack.data().namespace(context)
+                data.set("level", 10)
+                data.set("name", "Aerogel")
+                return data.getInt("level", 0)
             }
             """);
         Path mixin = project.resolve("src/main/mixins/ServerTick.mixin.kts");
@@ -300,6 +329,8 @@ class AerogelGradlePluginTest {
         Path source = fixture.resolve("src/net/minecraft/server/MinecraftServer.java");
         Path player = fixture.resolve("src/net/minecraft/server/level/ServerPlayer.java");
         Path component = fixture.resolve("src/net/minecraft/network/chat/Component.java");
+        Path itemStack = fixture.resolve("src/net/minecraft/world/item/ItemStack.java");
+        Path compoundTag = fixture.resolve("src/net/minecraft/nbt/CompoundTag.java");
         Path scheduler = fixture.resolve("src/net/minecraft/util/thread/TaskScheduler.java");
         Path brandTarget = fixture.resolve("src/sample/fixture/BrandTarget.java");
         Path classes = fixture.resolve("classes");
@@ -311,12 +342,18 @@ class AerogelGradlePluginTest {
                 + "public String getServerModName() { return \"vanilla\"; } }\n", StandardCharsets.UTF_8);
         Files.createDirectories(player.getParent());
         Files.createDirectories(component.getParent());
+        Files.createDirectories(itemStack.getParent());
+        Files.createDirectories(compoundTag.getParent());
         Files.createDirectories(scheduler.getParent());
         Files.createDirectories(brandTarget.getParent());
         Files.writeString(player,
             "package net.minecraft.server.level; public class ServerPlayer {}\n", StandardCharsets.UTF_8);
         Files.writeString(component,
             "package net.minecraft.network.chat; public interface Component {}\n", StandardCharsets.UTF_8);
+        Files.writeString(itemStack,
+            "package net.minecraft.world.item; public class ItemStack {}\n", StandardCharsets.UTF_8);
+        Files.writeString(compoundTag,
+            "package net.minecraft.nbt; public class CompoundTag {}\n", StandardCharsets.UTF_8);
         Files.writeString(scheduler,
             "package net.minecraft.util.thread; public interface TaskScheduler extends AutoCloseable {"
                 + " default void close() {} }\n", StandardCharsets.UTF_8);
@@ -367,7 +404,8 @@ class AerogelGradlePluginTest {
             """, StandardCharsets.UTF_8);
         int compilation = ToolProvider.getSystemJavaCompiler().run(
             null, null, null, "--release", "25", "-d", classes.toString(),
-            source.toString(), player.toString(), component.toString(), scheduler.toString(), brandTarget.toString());
+            source.toString(), player.toString(), component.toString(), itemStack.toString(), compoundTag.toString(),
+            scheduler.toString(), brandTarget.toString());
         assertEquals(0, compilation);
 
         Path server = fixture.resolve("server.jar");
@@ -378,6 +416,10 @@ class AerogelGradlePluginTest {
             entry(output, "net/minecraft/server/level/ServerPlayer.class", Files.readAllBytes(playerClass));
             Path componentClass = classes.resolve("net/minecraft/network/chat/Component.class");
             entry(output, "net/minecraft/network/chat/Component.class", Files.readAllBytes(componentClass));
+            Path itemStackClass = classes.resolve("net/minecraft/world/item/ItemStack.class");
+            entry(output, "net/minecraft/world/item/ItemStack.class", Files.readAllBytes(itemStackClass));
+            Path compoundTagClass = classes.resolve("net/minecraft/nbt/CompoundTag.class");
+            entry(output, "net/minecraft/nbt/CompoundTag.class", Files.readAllBytes(compoundTagClass));
             Path schedulerClass = classes.resolve("net/minecraft/util/thread/TaskScheduler.class");
             entry(output, "net/minecraft/util/thread/TaskScheduler.class", Files.readAllBytes(schedulerClass));
             Path brandTargetClass = classes.resolve("sample/fixture/BrandTarget.class");

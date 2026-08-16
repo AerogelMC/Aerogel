@@ -22,6 +22,14 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+tasks.processResources {
+    val pluginVersion = project.version.toString()
+    inputs.property("version", pluginVersion)
+    filesMatching("aerogel-gradle-plugin.properties") {
+        expand("version" to pluginVersion)
+    }
+}
+
 gradlePlugin {
     plugins {
         create("aerogelPlugin") {

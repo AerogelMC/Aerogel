@@ -1,7 +1,5 @@
 package dev.aerogel.gradle;
 
-import dev.aerogel.api.AerogelPlugin;
-import dev.aerogel.api.mixin.MixinDefinition;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
@@ -17,12 +15,15 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget;
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile;
 
 import java.io.File;
-import java.net.URISyntaxException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Locale;
+import java.util.Properties;
 
 public final class AerogelGradlePlugin implements Plugin<Project> {
     private static final String MIXIN_VERSION = "0.17.3+mixin.0.8.7";
     private static final String JETBRAINS_ANNOTATIONS_VERSION = "26.1.0";
+    private static final String AEROGEL_VERSION = loadAerogelVersion();
 
     @Override
     public void apply(Project project) {
@@ -150,10 +151,13 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
             minecraft.builtBy(setup);
             project.getDependencies().add("compileOnly", minecraft);
         });
-        project.getDependencies().add("compileOnly", project.files(apiLocation()));
-        project.getDependencies().add("compileOnly", project.files(mixinDslLocation()));
+        project.getDependencies().add(
+            "compileOnly", "dev.aerogel:aerogel-api:" + AEROGEL_VERSION);
+        project.getDependencies().add(
+            "compileOnly", "dev.aerogel:aerogel-mixin-dsl:" + AEROGEL_VERSION);
         if (project.getConfigurations().findByName("kotlinScriptDef") != null) {
-            project.getDependencies().add("kotlinScriptDef", project.files(mixinDslLocation()));
+            project.getDependencies().add(
+                "kotlinScriptDef", "dev.aerogel:aerogel-mixin-dsl:" + AEROGEL_VERSION);
         }
         project.getDependencies().add("compileOnly", "net.fabricmc:sponge-mixin:" + MIXIN_VERSION);
         project.getDependencies().add("compileOnly",
@@ -181,6 +185,11 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
     private static void configureRepositories(Project project) {
         project.getRepositories().mavenCentral();
         project.getRepositories().maven(repository -> {
+            repository.setName("Aerogel");
+            repository.setUrl("https://raw.githubusercontent.com/AerogelMC/Aerogel/maven/");
+            repository.content(content -> content.includeGroup("dev.aerogel"));
+        });
+        project.getRepositories().maven(repository -> {
             repository.setName("AerogelMixin");
             repository.setUrl("https://maven.fabricmc.net/");
             repository.content(content -> content.includeGroup("net.fabricmc"));
@@ -198,20 +207,22 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
         });
     }
 
-    private static File apiLocation() {
-        return codeLocation(AerogelPlugin.class, "Aerogel API");
-    }
-
-    private static File mixinDslLocation() {
-        return codeLocation(MixinDefinition.class, "Aerogel Mixin DSL");
-    }
-
-    private static File codeLocation(Class<?> type, String label) {
-        try {
-            return new File(type.getProtectionDomain().getCodeSource().getLocation().toURI());
-        } catch (URISyntaxException exception) {
-            throw new IllegalStateException("Cannot locate " + label + " used by the Gradle plugin", exception);
+    private static String loadAerogelVersion() {
+        Properties properties = new Properties();
+        try (InputStream input = AerogelGradlePlugin.class.getResourceAsStream(
+            "/aerogel-gradle-plugin.properties")) {
+            if (input == null) {
+                throw new IllegalStateException("Missing Aerogel Gradle plugin build metadata");
+            }
+            properties.load(input);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Cannot read Aerogel Gradle plugin build metadata", exception);
         }
+        String version = properties.getProperty("version");
+        if (version == null || version.isBlank()) {
+            throw new IllegalStateException("Aerogel Gradle plugin version is missing");
+        }
+        return version;
     }
 
     private static String safePath(String version) {

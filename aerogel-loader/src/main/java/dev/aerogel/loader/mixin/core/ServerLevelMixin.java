@@ -14,6 +14,10 @@ import dev.aerogel.api.event.world.WorldUnloadEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.event.BlockChangeContext;
 import dev.aerogel.loader.internal.DeathDropCapture;
+import dev.aerogel.api.persistence.PersistentDataView;
+import dev.aerogel.api.blockbatch.BlockBatch;
+import dev.aerogel.loader.internal.PersistentDataViews;
+import dev.aerogel.loader.api.DirectBlockBatchService;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -53,6 +57,22 @@ import java.util.function.Predicate;
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin {
     @Unique private boolean aerogel$explosionOverride;
+
+    @Unique
+    public PersistentDataView data() {
+        return PersistentDataViews.world((ServerLevel) (Object) this);
+    }
+
+    @Unique
+    public PersistentDataView data(BlockPos position) {
+        return PersistentDataViews.block(
+            (ServerLevel) (Object) this, Objects.requireNonNull(position, "position"));
+    }
+
+    @Unique
+    public BlockBatch batch() {
+        return DirectBlockBatchService.direct((ServerLevel) (Object) this);
+    }
 
     @Redirect(
         method = "tickBlock(Lnet/minecraft/core/BlockPos;"

@@ -7,7 +7,7 @@ import net.minecraft.server.level.ServerPlayer;
 
 import java.util.function.Predicate;
 
-enum NoopServerEntitySynchronizer implements ServerEntity.Synchronizer {
+public enum NoopServerEntitySynchronizer implements ServerEntity.Synchronizer {
     INSTANCE;
 
     @Override

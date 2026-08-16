@@ -8,6 +8,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.MinecraftServer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
+import dev.aerogel.api.persistence.PersistentDataView;
+import dev.aerogel.loader.internal.PersistentDataViews;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -58,6 +60,11 @@ abstract class MinecraftServerApiMixin {
     @Unique
     public boolean restart() {
         return RestartCoordinator.request(this);
+    }
+
+    @Unique
+    public PersistentDataView data() {
+        return PersistentDataViews.server(server());
     }
 
     @Unique

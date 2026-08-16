@@ -14,6 +14,7 @@ import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.ServerLevelData;
+import net.minecraft.world.level.storage.SavedDataStorage;
 import net.minecraft.world.level.saveddata.WeatherData;
 import net.minecraft.world.level.ExplosionDamageCalculator;
 import net.minecraft.world.damagesource.DamageSource;
@@ -47,6 +48,7 @@ public class ServerLevel extends Level {
     }
 
     public ServerChunkCache getChunkSource() { return null; }
+    public SavedDataStorage getDataStorage() { return null; }
     public MinecraftServer getServer() { return null; }
     public String identifier() { return null; }
     public Collection<Entity> entities() { return null; }

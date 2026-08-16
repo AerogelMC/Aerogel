@@ -1,6 +1,7 @@
 package net.minecraft.world.entity;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -10,6 +11,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.level.portal.TeleportTransition;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 
 import java.util.Collection;
 import java.util.UUID;
@@ -29,6 +32,8 @@ public abstract class Entity {
     public float getYRot() { return 0; }
     public float getXRot() { return 0; }
     public int getId() { return 0; }
+    public EntityType<?> getType() { return null; }
+    public BlockPos blockPosition() { return null; }
     public SynchedEntityData getEntityData() { return null; }
     public UUID getUUID() { return null; }
     public String getScoreboardName() { return null; }
@@ -66,6 +71,8 @@ public abstract class Entity {
     public void setSwimming(boolean swimming) { }
     public ItemEntity spawnAtLocation(ServerLevel level, ItemStack stack) { return null; }
     public void discard() { }
+    public void saveWithoutId(ValueOutput output) { }
+    public void load(ValueInput input) { }
 
     public enum RemovalReason {
         KILLED

@@ -45,6 +45,12 @@
     "PlayerMixin",
     "ItemEntityMixin",
     "BlockItemMixin",
+    "ItemStackMixin",
+    "BlockEntityMixin",
+    "RecipeHolderMixin",
+    "LootTableMixin",
+    "RecipeManagerMixin",
+    "ReloadableRegistriesHolderMixin",
     "DedicatedServerMixin",
     "DedicatedServerConsoleMixin"
   ],

@@ -606,6 +606,30 @@ Packets are version-sensitive and can disconnect clients if constructed with inv
 
 Never retain a `ServerPlayer` after quit or across a full server restart. Store the UUID and resolve the live player again.
 
+## Persistent data and gameplay object APIs
+
+Use `context.persistentData()` for small plugin-namespaced values on server, player, entity,
+block entity, world, block, or item identities. When the vanilla object is already available, use
+`server.data()`, `level.data()`, `level.data(pos)`, `entity.data()`, `blockEntity.data()`, or
+`stack.data()` and select the namespace with `.namespace(context)`. Use `new ItemStack(item).edit()`
+or `stack.edit()` to edit real vanilla `ItemStack` components,
+`context.recipes()` and `context.loot()` for plugin-owned vanilla registrations,
+`context.menus()` for routed read-only GUIs, `context.virtualEntities()` for selected-client
+unspawned entities, and `context.blockBatches()` for chunk-coalesced bulk block changes.
+
+Persistent data is owned by vanilla save objects: players, entities, and block entities carry it in
+their normal NBT, item stacks carry it in `CUSTOM_DATA`, and server, world, and coordinate containers use
+that world's `SavedData` file. It is not copied into `plugins/<id>`. Use it on the server thread.
+The player and entity overloads deliberately require live objects; a UUID-only API would create a
+second storage database instead of following vanilla object lifetime.
+
+Other direct forms follow the same rule: `player.openMenu(menu)`, `entity.virtual(context, viewers)`,
+and `level.batch()`. A `RecipeHolder` can call `register(context)`, and a `LootTable` can call
+`register(context, path)`. The context remains explicit for registrations because plugin ownership
+controls unload cleanup; Aerogel does not guess it from threads, stack traces, or global state.
+
+These APIs and their lifecycle rules are documented with examples in [API.md](API.md).
+
 ## Inventories and GUI
 
 Aerogel creates one-to-six-row chest inventories and can wrap a compatible live vanilla `Container`.

@@ -5,6 +5,8 @@ import com.mojang.datafixers.util.Either;
 import dev.aerogel.api.event.inventory.InventoryCloseEvent;
 import dev.aerogel.api.event.inventory.InventoryOpenEvent;
 import dev.aerogel.api.event.item.PlayerDropItemEvent;
+import dev.aerogel.api.menu.Menu;
+import dev.aerogel.api.inventory.InventoryView;
 import dev.aerogel.api.event.player.PlayerDeathEvent;
 import dev.aerogel.api.event.player.PlayerBedEnterEvent;
 import dev.aerogel.api.event.player.PlayerBedLeaveEvent;
@@ -17,6 +19,7 @@ import dev.aerogel.loader.internal.PlayerNameTagService;
 import dev.aerogel.loader.internal.DeathDropCapture;
 import dev.aerogel.loader.internal.PlayerViewService;
 import dev.aerogel.loader.internal.RespawnGameListenerBridge;
+import dev.aerogel.loader.internal.PersistentDataHolderBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
@@ -125,6 +128,11 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     }
 
     @Unique
+    public InventoryView openMenu(Menu menu) {
+        return Objects.requireNonNull(menu, "menu").open(self());
+    }
+
+    @Unique
     public void clearDisplayName() {
         aerogel$displayName = null;
         aerogel$broadcastTabListName();
@@ -167,6 +175,8 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         aerogel$tabListFooter = source.aerogel$tabListFooter;
         aerogel$tabListHidden = source.aerogel$tabListHidden;
         aerogel$nameTagHidden = source.aerogel$nameTagHidden;
+        ((PersistentDataHolderBridge) (Object) this).aerogel$restorePersistentData(
+            ((PersistentDataHolderBridge) (Object) previous).aerogel$allPersistentData());
         PlayerViewService.transfer(previous, self());
     }
 

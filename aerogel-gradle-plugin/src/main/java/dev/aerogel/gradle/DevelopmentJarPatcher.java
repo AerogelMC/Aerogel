@@ -180,6 +180,7 @@ final class DevelopmentJarPatcher {
     private static Map<String, List<InjectedMethod>> methods() {
         Map<String, List<InjectedMethod>> result = new HashMap<>();
         add(result, "net/minecraft/server/MinecraftServer",
+            method("data", "()Ldev/aerogel/api/persistence/PersistentDataView;"),
             method("onlinePlayers", "()Ljava/util/Collection;",
                 "()Ljava/util/Collection<Lnet/minecraft/server/level/ServerPlayer;>;"),
             namedGeneric("findPlayer", "(Ljava/lang/String;)Ljava/util/Optional;",
@@ -193,6 +194,7 @@ final class DevelopmentJarPatcher {
                 "(Lnet/minecraft/network/protocol/Packet<*>;)V", "packet"),
             method("restart", "()Z"));
         add(result, "net/minecraft/server/level/ServerPlayer",
+            named("openMenu", "(Ldev/aerogel/api/menu/Menu;)Ldev/aerogel/api/inventory/InventoryView;", "menu"),
             named("setDisplayName", "(Lnet/minecraft/network/chat/Component;)V", "displayName"),
             method("clearDisplayName", "()V"),
             named("setTabListName", "(Lnet/minecraft/network/chat/Component;)V", "name"),
@@ -264,6 +266,9 @@ final class DevelopmentJarPatcher {
             method("resetWorldBorder", "()V"),
             method("clearViewOverrides", "()V"));
         add(result, "net/minecraft/server/level/ServerLevel",
+            method("data", "()Ldev/aerogel/api/persistence/PersistentDataView;"),
+            named("data", "(Lnet/minecraft/core/BlockPos;)Ldev/aerogel/api/persistence/PersistentDataView;", "position"),
+            method("batch", "()Ldev/aerogel/api/blockbatch/BlockBatch;"),
             method("identifier", "()Ljava/lang/String;"),
             method("entities", "()Ljava/util/Collection;",
                 "()Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;"),
@@ -284,12 +289,26 @@ final class DevelopmentJarPatcher {
             named("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDD)Z", "player", "x", "y", "z"),
             named("teleport", "(Lnet/minecraft/server/level/ServerPlayer;DDDFF)Z", "player", "x", "y", "z", "yaw", "pitch"));
         add(result, "net/minecraft/world/entity/Entity",
+            method("data", "()Ldev/aerogel/api/persistence/PersistentDataView;"),
+            namedGeneric("virtual", "(Ldev/aerogel/api/PluginContext;Ljava/util/Collection;)Ldev/aerogel/api/virtualentity/VirtualEntity;",
+                "(Ldev/aerogel/api/PluginContext;Ljava/util/Collection<+Lnet/minecraft/server/level/ServerPlayer;>;)Ldev/aerogel/api/virtualentity/VirtualEntity;", "plugin", "viewers"),
+            named("virtual", "(Ldev/aerogel/api/PluginContext;Lnet/minecraft/server/level/ServerPlayer;)Ldev/aerogel/api/virtualentity/VirtualEntity;", "plugin", "viewer"),
             namedGeneric("nearbyEntities", "(D)Ljava/util/Collection;",
                 "(D)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "radius"),
             namedGeneric("nearbyEntities", "(DLjava/util/function/Predicate;)Ljava/util/Collection;",
                 "(DLjava/util/function/Predicate<Lnet/minecraft/world/entity/Entity;>;)Ljava/util/Collection<Lnet/minecraft/world/entity/Entity;>;", "radius", "filter"),
             named("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDD)Z", "destination", "x", "y", "z"),
             named("teleport", "(Lnet/minecraft/server/level/ServerLevel;DDDFF)Z", "destination", "x", "y", "z", "yaw", "pitch"));
+        add(result, "net/minecraft/world/item/ItemStack",
+            method("edit", "()Ldev/aerogel/api/item/ItemBuilder;"),
+            method("data", "()Ldev/aerogel/api/persistence/PersistentDataView;"));
+        add(result, "net/minecraft/world/level/block/entity/BlockEntity",
+            method("data", "()Ldev/aerogel/api/persistence/PersistentDataView;"));
+        add(result, "net/minecraft/world/item/crafting/RecipeHolder",
+            named("register", "(Ldev/aerogel/api/PluginContext;)Ldev/aerogel/api/Registration;", "plugin"));
+        add(result, "net/minecraft/world/level/storage/loot/LootTable",
+            named("register", "(Ldev/aerogel/api/PluginContext;Ljava/lang/String;)Ldev/aerogel/api/Registration;", "plugin", "path"),
+            named("register", "(Ldev/aerogel/api/PluginContext;Lnet/minecraft/resources/Identifier;)Ldev/aerogel/api/Registration;", "plugin", "id"));
         return Map.copyOf(result);
     }
 

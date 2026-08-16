@@ -22,6 +22,12 @@ final class AerogelApiRuntimeTest {
         assertNotNull(scope.scoreboards());
         assertNotNull(scope.bossBars());
         assertNotNull(scope.dialogs());
+        assertNotNull(scope.persistentData());
+        assertNotNull(scope.recipes());
+        assertNotNull(scope.loot());
+        assertNotNull(scope.menus());
+        assertNotNull(scope.virtualEntities());
+        assertNotNull(scope.blockBatches());
         scope.close();
     }
 

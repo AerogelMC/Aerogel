@@ -7,6 +7,8 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
+import net.minecraft.world.item.crafting.Recipe;
+import net.minecraft.world.level.storage.loot.LootTable;
 
 public final class Registries {
     public static final ResourceKey<Registry<Level>> DIMENSION = null;
@@ -14,6 +16,8 @@ public final class Registries {
     public static final ResourceKey<Registry<Biome>> BIOME = null;
     public static final ResourceKey<Registry<StructureSet>> STRUCTURE_SET = null;
     public static final ResourceKey<Registry<PlacedFeature>> PLACED_FEATURE = null;
+    public static final ResourceKey<Registry<Recipe<?>>> RECIPE = null;
+    public static final ResourceKey<Registry<LootTable>> LOOT_TABLE = null;
 
     private Registries() {
     }

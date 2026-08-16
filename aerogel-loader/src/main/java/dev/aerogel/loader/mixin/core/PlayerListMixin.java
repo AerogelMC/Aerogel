@@ -97,7 +97,12 @@ abstract class PlayerListMixin {
                 );
                 EventHooks.post(event);
                 if (!event.isCancelled()) {
-                    ((PlayerList) (Object) this).broadcastSystemMessage(event.message(), overlay);
+                    Component announcement = event.message();
+                    ((PlayerList) (Object) this).broadcastSystemMessage(
+                        announcement,
+                        recipient -> recipient == player ? null : announcement,
+                        overlay
+                    );
                 }
             }
         } finally {

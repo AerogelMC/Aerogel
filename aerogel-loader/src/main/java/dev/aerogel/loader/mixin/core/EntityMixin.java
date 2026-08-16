@@ -16,6 +16,11 @@ import dev.aerogel.api.event.player.PlayerSneakChangeEvent;
 import dev.aerogel.api.event.player.PlayerSwimChangeEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.EntityViewBridge;
+import dev.aerogel.loader.internal.PersistentDataHolderBridge;
+import dev.aerogel.loader.internal.PersistentDataViews;
+import dev.aerogel.api.persistence.PersistentDataView;
+import dev.aerogel.api.PluginContext;
+import dev.aerogel.api.virtualentity.VirtualEntity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -28,20 +33,24 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.network.chat.Component;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.portal.TeleportTransition;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.function.Consumer;
 
 @Mixin(targets = "net.minecraft.world.entity.Entity")
-abstract class EntityMixin implements EntityViewBridge {
+abstract class EntityMixin implements EntityViewBridge, PersistentDataHolderBridge {
     @Shadow protected static EntityDataAccessor<Byte> DATA_SHARED_FLAGS_ID;
     @Unique private boolean aerogel$combustOverride;
     @Unique private boolean aerogel$teleportOverride;
@@ -54,6 +63,69 @@ abstract class EntityMixin implements EntityViewBridge {
     @Unique private boolean aerogel$gravityOverride;
     @Unique private boolean aerogel$silentOverride;
     @Unique private boolean aerogel$playerStateOverride;
+    @Unique private CompoundTag aerogel$persistentData = new CompoundTag();
+    @Unique private PersistentDataView aerogel$dataView;
+
+    @Unique
+    public synchronized PersistentDataView data() {
+        if (aerogel$dataView == null) {
+            aerogel$dataView = PersistentDataViews.entity(this);
+        }
+        return aerogel$dataView;
+    }
+
+    @Unique
+    public VirtualEntity virtual(
+        PluginContext plugin, Collection<? extends ServerPlayer> viewers
+    ) {
+        return Objects.requireNonNull(plugin, "plugin").virtualEntities().show(
+            (Entity) (Object) this, Objects.requireNonNull(viewers, "viewers"));
+    }
+
+    @Unique
+    public VirtualEntity virtual(PluginContext plugin, ServerPlayer viewer) {
+        return virtual(plugin, List.of(Objects.requireNonNull(viewer, "viewer")));
+    }
+
+    @Override
+    public synchronized CompoundTag aerogel$persistentData(String pluginId) {
+        Objects.requireNonNull(pluginId, "pluginId");
+        return aerogel$persistentData.getCompoundOrEmpty(pluginId).copy();
+    }
+
+    @Override
+    public synchronized void aerogel$editPersistentData(
+        String pluginId, Consumer<CompoundTag> editor
+    ) {
+        Objects.requireNonNull(pluginId, "pluginId");
+        Objects.requireNonNull(editor, "editor");
+        CompoundTag value = aerogel$persistentData.getCompoundOrEmpty(pluginId).copy();
+        editor.accept(value);
+        if (value.isEmpty()) aerogel$persistentData.remove(pluginId);
+        else aerogel$persistentData.put(pluginId, value);
+    }
+
+    @Override
+    public synchronized CompoundTag aerogel$allPersistentData() {
+        return aerogel$persistentData.copy();
+    }
+
+    @Override
+    public synchronized void aerogel$restorePersistentData(CompoundTag data) {
+        aerogel$persistentData = Objects.requireNonNull(data, "data").copy();
+    }
+
+    @Inject(method = "saveWithoutId(Lnet/minecraft/world/level/storage/ValueOutput;)V", at = @At("TAIL"))
+    private void aerogel$savePersistentData(ValueOutput output, CallbackInfo callbackInfo) {
+        CompoundTag data = aerogel$allPersistentData();
+        if (!data.isEmpty()) output.store("AerogelPersistentData", CompoundTag.CODEC, data);
+    }
+
+    @Inject(method = "load(Lnet/minecraft/world/level/storage/ValueInput;)V", at = @At("TAIL"))
+    private void aerogel$loadPersistentData(ValueInput input, CallbackInfo callbackInfo) {
+        aerogel$restorePersistentData(
+            input.read("AerogelPersistentData", CompoundTag.CODEC).orElseGet(CompoundTag::new));
+    }
 
     @Override
     public byte aerogel$sharedFlags() {

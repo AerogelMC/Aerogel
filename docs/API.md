@@ -13,6 +13,12 @@ context.bossBars();
 context.dialogs();
 context.translations();
 context.storage();
+context.persistentData();
+context.recipes();
+context.loot();
+context.menus();
+context.virtualEntities();
+context.blockBatches();
 ```
 
 Get the live vanilla server directly:
@@ -156,6 +162,138 @@ state, UUIDs, resource keys, strings, numbers, lists, and maps. Only codec-backe
 objects are persistable; do not persist live players, worlds, entities, menus, registries, packets,
 or servers. Changes made directly to the object returned by `value()` cannot be detected; use
 `set`, `update`, or `edit`.
+
+## Persistent data
+
+Persistent data is automatically isolated by plugin and follows the vanilla object that owns it.
+Player, entity, and block-entity values are written into that object's normal saved NBT. Item values use the
+stack's vanilla `CUSTOM_DATA` component, so they follow inventory moves, drops, serialization,
+copies, and normal Minecraft saves. Server, world, and block-coordinate values use Minecraft's
+per-world `SavedData` storage under the world's `data/aerogel/` directory. They are marked dirty
+and flushed by the ordinary world-save pipeline; no plugin-folder JSON mirror is involved.
+
+```java
+PersistentDataContainer playerData = context.persistentData().player(player);
+playerData.set("wins", 12);
+int wins = playerData.getInt("wins", 0);
+
+// Direct vanilla-class API; the namespace remains explicit and collision-free.
+player.data().namespace(context).set("wins", 12);
+blockEntity.data().namespace(context).set("owner", player.getUUID());
+level.data().namespace(context).set("round", 4);
+level.data(position).namespace(context).set("protected", true);
+context.minecraft().data().namespace(context).set("season", "summer");
+
+reward.data().namespace(context)
+    .set("reward-tier", "legendary");
+```
+
+Built-in types cover all numeric NBT types, booleans, strings, UUIDs, primitive arrays, and copied
+`CompoundTag` values. A plugin may implement `PersistentDataType<T>` for another lossless NBT
+representation and use the explicit three-argument `set`/`get` overload for it. Built-in values use
+compile-time overloads rather than runtime type guessing; reads are available as `getInt`,
+`getString`, `getUUID`, and the other matching methods. Use these containers on the server thread. UUID-only player or entity containers
+are intentionally not provided: pass the live object so its data is owned by its vanilla save.
+
+## Items
+
+The item API edits a real `ItemStack`; it does not introduce an item wrapper or discard unknown
+components. Common operations are fluent, and `component(...)` keeps the complete vanilla data
+component system available.
+
+```java
+ItemStack reward = new ItemStack(Items.DIAMOND_SWORD).edit()
+    .name(Component.literal("Arena blade"))
+    .lore(Component.literal("Season reward"))
+    .unbreakable(true)
+    .glint(true)
+    .build();
+
+// Continue directly from an existing vanilla stack.
+existingStack.edit().name(Component.literal("Reforged")).glint(true);
+```
+
+`edit` changes its argument in place. Start from `stack.copy().edit()` when the source must remain
+unchanged. `build` always returns an independent copy, while `stack` returns the live stack being
+edited. There is deliberately no `plugin.items()` service: item construction starts with the
+vanilla `ItemStack` constructor and continues on that object.
+
+## Recipes and loot
+
+Recipes are real vanilla `Recipe` instances inserted into the active `RecipeManager`. Recipe maps
+and displays are finalized after each registration. Registrations are plugin-owned and disappear
+on reload without leaving stale recipes.
+
+```java
+context.recipes().register("compressed_diamond", vanillaRecipe);
+context.recipes().find(Identifier.parse("my_plugin:compressed_diamond"));
+
+// A keyed vanilla holder can register itself while retaining plugin ownership.
+recipeHolder.register(context);
+```
+
+The path overload supplies the plugin namespace. The `Identifier` overload rejects registrations
+outside that namespace. Loot tables use the same ownership rule and accept complete vanilla
+`LootParams` rather than fabricating missing context:
+
+```java
+context.loot().register("arena_reward", table);
+table.register(context, "arena_reward");
+List<ItemStack> drops = context.loot().generate(
+    Identifier.parse("my_plugin:arena_reward"), parameters, seed);
+```
+
+## High-level menus
+
+Menus build on real chest containers but own click routing, viewer tracking, client resynchronizing,
+and reload cleanup. Menu slots are read-only by default. Player-inventory slots are also blocked
+unless explicitly enabled.
+
+```java
+Menu menu = context.menus().create(3, Component.literal("Choose a team"))
+    .item(11, redTeamItem)
+    .item(15, blueTeamItem)
+    .onClick(11, click -> joinRed(click.player()))
+    .onClick(15, click -> joinBlue(click.player()));
+
+player.openMenu(menu); // Equivalent to menu.open(player), alongside vanilla openMenu(MenuProvider).
+```
+
+## Virtual entities
+
+A virtual entity is a normal vanilla `Entity` instance that is never inserted into its
+`ServerLevel`. Aerogel uses Minecraft's `ServerEntity.sendPairingData` pipeline, so complete pairing
+state remains vanilla-correct.
+
+```java
+VirtualEntity virtual = context.virtualEntities().show(unspawnedEntity, viewers);
+VirtualEntity direct = unspawnedEntity.virtual(context, viewers);
+unspawnedEntity.setCustomName(Component.literal("Preview"));
+virtual.synchronize();
+```
+
+Do not pass an entity already added to the level. Virtual entities do not receive world ticks,
+collision, AI, saving, or server-side interaction automatically.
+
+## Block batches
+
+Block batches retain normal `ServerLevel.setBlock` semantics while coalescing client synchronization
+into one chunk-and-light packet per affected tracked chunk.
+
+```java
+BlockBatch batch = level.batch();
+changes.forEach(batch::set);
+BlockBatchResult result = batch.commit();
+```
+
+Commit on the server thread. Defaults require loaded chunks and roll back already-applied states if
+an exception interrupts the operation. `BlockBatchOptions` exposes vanilla update flags, rollback,
+and loaded-chunk policy.
+
+The service forms remain available when code starts from `PluginContext`. The direct vanilla-object
+forms are preferred when the owning object is already in hand. Registration methods still take an
+explicit context because Aerogel must associate recipes, loot tables, menus, and virtual entities
+with the correct plugin for reload cleanup; Aerogel never infers ownership from the call stack.
 
 ## Inventories
 

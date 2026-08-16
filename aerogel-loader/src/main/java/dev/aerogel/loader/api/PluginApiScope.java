@@ -11,6 +11,13 @@ import dev.aerogel.api.scoreboard.ScoreboardService;
 import dev.aerogel.api.storage.StorageService;
 import dev.aerogel.api.translation.TranslationService;
 import dev.aerogel.api.world.WorldService;
+import dev.aerogel.api.persistence.PersistentDataService;
+import dev.aerogel.api.recipe.RecipeService;
+import dev.aerogel.api.loot.LootService;
+import dev.aerogel.api.menu.MenuService;
+import dev.aerogel.api.virtualentity.VirtualEntityService;
+import dev.aerogel.api.blockbatch.BlockBatchService;
+import dev.aerogel.api.event.EventBus;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -38,6 +45,12 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     private final PluginTranslations translations;
     private final ManagedStorageService storage;
     private final VanillaWorldService worlds;
+    private final DirectPersistentDataService persistentData;
+    private final DirectRecipeService recipes;
+    private final DirectLootService loot;
+    private final DirectMenuService menus;
+    private final DirectVirtualEntityService virtualEntities;
+    private final DirectBlockBatchService blockBatches;
 
     PluginApiScope(
         AerogelApiRuntime runtime,
@@ -59,6 +72,12 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
         translations = new PluginTranslations(pluginId, resourceLoader, logger);
         storage = new ManagedStorageService(this, dataDirectory, logger);
         worlds = new VanillaWorldService(this);
+        persistentData = new DirectPersistentDataService(this);
+        recipes = new DirectRecipeService(this);
+        loot = new DirectLootService(this);
+        menus = new DirectMenuService(this, inventories);
+        virtualEntities = new DirectVirtualEntityService(this);
+        blockBatches = new DirectBlockBatchService(this);
     }
 
     <R extends Registration> R own(R resource) {
@@ -75,7 +94,13 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
 
     void serverReady() {
         storage.serverReady();
+        persistentData.serverReady();
         commands.serverReady();
+    }
+
+    public void bindEvents(EventBus events) {
+        menus.bind(events);
+        virtualEntities.bind(events);
     }
 
     /** Completes the atomic command-registration phase for this plugin load. */
@@ -110,6 +135,12 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     @Override public TranslationService translations() { return translations; }
     @Override public StorageService storage() { return storage; }
     @Override public WorldService worlds() { return worlds; }
+    @Override public PersistentDataService persistentData() { return persistentData; }
+    @Override public RecipeService recipes() { return recipes; }
+    @Override public LootService loot() { return loot; }
+    @Override public MenuService menus() { return menus; }
+    @Override public VirtualEntityService virtualEntities() { return virtualEntities; }
+    @Override public BlockBatchService blockBatches() { return blockBatches; }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;

@@ -579,6 +579,31 @@ context.minecraft().broadcastPacket(packet);
 
 퇴장한 뒤나 전체 서버 재시작을 거친 뒤에도 `ServerPlayer`가 유효하다고 가정하면 안 됩니다. UUID를 저장하고 현재 접속한 실제 플레이어를 다시 조회하세요.
 
+## 영속 데이터와 게임 객체 API
+
+서버, 플레이어, 엔티티, 블록 엔티티, 월드, 블록, 아이템에 플러그인별 소규모 값을 보존할 때는
+`context.persistentData()`를 사용하세요. 바닐라 객체가 이미 있다면 `server.data()`,
+`level.data()`, `level.data(pos)`, `entity.data()`, `blockEntity.data()`, `stack.data()`에서
+`.namespace(context)`로 플러그인 영역을 선택할 수 있습니다. 실제 바닐라 `ItemStack`
+컴포넌트 편집에는 `new ItemStack(item).edit()` 또는 `stack.edit()`, 플러그인 소유 바닐라
+레시피와 루트 테이블에는 `context.recipes()`와
+`context.loot()`, 클릭 라우팅 GUI에는 `context.menus()`, 일부 클라이언트에만 존재하는
+미스폰 엔티티에는 `context.virtualEntities()`, 청크 단위로 동기화하는 대량 블록 변경에는
+`context.blockBatches()`를 사용합니다.
+
+영속 데이터는 바닐라 저장 객체가 직접 소유합니다. 플레이어·엔티티·블록 엔티티 데이터는 해당
+객체의 일반 NBT에, 아이템 데이터는 `CUSTOM_DATA`에, 서버·월드·좌표 데이터는
+해당 월드의 `SavedData` 파일에 저장됩니다. `plugins/<id>`로 복제되는 파일은 없습니다.
+서버 스레드에서 사용하세요. 플레이어와 엔티티 API가 UUID가 아니라 실제 객체를 받는
+이유도 별도 저장 데이터베이스를 만들지 않고 바닐라 객체 수명을 그대로 따르기 위해서입니다.
+
+같은 원칙으로 `player.openMenu(menu)`, `entity.virtual(context, viewers)`, `level.batch()`를
+직접 사용할 수 있습니다. `RecipeHolder.register(context)`와
+`LootTable.register(context, path)`도 지원합니다. 등록 작업은 리로드 시 정리할 플러그인
+소유권이 필요하므로 `context`를 명시적으로 받으며, 호출 스택이나 전역 상태로 추측하지 않습니다.
+
+각 API의 생명주기, 주의점, 예시는 [API.md](API.md)에 정리되어 있습니다.
+
 ## 인벤토리와 GUI
 
 Aerogel은 1~6줄 상자 인벤토리를 생성하거나 호환되는 실제 바닐라 `Container`를 감쌀 수 있습니다.

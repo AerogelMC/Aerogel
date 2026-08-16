@@ -25,4 +25,5 @@ public interface Tag {
     default Optional<long[]> asLongArray() { return Optional.empty(); }
     default Optional<CompoundTag> asCompound() { return Optional.empty(); }
     default Optional<ListTag> asList() { return Optional.empty(); }
+    default Tag copy() { return this; }
 }
