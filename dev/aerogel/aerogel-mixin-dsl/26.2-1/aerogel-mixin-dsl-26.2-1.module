@@ -124,20 +124,20 @@
         {
           "name": "aerogel-mixin-dsl-26.2-1-sources.jar",
           "url": "aerogel-mixin-dsl-26.2-1-sources.jar",
-          "size": 10273,
-          "sha512": "ad12f47bba65556c43bb270138f86338b06887c1601826f7c1393cfbf446ab536d65c9f5645dce9434eb157f2fb4280a214db95c1f0bac6d70d1f2e6484cd139",
-          "sha256": "81a545fa790404d0d801bbd9d7d78328dd7cb10a7a4d26cb76792e4d364250d4",
-          "sha1": "97ae184d4760c196b2987402d3ebd5fcea6ebf32",
-          "md5": "3ffc2098ebddeefeef82db6ee294932b"
+          "size": 10708,
+          "sha512": "ff1b8f295c061a740dd00ffc748f014cce4bd2d636fef0974d78f101c8c687adb0cbcf89adfb1f199c734b54a4afe838f0ccda1d8eb47c3fc11dff16b9be9895",
+          "sha256": "156d67f37815d5b4b7f488f81df717e358ec8485707c5005f5f734dfdbca57fd",
+          "sha1": "aba0750ceec80e63346b635f04a636e14350cc10",
+          "md5": "faf306e18f3abbea8606e1d238a5dac9"
         },
         {
           "name": "aerogel-mixin-dsl-26.2-1-sources.jar",
           "url": "aerogel-mixin-dsl-26.2-1-sources.jar",
-          "size": 10273,
-          "sha512": "ad12f47bba65556c43bb270138f86338b06887c1601826f7c1393cfbf446ab536d65c9f5645dce9434eb157f2fb4280a214db95c1f0bac6d70d1f2e6484cd139",
-          "sha256": "81a545fa790404d0d801bbd9d7d78328dd7cb10a7a4d26cb76792e4d364250d4",
-          "sha1": "97ae184d4760c196b2987402d3ebd5fcea6ebf32",
-          "md5": "3ffc2098ebddeefeef82db6ee294932b"
+          "size": 10708,
+          "sha512": "ff1b8f295c061a740dd00ffc748f014cce4bd2d636fef0974d78f101c8c687adb0cbcf89adfb1f199c734b54a4afe838f0ccda1d8eb47c3fc11dff16b9be9895",
+          "sha256": "156d67f37815d5b4b7f488f81df717e358ec8485707c5005f5f734dfdbca57fd",
+          "sha1": "aba0750ceec80e63346b635f04a636e14350cc10",
+          "md5": "faf306e18f3abbea8606e1d238a5dac9"
         }
       ]
     }
