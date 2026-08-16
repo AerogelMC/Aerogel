@@ -123,6 +123,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleMovePlayer(Lnet/minecraft/network/protocol/game/ServerboundMovePlayerPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$move(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerMoveEvent.class))
             post(new PlayerMoveEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -130,6 +131,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleClientCommand(Lnet/minecraft/network/protocol/game/ServerboundClientCommandPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$clientCommand(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerClientCommandEvent.class))
             post(new PlayerClientCommandEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -137,6 +139,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleSpectatorAction(Lnet/minecraft/network/protocol/game/ServerboundSpectatorActionPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$spectatorAction(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerSpectatorActionEvent.class))
             post(new PlayerSpectatorActionEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -144,36 +147,42 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePaddleBoat(Lnet/minecraft/network/protocol/game/ServerboundPaddleBoatPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$paddleBoat(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerPaddleBoatEvent.class))
             post(new PlayerPaddleBoatEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handleRecipeBookSeenRecipePacket", at = @At("HEAD"), cancellable = true)
     private void aerogel$recipeSeen(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerRecipeSeenEvent.class))
             post(new PlayerRecipeSeenEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handleRecipeBookChangeSettingsPacket", at = @At("HEAD"), cancellable = true)
     private void aerogel$recipeSettings(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerRecipeBookSettingsEvent.class))
             post(new PlayerRecipeBookSettingsEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handleSeenAdvancements", at = @At("HEAD"), cancellable = true)
     private void aerogel$advancements(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerAdvancementsScreenEvent.class))
             post(new PlayerAdvancementsScreenEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handleBundleItemSelectedPacket", at = @At("HEAD"), cancellable = true)
     private void aerogel$bundleSelection(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerBundleSelectionEvent.class))
             post(new PlayerBundleSelectionEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
 
     @Inject(method = "handleCustomCommandSuggestions", at = @At("HEAD"), cancellable = true)
     private void aerogel$commandSuggestions(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerCommandSuggestionEvent.class))
             post(new PlayerCommandSuggestionEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -181,6 +190,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePlayerInput(Lnet/minecraft/network/protocol/game/ServerboundPlayerInputPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$input(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerInputEvent.class))
             post(new PlayerInputEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -188,6 +198,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleMoveVehicle(Lnet/minecraft/network/protocol/game/ServerboundMoveVehiclePacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$moveVehicle(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerVehicleMoveEvent.class))
             post(new PlayerVehicleMoveEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -195,6 +206,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleInteract(Lnet/minecraft/network/protocol/game/ServerboundInteractPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$interactEntity(ServerboundInteractPacket packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         boolean listenInteraction = EventHooks.hasListeners(PlayerInteractEvent.class);
         boolean listenPacket = EventHooks.hasListeners(PlayerInteractEntityEvent.class);
         if (!listenInteraction && !listenPacket) return;
@@ -223,6 +235,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleAttack(Lnet/minecraft/network/protocol/game/ServerboundAttackPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$attackEntity(ServerboundAttackPacket packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         boolean listenInteraction = EventHooks.hasListeners(PlayerInteractEvent.class);
         boolean listenPacket = EventHooks.hasListeners(PlayerAttackEntityEvent.class);
         if (!listenInteraction && !listenPacket) return;
@@ -250,6 +263,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleAnimate(Lnet/minecraft/network/protocol/game/ServerboundSwingPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$swing(ServerboundSwingPacket packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         boolean listenSwing = EventHooks.hasListeners(PlayerSwingEvent.class);
         boolean listenInteraction = EventHooks.hasListeners(PlayerInteractEvent.class);
         if (!listenSwing && !listenInteraction) return;
@@ -275,6 +289,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePlayerCommand(Lnet/minecraft/network/protocol/game/ServerboundPlayerCommandPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$playerCommandAction(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerCommandActionEvent.class))
             post(new PlayerCommandActionEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -282,6 +297,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePlayerAbilities(Lnet/minecraft/network/protocol/game/ServerboundPlayerAbilitiesPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$abilities(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerAbilitiesChangeEvent.class))
             post(new PlayerAbilitiesChangeEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -319,6 +335,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleSetCarriedItem(Lnet/minecraft/network/protocol/game/ServerboundSetCarriedItemPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$hotbarSlot(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerHotbarSlotChangeEvent.class))
             post(new PlayerHotbarSlotChangeEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -326,6 +343,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleEditBook(Lnet/minecraft/network/protocol/game/ServerboundEditBookPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$editBook(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerEditBookEvent.class))
             post(new PlayerEditBookEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -333,6 +351,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleSignUpdate(Lnet/minecraft/network/protocol/game/ServerboundSignUpdatePacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$signUpdate(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerSignUpdateEvent.class))
             post(new PlayerSignUpdateEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -340,6 +359,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleClientInformation(Lnet/minecraft/network/protocol/common/ServerboundClientInformationPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$clientInformation(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(PlayerClientInformationEvent.class))
             post(new PlayerClientInformationEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -347,6 +367,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleSetCreativeModeSlot(Lnet/minecraft/network/protocol/game/ServerboundSetCreativeModeSlotPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$creativeSlot(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(CreativeInventorySlotEvent.class))
             post(new CreativeInventorySlotEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -476,18 +497,23 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePlayerAction(Lnet/minecraft/network/protocol/game/ServerboundPlayerActionPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$action(ServerboundPlayerActionPacket packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
+        boolean listenInteraction = EventHooks.hasListeners(PlayerInteractEvent.class);
         boolean listenAction = EventHooks.hasListeners(PlayerActionEvent.class);
         boolean listenSwap = EventHooks.hasListeners(PlayerSwapHandItemsEvent.class);
-        if (!listenAction && !listenSwap) return;
         ServerboundPlayerActionPacket.Action action = packet.getAction();
-        boolean cancelled = false;
 
-        if (action == ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK) {
-            aerogel$suppressNextSwing(InteractionHand.MAIN_HAND);
-        } else if (action == ServerboundPlayerActionPacket.Action.DROP_ITEM
-            || action == ServerboundPlayerActionPacket.Action.DROP_ALL_ITEMS) {
+        // DROP_ITEM and DROP_ALL_ITEMS are followed by a hand-animation packet. That animation
+        // remains observable through PlayerSwingEvent, but must not become a semantic left-click.
+        // Block breaking has its own semantic interaction event in ServerPlayerGameModeMixin.
+        if (listenInteraction && (action == ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK
+            || action == ServerboundPlayerActionPacket.Action.DROP_ITEM
+            || action == ServerboundPlayerActionPacket.Action.DROP_ALL_ITEMS)) {
             aerogel$suppressNextSwing(InteractionHand.MAIN_HAND);
         }
+
+        if (!listenAction && !listenSwap) return;
+        boolean cancelled = false;
 
         if (listenSwap && action == ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND) {
             PlayerSwapHandItemsEvent swapEvent = new PlayerSwapHandItemsEvent(
@@ -513,6 +539,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleContainerClick(Lnet/minecraft/network/protocol/game/ServerboundContainerClickPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$inventoryClick(ServerboundContainerClickPacket packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (!EventHooks.hasListeners(InventoryClickEvent.class)) return;
         InventoryClickEvent event = new InventoryClickEvent(
             player, packet, packet.containerId(), packet.stateId(),
@@ -527,6 +554,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleContainerButtonClick(Lnet/minecraft/network/protocol/game/ServerboundContainerButtonClickPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$inventoryButton(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(InventoryButtonClickEvent.class))
             post(new InventoryButtonClickEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -534,6 +562,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handlePlaceRecipe(Lnet/minecraft/network/protocol/game/ServerboundPlaceRecipePacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$placeRecipe(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(RecipePlaceEvent.class))
             post(new RecipePlaceEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -541,6 +570,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleSelectTrade(Lnet/minecraft/network/protocol/game/ServerboundSelectTradePacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$selectTrade(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(TradeSelectEvent.class))
             post(new TradeSelectEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -548,6 +578,7 @@ abstract class ServerGamePacketListenerMixin
     @Inject(method = "handleRenameItem(Lnet/minecraft/network/protocol/game/ServerboundRenameItemPacket;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$renameItem(@Coerce Object packet, CallbackInfo callbackInfo) {
+        if (!aerogel$serverThread()) return;
         if (EventHooks.hasListeners(AnvilRenameEvent.class))
             post(new AnvilRenameEvent(player(), EventHooks.cast(packet)), callbackInfo);
     }
@@ -585,6 +616,11 @@ abstract class ServerGamePacketListenerMixin
     private boolean aerogel$isBlockTargeted() {
         HitResult hit = player.pick(player.blockInteractionRange(), 1.0F, false);
         return hit.getType() == HitResult.Type.BLOCK;
+    }
+
+    @Unique
+    private boolean aerogel$serverThread() {
+        return player.level().getServer().isSameThread();
     }
 
     private ServerPlayer player() {
