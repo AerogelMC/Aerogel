@@ -27,11 +27,11 @@
         {
           "name": "aerogel-api-26.2-1.jar",
           "url": "aerogel-api-26.2-1.jar",
-          "size": 130936,
-          "sha512": "72217e188dd2ebc917ecf1e9ff1086224141b69114730704872bbc0508ea9d7acaa2019747d5130d244ac43940f7ae914682400c602d4ae23e8e06d7a9eccb7b",
-          "sha256": "f68847fabb1f803faf910f8c7dc5f08f510af3518ddf18e07898fb51f4c5b0ac",
-          "sha1": "b799450733d5b900618b724013d0c5c1da7fe514",
-          "md5": "b8e9843c8f9ba064096e4dee896a7b27"
+          "size": 132365,
+          "sha512": "854063064407e3ca04a16536fab1c3014cd0b1124992050d822d6c506740209e2983cdb30a2dece7d06f05691c1f7f5f8dd9502ced8040ae9a8f5d71c5dc3be4",
+          "sha256": "791d3a36bd2629d48f4f53b5725fcfe3ee1aaa74093087e52e80e7dd6dcdf588",
+          "sha1": "76a23cecf141327c9deb3987df94c1745e1e86b7",
+          "md5": "f6123d9def85e4c16e5a85ee777bb114"
         }
       ]
     },
@@ -48,11 +48,11 @@
         {
           "name": "aerogel-api-26.2-1.jar",
           "url": "aerogel-api-26.2-1.jar",
-          "size": 130936,
-          "sha512": "72217e188dd2ebc917ecf1e9ff1086224141b69114730704872bbc0508ea9d7acaa2019747d5130d244ac43940f7ae914682400c602d4ae23e8e06d7a9eccb7b",
-          "sha256": "f68847fabb1f803faf910f8c7dc5f08f510af3518ddf18e07898fb51f4c5b0ac",
-          "sha1": "b799450733d5b900618b724013d0c5c1da7fe514",
-          "md5": "b8e9843c8f9ba064096e4dee896a7b27"
+          "size": 132365,
+          "sha512": "854063064407e3ca04a16536fab1c3014cd0b1124992050d822d6c506740209e2983cdb30a2dece7d06f05691c1f7f5f8dd9502ced8040ae9a8f5d71c5dc3be4",
+          "sha256": "791d3a36bd2629d48f4f53b5725fcfe3ee1aaa74093087e52e80e7dd6dcdf588",
+          "sha1": "76a23cecf141327c9deb3987df94c1745e1e86b7",
+          "md5": "f6123d9def85e4c16e5a85ee777bb114"
         }
       ]
     },
@@ -68,11 +68,11 @@
         {
           "name": "aerogel-api-26.2-1-sources.jar",
           "url": "aerogel-api-26.2-1-sources.jar",
-          "size": 83803,
-          "sha512": "fac51f7ddecafff0b28c35a358ab70288076a8c5c3cad125efff02a8db9785d0b60fb9beecfb1ddb3cbfe552d1d8323cdd8d3a6faca8ab1e06896f73e6a99b48",
-          "sha256": "86fcf7f6163990eb621d59dea0a81e1fab72389f0ca55411f732efe9a6f242de",
-          "sha1": "1bcb5477c2d6bae14a805374e4eace597333f756",
-          "md5": "cb605e4c9ca92cf4d0ed4f4eb2e5e728"
+          "size": 84415,
+          "sha512": "bc513435e57e45d5753ce836077f8c3c9fe8ce02e4443fe54af6d7022e4f4ba775f1fa5a6fe73c0fd74145a3d5ad37011509b324110a574e3342f45b828421cb",
+          "sha256": "2403c193fd2b882886d5996106678e7680c19fb3c3b6723289b1781573114a67",
+          "sha1": "d8cc897236c8bdca7ed0d11b8108f924e60a73c8",
+          "md5": "3ac3a9b6512e5f8ec6face2985112397"
         }
       ]
     }
