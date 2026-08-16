@@ -44,10 +44,12 @@ import dev.aerogel.loader.internal.RespawnGameListenerBridge;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ServerboundAttackPacket;
+import net.minecraft.network.protocol.game.ClientboundSetHeldSlotPacket;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerAbilitiesPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
@@ -61,6 +63,7 @@ import net.minecraft.server.players.PlayerList;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Abilities;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import org.spongepowered.asm.mixin.Mixin;
@@ -336,8 +339,18 @@ abstract class ServerGamePacketListenerMixin
         at = @At("HEAD"), cancellable = true)
     private void aerogel$hotbarSlot(@Coerce Object packet, CallbackInfo callbackInfo) {
         if (!aerogel$serverThread()) return;
-        if (EventHooks.hasListeners(PlayerHotbarSlotChangeEvent.class))
-            post(new PlayerHotbarSlotChangeEvent(player(), EventHooks.cast(packet)), callbackInfo);
+        if (!EventHooks.hasListeners(PlayerHotbarSlotChangeEvent.class)) return;
+        ServerboundSetCarriedItemPacket carriedItemPacket = EventHooks.cast(packet);
+        int previousSlot = player.getInventory().getSelectedSlot();
+        int newSlot = carriedItemPacket.getSlot();
+        if (!Inventory.isHotbarSlot(newSlot) || previousSlot == newSlot) return;
+        PlayerHotbarSlotChangeEvent event = new PlayerHotbarSlotChangeEvent(
+            player, carriedItemPacket, previousSlot, newSlot);
+        EventHooks.post(event);
+        if (event.isCancelled()) {
+            player.connection.send(new ClientboundSetHeldSlotPacket(previousSlot));
+            callbackInfo.cancel();
+        }
     }
 
     @Inject(method = "handleEditBook(Lnet/minecraft/network/protocol/game/ServerboundEditBookPacket;)V",

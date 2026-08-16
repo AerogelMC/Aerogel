@@ -6,7 +6,9 @@ import java.util.function.Predicate;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class Inventory {
+    public static boolean isHotbarSlot(int slot) { return false; }
     public boolean add(ItemStack stack) { return false; }
+    public int getSelectedSlot() { return 0; }
     public int clearOrCountMatchingItems(Predicate<ItemStack> filter, int maximum, Container container) {
         return 0;
     }

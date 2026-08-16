@@ -123,7 +123,18 @@ per-tick mining swing animations do not produce repeated `AIR` interactions. `Pl
 intentionally remains a low-level animation packet event and can also occur for actions such as
 dropping an item.
 
-`PlayerPacketEvent` subtypes run before their serverbound packet is handled. Cancelling one skips vanilla packet handling. The typed packet remains available through `event.packet()`, so a plugin can inspect every vanilla field without waiting for an Aerogel wrapper API. High-frequency events such as `PlayerMoveEvent` and `PlayerInputEvent` should use small, non-blocking listeners.
+`PlayerPacketEvent` subtypes run before their serverbound packet is handled. Cancelling one skips
+vanilla packet handling. The typed packet remains available through `event.packet()`, but common
+state transitions also expose stable high-level values: hotbar changes provide `previousSlot()` and
+`newSlot()`, movement provides previous and requested coordinates and rotation, and client-setting
+changes provide both `previousInformation()` and `newInformation()`. A cancelled hotbar change
+restores the client to the server's selected slot. High-frequency events such as `PlayerMoveEvent`
+and `PlayerInputEvent` should use small, non-blocking listeners.
+
+State-changing events describe both sides of the transition where that information is meaningful.
+For example, game-mode changes expose `previousGameMode()` and a mutable `gameMode()`, teleports
+expose the previous level, coordinates, and rotation, and experience changes expose the player's
+previous total, level, and progress alongside the mutable delta.
 
 `PlayerChatEvent` runs after signed-message validation and immediately before broadcast. Use
 `event.setMessage(Component)` to replace the displayed component while retaining the original

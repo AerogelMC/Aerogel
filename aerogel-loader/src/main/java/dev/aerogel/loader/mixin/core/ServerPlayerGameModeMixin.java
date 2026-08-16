@@ -43,7 +43,10 @@ import java.util.function.Supplier;
 abstract class ServerPlayerGameModeMixin {
     @Shadow @Final protected ServerPlayer player;
     @Shadow protected ServerLevel level;
+    @Shadow public abstract GameType getGameModeForPlayer();
+    @Shadow public abstract boolean changeGameModeForPlayer(GameType gameMode);
     @Unique private BlockState aerogel$breakingState;
+    @Unique private boolean aerogel$gameModeOverride;
 
     @Inject(
         method = "handleBlockBreakAction(Lnet/minecraft/core/BlockPos;"
@@ -303,12 +306,22 @@ abstract class ServerPlayerGameModeMixin {
         GameType gameMode,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (aerogel$gameModeOverride) return;
+        GameType previousGameMode = getGameModeForPlayer();
+        if (previousGameMode == gameMode) return;
         if (!EventHooks.hasListeners(PlayerGameModeChangeEvent.class)) return;
         PlayerGameModeChangeEvent event = new PlayerGameModeChangeEvent(
-            player, gameMode);
+            player, previousGameMode, gameMode);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
+        } else if (event.gameMode() != gameMode) {
+            aerogel$gameModeOverride = true;
+            try {
+                callbackInfo.setReturnValue(changeGameModeForPlayer(event.gameMode()));
+            } finally {
+                aerogel$gameModeOverride = false;
+            }
         }
     }
 }

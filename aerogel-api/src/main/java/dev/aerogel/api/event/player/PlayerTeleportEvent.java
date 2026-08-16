@@ -9,6 +9,12 @@ import java.util.Objects;
 /** Fired before the common server-side player teleport operation. */
 public final class PlayerTeleportEvent implements PlayerEvent, CancellableEvent {
     private final ServerPlayer player;
+    private final ServerLevel previousLevel;
+    private final double previousX;
+    private final double previousY;
+    private final double previousZ;
+    private final float previousYaw;
+    private final float previousPitch;
     private ServerLevel destinationLevel;
     private double x;
     private double y;
@@ -21,12 +27,24 @@ public final class PlayerTeleportEvent implements PlayerEvent, CancellableEvent 
         ServerPlayer player, ServerLevel destinationLevel,
         double x, double y, double z, float yaw, float pitch
     ) {
-        this.player = player;
+        this.player = Objects.requireNonNull(player, "player");
+        previousLevel = player.level();
+        previousX = player.getX();
+        previousY = player.getY();
+        previousZ = player.getZ();
+        previousYaw = player.getYRot();
+        previousPitch = player.getXRot();
         this.destinationLevel = Objects.requireNonNull(destinationLevel, "destinationLevel");
         setDestination(x, y, z, yaw, pitch);
     }
 
     @Override public ServerPlayer player() { return player; }
+    public ServerLevel previousLevel() { return previousLevel; }
+    public double previousX() { return previousX; }
+    public double previousY() { return previousY; }
+    public double previousZ() { return previousZ; }
+    public float previousYaw() { return previousYaw; }
+    public float previousPitch() { return previousPitch; }
     public ServerLevel destinationLevel() { return destinationLevel; }
     public double x() { return x; }
     public double y() { return y; }

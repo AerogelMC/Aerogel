@@ -1,3 +1,5 @@
 package net.minecraft.network.protocol.game;
 import net.minecraft.network.protocol.Packet;
-public final class ServerboundSetCarriedItemPacket implements Packet<Object> {}
+public final class ServerboundSetCarriedItemPacket implements Packet<Object> {
+    public int getSlot() { return 0; }
+}
