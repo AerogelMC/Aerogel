@@ -54,7 +54,7 @@ jobs:
           chmod +x gradlew
           ./gradlew check publishAerogelGradleRepository \
             -PaerogelMavenRepository="${{ steps.repository.outputs.path }}" \
-            --no-daemon --no-configuration-cache
+            --no-daemon --no-configuration-cache --no-parallel
 
       - name: Update public Maven branch
         shell: bash
