@@ -27,11 +27,11 @@
         {
           "name": "aerogel-gradle-plugin-26.2-1.jar",
           "url": "aerogel-gradle-plugin-26.2-1.jar",
-          "size": 80775,
-          "sha512": "0aea206272194589b208238a531087691e3ab2d34871ba6cc7c7bb90ba63434e7d234321965e1d3d8e710be0c22655e5f139e82e87577000f0786deebbad7f74",
-          "sha256": "6b78f59fc29d30f11db489aec25cdc132d449990095c5d2cea8e0a07fd71d907",
-          "sha1": "65c8f9417f4cba004b14e69e823b7e799c26ca9e",
-          "md5": "73d704a0389280328ef95e0c08f5bc7e"
+          "size": 81721,
+          "sha512": "9b3b2372ef87618b105855cbf2eddebec9c18d4cf75fe9cd53ad89cb9c5880d144d4153265fe7e3e97e9fa1eea0ee02cbe7ce7bdda037888c11bd2d24f26c43b",
+          "sha256": "3c2ff961a30f3a4562244c3aaf27bcadd67095f14c70ed4978638d825274f002",
+          "sha1": "0394aa0285e4f81896151a39584c09284c967a4a",
+          "md5": "fb68412a18169aaa56978cbb42da3ebd"
         }
       ]
     },
@@ -85,11 +85,11 @@
         {
           "name": "aerogel-gradle-plugin-26.2-1.jar",
           "url": "aerogel-gradle-plugin-26.2-1.jar",
-          "size": 80775,
-          "sha512": "0aea206272194589b208238a531087691e3ab2d34871ba6cc7c7bb90ba63434e7d234321965e1d3d8e710be0c22655e5f139e82e87577000f0786deebbad7f74",
-          "sha256": "6b78f59fc29d30f11db489aec25cdc132d449990095c5d2cea8e0a07fd71d907",
-          "sha1": "65c8f9417f4cba004b14e69e823b7e799c26ca9e",
-          "md5": "73d704a0389280328ef95e0c08f5bc7e"
+          "size": 81721,
+          "sha512": "9b3b2372ef87618b105855cbf2eddebec9c18d4cf75fe9cd53ad89cb9c5880d144d4153265fe7e3e97e9fa1eea0ee02cbe7ce7bdda037888c11bd2d24f26c43b",
+          "sha256": "3c2ff961a30f3a4562244c3aaf27bcadd67095f14c70ed4978638d825274f002",
+          "sha1": "0394aa0285e4f81896151a39584c09284c967a4a",
+          "md5": "fb68412a18169aaa56978cbb42da3ebd"
         }
       ]
     },
@@ -105,11 +105,11 @@
         {
           "name": "aerogel-gradle-plugin-26.2-1-sources.jar",
           "url": "aerogel-gradle-plugin-26.2-1-sources.jar",
-          "size": 29957,
-          "sha512": "d480daa77d61509b210392854c02c8607debe4bb25bea857c7fe982103e5f8630ceea77b24f422ab05b9963cd903db2687981a0c4f03a60e7b9d32b49132531f",
-          "sha256": "ae1661755a2f70b9ea17511291b76f0805a17dadd13e67140849f913950ca60f",
-          "sha1": "9cd3ef3ae2033964c4dbf56a235d89738af9bb95",
-          "md5": "39a80b749e0314faa5b73b0d340b1ff7"
+          "size": 30488,
+          "sha512": "ea2488a8a9eda1a764141321d2c59ce3f51c25620697c5e602a16cc0a297c8c44e5a7da5601428d73f15e822efc2d37a29781173e7e3c1668f800f346949c1f6",
+          "sha256": "eb434c494e386b26027734ce111a1936650e47224efea731c846d6d241fb8706",
+          "sha1": "6b01f9bc7e3aa7eec927d2580f57ed60bf090ba8",
+          "md5": "eb1f84517bd08fc094a74f9d461ac3b0"
         }
       ]
     }
