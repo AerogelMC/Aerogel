@@ -107,10 +107,6 @@ class AerogelGradlePluginTest {
             </project>
             """);
         Files.writeString(project.resolve("settings.gradle"), "rootProject.name = 'sample'\n");
-        Files.writeString(project.resolve("gradle.properties"), """
-            org.gradle.daemon=false
-            kotlin.compiler.execution.strategy=in-process
-            """);
         Files.writeString(project.resolve("build.gradle"), """
             plugins {
                 id 'dev.aerogel.plugin'
