@@ -1034,10 +1034,16 @@ Aerogel provides:
 /plugins reload
 /plugins reload <plugin-id>
 /tps
+/networkstats
+/networkstats reset
+/networkstats mode vanilla
+/networkstats mode aerogel
 /restart
 ```
 
 `/plugins` by itself is intentionally incomplete. `/plugins list` shows the display name and gray `<id>`; initialization-disabled plugins are marked as disabled.
+
+`/networkstats` reports inbound packet queue delay as average, p50, p95, p99, and maximum latency. It also separates packets handled by the idle pump from packets handled at the normal tick boundary. `mode vanilla` and `mode aerogel` switch between the two paths and reset the measurement window, allowing a controlled A/B comparison on the same running server. Resetting or changing the mode requires game-master permission.
 
 Reload behavior:
 

@@ -14,6 +14,13 @@ import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import net.minecraft.world.level.storage.ServerLevelData;
+import net.minecraft.world.level.saveddata.WeatherData;
+import net.minecraft.world.level.ExplosionDamageCalculator;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ExplosionParticleInfo;
+import net.minecraft.util.random.WeightedList;
+import net.minecraft.sounds.SoundEvent;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -71,4 +78,12 @@ public class ServerLevel extends Level {
     public void close() throws IOException { }
     public WorldBorder getWorldBorder() { return null; }
     public Holder<DimensionType> dimensionTypeRegistration() { return null; }
+    public WeatherData getWeatherData() { return null; }
+    public void explode(Entity source, DamageSource damageSource,
+                        ExplosionDamageCalculator calculator,
+                        double x, double y, double z, float radius, boolean fire,
+                        Level.ExplosionInteraction interaction,
+                        ParticleOptions smallParticle, ParticleOptions largeParticle,
+                        WeightedList<ExplosionParticleInfo> particles,
+                        Holder<SoundEvent> sound) { }
 }

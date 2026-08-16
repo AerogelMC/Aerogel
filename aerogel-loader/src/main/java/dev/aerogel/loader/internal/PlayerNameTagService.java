@@ -153,13 +153,12 @@ public final class PlayerNameTagService {
     }
 
     private static List<ServerPlayer> trackingPlayers(ServerPlayer target) {
-        Object entityMap = dev.aerogel.loader.event.EventHooks.field(
-            target.level().getChunkSource().chunkMap, "entityMap");
-        Object tracked = dev.aerogel.loader.event.EventHooks.intMapGet(entityMap, target.getId());
+        Object tracked = ((ChunkMapTrackingBridge) target.level().getChunkSource().chunkMap)
+            .aerogel$trackedEntity(target.getId());
         if (tracked == null) return List.of();
-        Set<?> seenBy = (Set<?>) dev.aerogel.loader.event.EventHooks.field(tracked, "seenBy");
+        TrackedEntityBridge tracking = (TrackedEntityBridge) tracked;
         return target.level().getServer().getPlayerList().getPlayers().stream()
-            .filter(viewer -> viewer != target && seenBy.contains(viewer.connection))
+            .filter(viewer -> viewer != target && tracking.aerogel$isSeenBy(viewer.connection))
             .toList();
     }
 

@@ -8,6 +8,7 @@ import dev.aerogel.api.event.EventRegistration;
 import dev.aerogel.loader.plugin.PluginFailures;
 
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodType;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Objects;
@@ -34,30 +35,41 @@ public final class EventRegistry {
 
     public <E extends AerogelEvent> E post(E event) {
         Objects.requireNonNull(event, "event");
-        for (Binding binding : dispatchCache.computeIfAbsent(event.getClass(), this::resolveBindings)) {
+        Class<?> eventClass = event.getClass();
+        Binding[] bindings = dispatchCache.computeIfAbsent(eventClass, this::resolveBindings);
+        CancellableEvent cancellable = event instanceof CancellableEvent value ? value : null;
+        for (Binding binding : bindings) {
             if (!binding.registration().active()) {
                 continue;
             }
-            boolean cancellable = event instanceof CancellableEvent;
-            boolean cancelledBefore = cancellable && ((CancellableEvent) event).isCancelled();
+            boolean cancelledBefore = cancellable != null && cancellable.isCancelled();
             if (cancelledBefore && !binding.receiveCancelled() && binding.priority() != EventPriority.MONITOR) {
                 continue;
             }
             try {
                 binding.invoker().invoke(event);
-                if (cancellable && binding.priority() == EventPriority.MONITOR
-                    && ((CancellableEvent) event).isCancelled() != cancelledBefore) {
-                    ((CancellableEvent) event).setCancelled(cancelledBefore);
+                if (cancellable != null && binding.priority() == EventPriority.MONITOR
+                    && cancellable.isCancelled() != cancelledBefore) {
+                    cancellable.setCancelled(cancelledBefore);
                     throw new IllegalStateException("MONITOR listeners cannot change cancellation state");
                 }
             } catch (Throwable throwable) {
                 PluginFailures.rethrowFatal(throwable);
                 binding.logger().log(Level.SEVERE,
-                    "Plugin " + binding.pluginId() + " listener failed for " + event.getClass().getName(),
+                    "Plugin " + binding.pluginId() + " listener failed for " + eventClass.getName(),
                     throwable);
             }
         }
         return event;
+    }
+
+    /**
+     * Returns whether posting {@code eventType} can reach at least one active listener.
+     * Hot vanilla hooks use this before collecting old state or allocating an event.
+     */
+    public boolean hasListeners(Class<? extends AerogelEvent> eventType) {
+        Objects.requireNonNull(eventType, "eventType");
+        return dispatchCache.computeIfAbsent(eventType, this::resolveBindings).length != 0;
     }
 
     private EventRegistration add(
@@ -126,7 +138,10 @@ public final class EventRegistry {
             MethodHandle handle
         ) {
             Objects.requireNonNull(handle, "handle");
-            return register(eventType, priority, receiveCancelled, handle::invoke);
+            MethodHandle exact = handle.asType(MethodType.methodType(void.class, AerogelEvent.class));
+            return register(eventType, priority, receiveCancelled, event -> {
+                exact.invokeExact(event);
+            });
         }
 
         private EventRegistration register(

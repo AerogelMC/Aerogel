@@ -11,6 +11,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.Connection;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
+import net.minecraft.server.players.NameAndId;
+import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -24,12 +26,12 @@ abstract class PlayerListMixin {
     @Inject(method = "canPlayerLogin", at = @At("RETURN"), cancellable = true)
     private void aerogel$loginCheck(
         java.net.SocketAddress address,
-        @Coerce Object nameAndId,
+        NameAndId nameAndId,
         CallbackInfoReturnable<Component> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(PlayerLoginEvent.class)) return;
         PlayerLoginEvent event = new PlayerLoginEvent(
-            (java.util.UUID) EventHooks.call(nameAndId, "id"),
-            (String) EventHooks.call(nameAndId, "name"),
+            nameAndId.id(), nameAndId.name(),
             address,
             callbackInfo.getReturnValue());
         EventHooks.post(event);
@@ -63,14 +65,14 @@ abstract class PlayerListMixin {
         at = @At("RETURN")
     )
     private void aerogel$playerJoined(
-        @Coerce Object connection,
-        @Coerce Object player,
+        Connection connection,
+        ServerPlayer player,
         @Coerce Object cookie,
         CallbackInfo callbackInfo
     ) {
-        if (!RestartCoordinator.isReturningPlayer(player)) {
-            EventHooks.post(new PlayerJoinEvent(
-                EventHooks.cast(player), EventHooks.cast(connection)));
+        if (!RestartCoordinator.isReturningPlayer(player)
+            && EventHooks.hasListeners(PlayerJoinEvent.class)) {
+            EventHooks.post(new PlayerJoinEvent(player, connection));
         }
         RestartCoordinator.playerJoined(player);
     }
@@ -79,10 +81,10 @@ abstract class PlayerListMixin {
         method = "remove(Lnet/minecraft/server/level/ServerPlayer;)V",
         at = @At("HEAD")
     )
-    private void aerogel$playerQuit(@Coerce Object player, CallbackInfo callbackInfo) {
-        PlayerNameTagService.playerRemoved(EventHooks.cast(player));
-        if (!RestartCoordinator.requested()) {
-            EventHooks.post(new PlayerQuitEvent(EventHooks.cast(player)));
+    private void aerogel$playerQuit(ServerPlayer player, CallbackInfo callbackInfo) {
+        PlayerNameTagService.playerRemoved(player);
+        if (!RestartCoordinator.requested() && EventHooks.hasListeners(PlayerQuitEvent.class)) {
+            EventHooks.post(new PlayerQuitEvent(player));
         }
     }
 
@@ -93,12 +95,14 @@ abstract class PlayerListMixin {
         at = @At("RETURN")
     )
     private void aerogel$playerRespawned(
-        @Coerce Object previousPlayer,
+        ServerPlayer previousPlayer,
         boolean keepEverything,
-        @Coerce Object removalReason,
-        org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Object> callbackInfo
+        Entity.RemovalReason removalReason,
+        org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<ServerPlayer> callbackInfo
     ) {
-        EventHooks.post(new PlayerRespawnEvent(
-            EventHooks.cast(previousPlayer), EventHooks.cast(callbackInfo.getReturnValue()), keepEverything));
+        if (EventHooks.hasListeners(PlayerRespawnEvent.class)) {
+            EventHooks.post(new PlayerRespawnEvent(
+                previousPlayer, callbackInfo.getReturnValue(), keepEverything));
+        }
     }
 }

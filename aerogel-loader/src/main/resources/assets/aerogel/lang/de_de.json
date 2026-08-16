@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "Plugin %s konnte nach %s Sekunden nicht neu geladen werden",
   "commands.aerogel.plugins.unknown": "Unbekanntes Plugin: %s",
   "commands.aerogel.plugins.mixin_notice": "Einige Mixin-Änderungen für %s werden möglicherweise erst nach einem Serverneustart angewendet",
-  "commands.aerogel.tps": "TPS (1 Min., 5 Min., 15 Min.): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1 Min., 5 Min., 15 Min.): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "Es wurden noch keine Messwerte der eingehenden Paketwarteschlange erfasst.",
+  "commands.aerogel.networkstats.summary": "Paketwarteschlangen-Latenz (%s Pakete in %s Sekunden): Mittel %s ms | p50 %s ms | p95 %s ms | p99 %s ms | Max. %s ms",
+  "commands.aerogel.networkstats.paths": "Leerlauf-Pumpe: %s%% (%s) | Tick-Grenze: %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "Die Statistik der eingehenden Paketwarteschlange wurde zurückgesetzt.",
+  "commands.aerogel.networkstats.mode.aerogel": "Paketverarbeitung: Aerogel-Leerlauf-Pumpe.",
+  "commands.aerogel.networkstats.mode.vanilla": "Paketverarbeitung: Vanilla-Tick-Grenze.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "Die Paketverarbeitung wurde auf die Aerogel-Leerlauf-Pumpe umgestellt und die Statistik zurückgesetzt.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "Die Paketverarbeitung wurde auf die Vanilla-Tick-Grenze umgestellt und die Statistik zurückgesetzt."
 }

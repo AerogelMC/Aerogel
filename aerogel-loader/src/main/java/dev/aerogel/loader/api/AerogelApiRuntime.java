@@ -7,7 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class AerogelApiRuntime implements AutoCloseable {
     private final Set<PluginApiScope> scopes = ConcurrentHashMap.newKeySet();
-    private volatile Object server;
+    private volatile net.minecraft.server.MinecraftServer server;
 
     public PluginApiScope openScope(String pluginId, java.util.logging.Logger logger) {
         return openScope(
@@ -46,17 +46,17 @@ public final class AerogelApiRuntime implements AutoCloseable {
         if (server != null && server != minecraftServer) {
             throw new IllegalStateException("A different Minecraft server is already attached");
         }
-        server = minecraftServer;
+        server = (net.minecraft.server.MinecraftServer) minecraftServer;
         for (PluginApiScope scope : scopes) scope.serverReady();
     }
 
     public void tick(Object minecraftServer) {
         if (server == null) attach(minecraftServer);
-        long tick = ((Number) Reflect.invoke(minecraftServer, "getTickCount")).longValue();
+        long tick = ((net.minecraft.server.MinecraftServer) minecraftServer).getTickCount();
         for (PluginApiScope scope : scopes) scope.tick(tick);
     }
 
-    Object server() { return server; }
+    net.minecraft.server.MinecraftServer server() { return server; }
     boolean ready() { return server != null; }
     void remove(PluginApiScope scope) { scopes.remove(scope); }
 

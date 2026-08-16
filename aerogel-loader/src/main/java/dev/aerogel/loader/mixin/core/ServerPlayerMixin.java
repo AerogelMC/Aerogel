@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import com.mojang.authlib.GameProfile;
+import com.mojang.datafixers.util.Either;
 import dev.aerogel.api.event.inventory.InventoryCloseEvent;
 import dev.aerogel.api.event.inventory.InventoryOpenEvent;
 import dev.aerogel.api.event.item.PlayerDropItemEvent;
@@ -15,6 +16,8 @@ import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
 import dev.aerogel.loader.internal.PlayerNameTagService;
 import dev.aerogel.loader.internal.DeathDropCapture;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -27,11 +30,33 @@ import java.util.Objects;
 import java.util.function.Predicate;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundClearTitlesPacket;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
+import net.minecraft.network.protocol.game.ClientboundTabListPacket;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.Unit;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Relative;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.damagesource.DamageSource;
+import java.util.Set;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
 abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
+    @Shadow public ServerGamePacketListenerImpl connection;
+    @Shadow @Final private MinecraftServer server;
     @Unique
     private Component aerogel$displayName;
 
@@ -175,9 +200,7 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     private void aerogel$sendTabListHeaderFooter() {
         Component header = aerogel$tabListHeader == null ? Component.empty() : aerogel$tabListHeader;
         Component footer = aerogel$tabListFooter == null ? Component.empty() : aerogel$tabListFooter;
-        Object packet = EventHooks.construct(this,
-            "net.minecraft.network.protocol.game.ClientboundTabListPacket", header, footer);
-        EventHooks.call(EventHooks.field(this, "connection"), "send", packet);
+        connection.send(new ClientboundTabListPacket(header, footer));
     }
 
     @Unique
@@ -187,17 +210,13 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Unique
     private void aerogel$broadcastPlayerInfo(String actionName) {
-        Object server = EventHooks.field(this, "server");
         if (server == null) return;
-        Object action = EventHooks.staticField(this,
-            "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Action",
-            actionName);
-        Object packet = EventHooks.construct(this,
-            "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket", action, this);
-        Object players = EventHooks.call(EventHooks.call(server, "getPlayerList"), "getPlayers");
-        if (!(players instanceof Iterable<?> iterable)) return;
-        for (Object viewer : iterable) {
-            EventHooks.call(EventHooks.field(viewer, "connection"), "send", packet);
+        ClientboundPlayerInfoUpdatePacket.Action action =
+            ClientboundPlayerInfoUpdatePacket.Action.valueOf(actionName);
+        ClientboundPlayerInfoUpdatePacket packet = new ClientboundPlayerInfoUpdatePacket(
+            action, self());
+        for (ServerPlayer viewer : server.getPlayerList().getPlayers()) {
+            viewer.connection.send(packet);
         }
     }
 
@@ -221,16 +240,12 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         if (fadeInTicks < 0 || stayTicks < 0 || fadeOutTicks < 0) {
             throw new IllegalArgumentException("title times must not be negative");
         }
-        Object listener = EventHooks.field(this, "connection");
-        EventHooks.call(listener, "send", EventHooks.construct(this,
-            "net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket",
+        connection.send(new ClientboundSetTitlesAnimationPacket(
             fadeInTicks, stayTicks, fadeOutTicks));
         if (subtitle != null) {
-            EventHooks.call(listener, "send", EventHooks.construct(this,
-                "net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket", subtitle));
+            connection.send(new ClientboundSetSubtitleTextPacket(subtitle));
         }
-        EventHooks.call(listener, "send", EventHooks.construct(this,
-            "net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket", title));
+        connection.send(new ClientboundSetTitleTextPacket(title));
     }
 
     @Unique
@@ -240,27 +255,23 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Unique
     public void clearTitle(boolean resetTimes) {
-        Object packet = EventHooks.construct(this,
-            "net.minecraft.network.protocol.game.ClientboundClearTitlesPacket", resetTimes);
-        EventHooks.call(EventHooks.field(this, "connection"), "send", packet);
+        connection.send(new ClientboundClearTitlesPacket(resetTimes));
     }
 
     @Unique
     public void kick(Component reason) {
-        EventHooks.call(EventHooks.field(this, "connection"), "disconnect",
-            Objects.requireNonNull(reason, "reason"));
+        connection.disconnect(Objects.requireNonNull(reason, "reason"));
     }
 
     @Unique
+    @SuppressWarnings({"rawtypes", "unchecked"})
     public void sendPacket(Packet<?> packet) {
-        EventHooks.call(EventHooks.field(this, "connection"), "send",
-            Objects.requireNonNull(packet, "packet"));
+        connection.send((Packet) Objects.requireNonNull(packet, "packet"));
     }
 
     @Unique
     public boolean giveItem(ItemStack stack) {
-        return (boolean) EventHooks.call(EventHooks.call(this, "getInventory"), "add",
-            Objects.requireNonNull(stack, "stack"));
+        return self().getInventory().add(Objects.requireNonNull(stack, "stack"));
     }
 
     @Unique
@@ -268,26 +279,26 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
         Objects.requireNonNull(filter, "filter");
         if (maximum < 0) throw new IllegalArgumentException("maximum must not be negative");
         if (maximum == 0) return 0;
-        return (int) EventHooks.call(EventHooks.call(this, "getInventory"),
-            "clearOrCountMatchingItems", filter, maximum, null);
+        return self().getInventory().clearOrCountMatchingItems(filter, maximum, null);
     }
 
     @Unique
     public void clearInventory() {
-        EventHooks.call(EventHooks.call(this, "getInventory"), "clearContent");
+        self().getInventory().clearContent();
     }
 
     @Inject(method = "startSleepInBed(Lnet/minecraft/core/BlockPos;)Lcom/mojang/datafixers/util/Either;",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$bedEnter(
-        @Coerce Object position, CallbackInfoReturnable<Object> callbackInfo
+        BlockPos position,
+        CallbackInfoReturnable<Either<Player.BedSleepingProblem, Unit>> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(PlayerBedEnterEvent.class)) return;
         PlayerBedEnterEvent event = new PlayerBedEnterEvent(
-            EventHooks.cast(this), EventHooks.cast(position));
+            self(), position);
         EventHooks.post(event);
         if (event.isCancelled()) {
-            callbackInfo.setReturnValue(EventHooks.eitherLeft(
-                this, "net.minecraft.world.entity.player.Player$BedSleepingProblem", "OTHER_PROBLEM"));
+            callbackInfo.setReturnValue(Either.left(Player.BedSleepingProblem.OTHER_PROBLEM));
         }
     }
 
@@ -295,24 +306,26 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     private void aerogel$bedLeave(
         boolean resetSleepTimer, boolean updateSleepingPlayers, CallbackInfo callbackInfo
     ) {
+        if (!EventHooks.hasListeners(PlayerBedLeaveEvent.class)) return;
         PlayerBedLeaveEvent event = new PlayerBedLeaveEvent(
-            EventHooks.cast(this), resetSleepTimer, updateSleepingPlayers);
+            self(), resetSleepTimer, updateSleepingPlayers);
         EventHooks.post(event);
         if (event.isCancelled()) callbackInfo.cancel();
     }
 
     @Inject(method = "giveExperiencePoints(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$experiencePoints(int amount, CallbackInfo callbackInfo) {
-        if (aerogel$experienceOverride) return;
+        if (aerogel$experienceOverride
+            || !EventHooks.hasListeners(PlayerExperienceChangeEvent.class)) return;
         PlayerExperienceChangeEvent event = new PlayerExperienceChangeEvent(
-            EventHooks.cast(this), amount, PlayerExperienceChangeEvent.Unit.POINTS);
+            self(), amount, PlayerExperienceChangeEvent.Unit.POINTS);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.amount() != amount) {
             aerogel$experienceOverride = true;
             try {
-                EventHooks.call(this, "giveExperiencePoints", event.amount());
+                self().giveExperiencePoints(event.amount());
             } finally {
                 aerogel$experienceOverride = false;
             }
@@ -322,16 +335,17 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Inject(method = "giveExperienceLevels(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$experienceLevels(int amount, CallbackInfo callbackInfo) {
-        if (aerogel$experienceOverride) return;
+        if (aerogel$experienceOverride
+            || !EventHooks.hasListeners(PlayerExperienceChangeEvent.class)) return;
         PlayerExperienceChangeEvent event = new PlayerExperienceChangeEvent(
-            EventHooks.cast(this), amount, PlayerExperienceChangeEvent.Unit.LEVELS);
+            self(), amount, PlayerExperienceChangeEvent.Unit.LEVELS);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.amount() != amount) {
             aerogel$experienceOverride = true;
             try {
-                EventHooks.call(this, "giveExperienceLevels", event.amount());
+                self().giveExperienceLevels(event.amount());
             } finally {
                 aerogel$experienceOverride = false;
             }
@@ -341,12 +355,12 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Inject(method = "completeUsingItem()V", at = @At("HEAD"), cancellable = true)
     private void aerogel$itemConsume(CallbackInfo callbackInfo) {
+        if (!EventHooks.hasListeners(PlayerItemConsumeEvent.class)) return;
         PlayerItemConsumeEvent event = new PlayerItemConsumeEvent(
-            EventHooks.cast(this), EventHooks.cast(EventHooks.call(this, "getUsedItemHand")),
-            EventHooks.cast(EventHooks.call(this, "getUseItem")));
+            self(), self().getUsedItemHand(), self().getUseItem());
         EventHooks.post(event);
         if (event.isCancelled()) {
-            EventHooks.call(this, "stopUsingItem");
+            self().stopUsingItem();
             callbackInfo.cancel();
         }
     }
@@ -354,10 +368,11 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     @Inject(method = "openMenu(Lnet/minecraft/world/MenuProvider;)Ljava/util/OptionalInt;",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$openInventory(
-        @Coerce Object provider, CallbackInfoReturnable<OptionalInt> callbackInfo
+        MenuProvider provider, CallbackInfoReturnable<OptionalInt> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(InventoryOpenEvent.class)) return;
         InventoryOpenEvent event = new InventoryOpenEvent(
-            EventHooks.cast(this), EventHooks.cast(provider));
+            self(), provider);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(OptionalInt.empty());
@@ -366,18 +381,21 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
 
     @Inject(method = "closeContainer()V", at = @At("HEAD"))
     private void aerogel$closeInventory(CallbackInfo callbackInfo) {
-        EventHooks.post(new InventoryCloseEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(InventoryCloseEvent.class)) {
+            EventHooks.post(new InventoryCloseEvent(self()));
+        }
     }
 
     @Inject(method = "drop(Lnet/minecraft/world/item/ItemStack;ZZ)"
         + "Lnet/minecraft/world/entity/item/ItemEntity;", at = @At("HEAD"), cancellable = true)
     private void aerogel$dropItem(
-        @Coerce Object itemStack, boolean randomThrow, boolean retainOwnership,
-        CallbackInfoReturnable<Object> callbackInfo
+        ItemStack itemStack, boolean randomThrow, boolean retainOwnership,
+        CallbackInfoReturnable<ItemEntity> callbackInfo
     ) {
-        if (DeathDropCapture.isHandling((ServerPlayer) (Object) this) || aerogel$dropOverride) return;
+        if (DeathDropCapture.isHandling((ServerPlayer) (Object) this) || aerogel$dropOverride
+            || !EventHooks.hasListeners(PlayerDropItemEvent.class)) return;
         PlayerDropItemEvent event = new PlayerDropItemEvent(
-            EventHooks.cast(this), EventHooks.cast(itemStack), randomThrow, retainOwnership);
+            self(), itemStack, randomThrow, retainOwnership);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(null);
@@ -386,7 +404,7 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
             || event.retainOwnership() != retainOwnership) {
             aerogel$dropOverride = true;
             try {
-                callbackInfo.setReturnValue(EventHooks.call(this, "drop", event.itemStack(),
+                callbackInfo.setReturnValue(self().drop(event.itemStack(),
                     event.randomThrow(), event.retainOwnership()));
             } finally {
                 aerogel$dropOverride = false;
@@ -395,20 +413,22 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     }
 
     @Inject(method = "die(Lnet/minecraft/world/damagesource/DamageSource;)V", at = @At("HEAD"))
-    private void aerogel$playerDeath(@Coerce Object source, CallbackInfo callbackInfo) {
-        EventHooks.post(new PlayerDeathEvent(EventHooks.cast(this), EventHooks.cast(source)));
+    private void aerogel$playerDeath(DamageSource source, CallbackInfo callbackInfo) {
+        if (EventHooks.hasListeners(PlayerDeathEvent.class)) {
+            EventHooks.post(new PlayerDeathEvent(self(), source));
+        }
     }
 
     @Inject(method = "teleportTo(Lnet/minecraft/server/level/ServerLevel;DDD"
         + "Ljava/util/Set;FFZ)Z", at = @At("HEAD"), cancellable = true)
     private void aerogel$teleport(
-        @Coerce Object level, double x, double y, double z, @Coerce Object relative,
+        ServerLevel level, double x, double y, double z, Set<Relative> relative,
         float yaw, float pitch, boolean dismount,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$teleportOverride) return;
+        if (aerogel$teleportOverride || !EventHooks.hasListeners(PlayerTeleportEvent.class)) return;
         PlayerTeleportEvent event = new PlayerTeleportEvent(
-            EventHooks.cast(this), EventHooks.cast(level), x, y, z, yaw, pitch);
+            self(), level, x, y, z, yaw, pitch);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
@@ -420,12 +440,17 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
             || Float.compare(event.pitch(), pitch) != 0) {
             aerogel$teleportOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(this, "teleportTo",
+                callbackInfo.setReturnValue(self().teleportTo(
                     event.destinationLevel(), event.x(), event.y(), event.z(), relative,
                     event.yaw(), event.pitch(), dismount));
             } finally {
                 aerogel$teleportOverride = false;
             }
         }
+    }
+
+    @Unique
+    private ServerPlayer self() {
+        return (ServerPlayer) (Object) this;
     }
 }

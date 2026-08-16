@@ -18,7 +18,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 abstract class DedicatedServerMixin {
     @Inject(method = "initServer", at = @At("HEAD"))
     private void aerogel$starting(CallbackInfoReturnable<Boolean> callbackInfo) {
-        EventHooks.post(new ServerStartingEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(ServerStartingEvent.class)) {
+            EventHooks.post(new ServerStartingEvent(EventHooks.cast(this)));
+        }
     }
 
     @Inject(method = "initServer", at = @At("RETURN"))
@@ -27,7 +29,9 @@ abstract class DedicatedServerMixin {
             AerogelRuntime.attachServer(this);
             PluginsCommand.register(this);
             RestartCommand.register(this);
-            EventHooks.post(new ServerStartedEvent(EventHooks.cast(this)));
+            if (EventHooks.hasListeners(ServerStartedEvent.class)) {
+                EventHooks.post(new ServerStartedEvent(EventHooks.cast(this)));
+            }
             RestartCoordinator.serverReady();
         }
     }
@@ -35,12 +39,16 @@ abstract class DedicatedServerMixin {
     @Inject(method = "stopServer", at = @At("HEAD"))
     private void aerogel$stopping(org.spongepowered.asm.mixin.injection.callback.CallbackInfo callbackInfo) {
         RestartCoordinator.serverStopping();
-        EventHooks.post(new ServerStoppingEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(ServerStoppingEvent.class)) {
+            EventHooks.post(new ServerStoppingEvent(EventHooks.cast(this)));
+        }
     }
 
     @Inject(method = "stopServer", at = @At("RETURN"))
     private void aerogel$stopped(org.spongepowered.asm.mixin.injection.callback.CallbackInfo callbackInfo) {
-        EventHooks.post(new ServerStoppedEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(ServerStoppedEvent.class)) {
+            EventHooks.post(new ServerStoppedEvent(EventHooks.cast(this)));
+        }
         AerogelRuntime.pluginManager().shutdown();
         RestartCoordinator.serverStopped();
     }

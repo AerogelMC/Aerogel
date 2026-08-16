@@ -8,9 +8,8 @@ import org.jline.reader.UserInterruptException;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.file.Path;
+import net.minecraft.server.dedicated.DedicatedServer;
 
 public final class InteractiveConsole {
     private static volatile Terminal activeTerminal;
@@ -21,20 +20,10 @@ public final class InteractiveConsole {
     }
 
     /** Returns false when input is redirected or JLine cannot own the terminal, allowing vanilla input fallback. */
-    public static boolean run(Object consoleThread) {
+    public static boolean run(DedicatedServer server) {
         if (System.console() == null) {
             return false;
         }
-        final Object server;
-        try {
-            Field owner = consoleThread.getClass().getDeclaredField("this$0");
-            owner.setAccessible(true);
-            server = owner.get(consoleThread);
-        } catch (ReflectiveOperationException exception) {
-            System.err.println("[Aerogel] Cannot attach interactive console: " + exception.getMessage());
-            return false;
-        }
-
         try (Terminal terminal = TerminalBuilder.builder().system(true).nativeSignals(true).build()) {
             closingForRestart = false;
             activeTerminal = terminal;
@@ -50,14 +39,11 @@ public final class InteractiveConsole {
                 .build();
             reader.setVariable(LineReader.HISTORY_FILE,
                 Path.of(System.getProperty("user.dir")).resolve(".aerogel").resolve("console-history"));
-            Method sourceFactory = server.getClass().getMethod("createCommandSourceStack");
-            Method submit = findSubmitMethod(server.getClass());
-            while (!(boolean) server.getClass().getMethod("isStopped").invoke(server)
-                && (boolean) server.getClass().getMethod("isRunning").invoke(server)) {
+            while (!server.isStopped() && server.isRunning()) {
                 try {
                     String line = reader.readLine("> ");
                     if (!line.isBlank()) {
-                        submit.invoke(server, line, sourceFactory.invoke(server));
+                        server.handleConsoleInput(line, server.createCommandSourceStack());
                     }
                 } catch (UserInterruptException ignored) {
                     // Ctrl-C clears the current line without stopping the server.
@@ -71,7 +57,7 @@ public final class InteractiveConsole {
                 }
             }
             return true;
-        } catch (ReflectiveOperationException | java.io.IOException exception) {
+        } catch (java.io.IOException exception) {
             if (closingForRestart) {
                 return true;
             }
@@ -105,13 +91,4 @@ public final class InteractiveConsole {
         }
     }
 
-    private static Method findSubmitMethod(Class<?> serverType) throws NoSuchMethodException {
-        for (Method method : serverType.getMethods()) {
-            if (method.getName().equals("handleConsoleInput") && method.getParameterCount() == 2
-                && method.getParameterTypes()[0] == String.class) {
-                return method;
-            }
-        }
-        throw new NoSuchMethodException(serverType.getName() + ".handleConsoleInput");
-    }
 }

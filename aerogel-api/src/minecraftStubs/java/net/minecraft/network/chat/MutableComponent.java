@@ -5,6 +5,7 @@ public final class MutableComponent implements Component {
     public MutableComponent append(Component component) { return this; }
     public MutableComponent append(String text) { return this; }
     public MutableComponent withStyle(Style style) { return this; }
+    public MutableComponent withStyle(net.minecraft.ChatFormatting formatting) { return this; }
 
     @Override public String getString() { return ""; }
     @Override public <T> java.util.Optional<T> visit(

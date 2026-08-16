@@ -18,11 +18,15 @@ abstract class MinecraftServerTickMixin {
     private void aerogel$sampleTps(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
         TpsMonitor.tick(System.nanoTime());
         AerogelRuntime.tick(this);
-        EventHooks.post(new ServerTickStartEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(ServerTickStartEvent.class)) {
+            EventHooks.post(new ServerTickStartEvent(EventHooks.cast(this)));
+        }
     }
 
     @Inject(method = "tickServer", at = @At("RETURN"))
     private void aerogel$finishTick(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
-        EventHooks.post(new ServerTickEndEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(ServerTickEndEvent.class)) {
+            EventHooks.post(new ServerTickEndEvent(EventHooks.cast(this)));
+        }
     }
 }

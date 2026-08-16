@@ -2,6 +2,8 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.api.event.entity.EntityTargetEvent;
 import dev.aerogel.loader.event.EventHooks;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.Mob;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -15,19 +17,20 @@ abstract class MobMixin {
 
     @Inject(method = "setTarget(Lnet/minecraft/world/entity/LivingEntity;)V",
         at = @At("HEAD"), cancellable = true)
-    private void aerogel$target(@Coerce Object target, CallbackInfo callbackInfo) {
-        if (aerogel$targetOverride) return;
-        Object previous = EventHooks.call(this, "getTarget");
+    private void aerogel$target(LivingEntity target, CallbackInfo callbackInfo) {
+        if (aerogel$targetOverride || !EventHooks.hasListeners(EntityTargetEvent.class)) return;
+        Mob self = (Mob) (Object) this;
+        LivingEntity previous = self.getTarget();
         if (previous == target) return;
         EntityTargetEvent event = new EntityTargetEvent(
-            EventHooks.cast(this), EventHooks.cast(previous), EventHooks.cast(target));
+            self, previous, target);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.target() != target) {
             aerogel$targetOverride = true;
             try {
-                EventHooks.call(this, "setTarget", event.target());
+                self.setTarget(event.target());
             } finally {
                 aerogel$targetOverride = false;
             }

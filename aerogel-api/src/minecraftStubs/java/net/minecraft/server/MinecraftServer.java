@@ -14,6 +14,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.WorldGenSettings;
 import net.minecraft.world.level.storage.WorldData;
+import net.minecraft.commands.Commands;
 
 public abstract class MinecraftServer {
     public Collection<ServerPlayer> onlinePlayers() { return null; }
@@ -33,6 +34,13 @@ public abstract class MinecraftServer {
     public WorldGenSettings getWorldGenSettings() { return null; }
     public WorldData getWorldData() { return null; }
     public long getAverageTickTimeNanos() { return 0L; }
+    public Commands getCommands() { return null; }
+    public net.minecraft.commands.CommandSourceStack createCommandSourceStack() { return null; }
+    public boolean isStopped() { return false; }
+    public boolean isRunning() { return false; }
+    public int getTickCount() { return 0; }
+    public ServerScoreboard getScoreboard() { return null; }
+    public void halt(boolean waitForShutdown) { }
 
     public boolean acceptsTransfers() {
         return false;

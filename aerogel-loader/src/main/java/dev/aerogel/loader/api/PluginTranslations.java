@@ -88,13 +88,8 @@ final class PluginTranslations implements TranslationService {
     }
 
     private static String playerLanguage(ServerPlayer player) {
-        try {
-            Object information = player.getClass().getMethod("clientInformation").invoke(player);
-            Object language = information.getClass().getMethod("language").invoke(information);
-            return language instanceof String value ? value : "en_us";
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
-            return "en_us";
-        }
+        String language = player.clientInformation().language();
+        return language == null ? "en_us" : language;
     }
 
     private static String normalize(String language) {

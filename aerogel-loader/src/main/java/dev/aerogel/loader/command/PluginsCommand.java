@@ -1,365 +1,311 @@
 package dev.aerogel.loader.command;
 
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestion;
+import com.mojang.brigadier.suggestion.Suggestions;
+import dev.aerogel.loader.network.PacketQueueMetrics;
 import dev.aerogel.loader.plugin.PluginManager;
 import dev.aerogel.loader.runtime.AerogelRuntime;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 
-/** Reflection boundary that keeps Minecraft and Brigadier classes out of Aerogel's distributable API. */
+/** Built-in Aerogel commands, registered directly against vanilla Brigadier. */
 public final class PluginsCommand {
     private static final String ROOT = "commands.aerogel.plugins.";
-    private static volatile Object server;
+    private static volatile MinecraftServer server;
 
-    private PluginsCommand() {
-    }
+    private PluginsCommand() { }
 
     public static void register(Object minecraftServer) {
-        try {
-            ClassLoader loader = minecraftServer.getClass().getClassLoader();
-            Class<?> commandsType = Class.forName("net.minecraft.commands.Commands", true, loader);
-            Class<?> commandType = Class.forName("com.mojang.brigadier.Command", true, loader);
-            Class<?> argumentBuilderType = Class.forName("com.mojang.brigadier.builder.ArgumentBuilder", true, loader);
-            Class<?> literalBuilderType = Class.forName(
-                "com.mojang.brigadier.builder.LiteralArgumentBuilder", true, loader);
-            Class<?> requiredBuilderType = Class.forName(
-                "com.mojang.brigadier.builder.RequiredArgumentBuilder", true, loader);
-            Class<?> argumentType = Class.forName("com.mojang.brigadier.arguments.ArgumentType", true, loader);
-            Class<?> stringArgumentType = Class.forName(
-                "com.mojang.brigadier.arguments.StringArgumentType", true, loader);
-            Class<?> suggestionProviderType = Class.forName(
-                "com.mojang.brigadier.suggestion.SuggestionProvider", true, loader);
+        register((MinecraftServer) minecraftServer);
+    }
 
-            Object commands = minecraftServer.getClass().getMethod("getCommands").invoke(minecraftServer);
-            Object dispatcher = commandsType.getMethod("getDispatcher").invoke(commands);
-            Object root = commandsType.getMethod("literal", String.class).invoke(null, "plugins");
-            Object list = commandsType.getMethod("literal", String.class).invoke(null, "list");
-            Object reload = commandsType.getMethod("literal", String.class).invoke(null, "reload");
-            Object tps = commandsType.getMethod("literal", String.class).invoke(null, "tps");
-            Object word = stringArgumentType.getMethod("word").invoke(null);
-            Object plugin = commandsType.getMethod("argument", String.class, argumentType)
-                .invoke(null, "plugin", word);
+    private static void register(MinecraftServer minecraftServer) {
+        CommandDispatcher<CommandSourceStack> dispatcher = minecraftServer.getCommands().getDispatcher();
+        Predicate<CommandSourceStack> gameMasters = Commands.hasPermission(Commands.LEVEL_GAMEMASTERS);
+        Predicate<CommandSourceStack> everyone = Commands.hasPermission(Commands.LEVEL_ALL);
 
-            Object permissionCheck = commandsType.getField("LEVEL_GAMEMASTERS").get(null);
-            Class<?> permissionCheckType = Class.forName(
-                "net.minecraft.server.permissions.PermissionCheck", true, loader);
-            Object permission = commandsType.getMethod("hasPermission", permissionCheckType)
-                .invoke(null, permissionCheck);
-            literalBuilderType.getMethod("requires", Predicate.class).invoke(root, permission);
+        LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("plugins")
+            .requires(gameMasters);
+        LiteralArgumentBuilder<CommandSourceStack> list = Commands.literal("list")
+            .executes(PluginsCommand::list);
+        RequiredArgumentBuilder<CommandSourceStack, String> plugin = Commands.argument(
+                "plugin", StringArgumentType.word())
+            .suggests((context, builder) -> {
+                String remaining = builder.getRemainingLowerCase().toLowerCase(Locale.ROOT);
+                for (String id : AerogelRuntime.pluginManager().reloadablePluginIds()) {
+                    if (id.startsWith(remaining)) builder.suggest(id);
+                }
+                return builder.buildFuture();
+            })
+            .executes(PluginsCommand::reloadOne);
+        root.then(list).then(Commands.literal("reload")
+            .executes(PluginsCommand::reloadAll)
+            .then(plugin));
+        dispatcher.register(root);
 
-            literalBuilderType.getMethod("executes", commandType)
-                .invoke(list, commandProxy(commandType, context -> list(context, loader)));
-            literalBuilderType.getMethod("executes", commandType)
-                .invoke(reload, commandProxy(commandType, context -> reloadAll(context, loader)));
-            requiredBuilderType.getMethod("suggests", suggestionProviderType)
-                .invoke(plugin, suggestionProxy(suggestionProviderType));
-            requiredBuilderType.getMethod("executes", commandType)
-                .invoke(plugin, commandProxy(commandType, context -> reloadOne(context, loader)));
-            literalBuilderType.getMethod("then", argumentBuilderType).invoke(reload, plugin);
-            literalBuilderType.getMethod("then", argumentBuilderType).invoke(root, list);
-            literalBuilderType.getMethod("then", argumentBuilderType).invoke(root, reload);
-            dispatcher.getClass().getMethod("register", literalBuilderType).invoke(dispatcher, root);
+        dispatcher.register(Commands.literal("tps")
+            .requires(everyone)
+            .executes(context -> tps(context, minecraftServer)));
 
-            Object allCheck = commandsType.getField("LEVEL_ALL").get(null);
-            Object allPermission = commandsType.getMethod("hasPermission", permissionCheckType)
-                .invoke(null, allCheck);
-            literalBuilderType.getMethod("requires", Predicate.class).invoke(tps, allPermission);
-            literalBuilderType.getMethod("executes", commandType)
-                .invoke(tps, commandProxy(commandType, context -> tps(context, loader, minecraftServer)));
-            dispatcher.getClass().getMethod("register", literalBuilderType).invoke(dispatcher, tps);
-            server = minecraftServer;
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Cannot register /plugins for Minecraft 26.2", exception);
-        }
+        LiteralArgumentBuilder<CommandSourceStack> networkStats = Commands.literal("networkstats")
+            .requires(everyone)
+            .executes(PluginsCommand::networkStats);
+        networkStats.then(Commands.literal("reset")
+            .requires(gameMasters)
+            .executes(PluginsCommand::resetNetworkStats));
+        networkStats.then(Commands.literal("mode")
+            .requires(gameMasters)
+            .then(Commands.literal("aerogel")
+                .executes(context -> setNetworkStatsMode(context, true)))
+            .then(Commands.literal("vanilla")
+                .executes(context -> setNetworkStatsMode(context, false))));
+        dispatcher.register(networkStats);
+        server = minecraftServer;
     }
 
     public static List<String> complete(String input, int cursor) {
-        Object current = server;
-        if (current == null) {
-            return List.of();
-        }
+        MinecraftServer current = server;
+        if (current == null) return List.of();
         try {
             String command = input.startsWith("/") ? input.substring(1) : input;
             int commandCursor = input.startsWith("/") ? Math.max(0, cursor - 1) : cursor;
-            Object commands = current.getClass().getMethod("getCommands").invoke(current);
-            Object dispatcher = commands.getClass().getMethod("getDispatcher").invoke(commands);
-            Object source = current.getClass().getMethod("createCommandSourceStack").invoke(current);
-            Method parse = findMethod(dispatcher.getClass(), "parse", String.class, Object.class);
-            Object results = parse.invoke(dispatcher, command, source);
-            Method completion = findMethod(dispatcher.getClass(), "getCompletionSuggestions",
-                results.getClass(), int.class);
-            Object suggestions = ((CompletableFuture<?>) completion.invoke(dispatcher, results, commandCursor))
+            CommandDispatcher<CommandSourceStack> dispatcher = current.getCommands().getDispatcher();
+            ParseResults<CommandSourceStack> results = dispatcher.parse(
+                command, current.createCommandSourceStack());
+            Suggestions suggestions = dispatcher.getCompletionSuggestions(results, commandCursor)
                 .get(750, TimeUnit.MILLISECONDS);
-            @SuppressWarnings("unchecked")
-            List<Object> values = (List<Object>) suggestions.getClass().getMethod("getList").invoke(suggestions);
-            List<String> completed = new ArrayList<>();
-            for (Object value : values) {
-                completed.add((String) value.getClass().getMethod("getText").invoke(value));
-            }
+            List<String> completed = new ArrayList<>(suggestions.getList().size());
+            for (Suggestion suggestion : suggestions.getList()) completed.add(suggestion.getText());
             return completed;
         } catch (Exception ignored) {
             return List.of();
         }
     }
 
-    private static int list(Object context, ClassLoader loader) throws ReflectiveOperationException {
+    private static int list(CommandContext<CommandSourceStack> context) {
         List<PluginManager.PluginInfo> plugins = AerogelRuntime.pluginManager().pluginInfos();
-        sendSuccess(context, loader, ROOT + "list", "Plugins (%s): %s",
-            plugins.size(), displayPlugins(context, loader, plugins));
+        sendSuccess(context, ROOT + "list", "Plugins (%s): %s",
+            plugins.size(), displayPlugins(context, plugins));
         return plugins.size();
     }
 
-    private static int reloadAll(Object context, ClassLoader loader) throws ReflectiveOperationException {
-        sendSuccess(context, loader, ROOT + "reload_all.starting", "Reloading all plugins...");
+    private static int reloadAll(CommandContext<CommandSourceStack> context) {
+        sendSuccess(context, ROOT + "reload_all.starting", "Reloading all plugins...");
         long started = System.nanoTime();
         PluginManager.ReloadResult result = AerogelRuntime.pluginManager().reloadAll();
         String elapsed = elapsedSeconds(started);
         if (result.successful()) {
-            sendSuccess(context, loader, ROOT + "reload_all.success",
+            sendSuccess(context, ROOT + "reload_all.success",
                 "Loaded or reloaded %s plugin(s), unloaded %s in %s seconds",
                 result.reloaded().size(), result.unloaded().size(), elapsed);
         } else {
-            sendFailure(context, loader, ROOT + "reload_partial",
+            sendFailure(context, ROOT + "reload_partial",
                 "Loaded or reloaded %s plugin(s), unloaded %s in %s seconds; failed: %s",
                 result.reloaded().size(), result.unloaded().size(), elapsed,
                 String.join(", ", result.failures().keySet()));
         }
-        sendMixinNotice(context, loader, result.mixinRestartRequired());
+        sendMixinNotice(context, result.mixinRestartRequired());
         return result.reloaded().size() + result.unloaded().size();
     }
 
-    private static int reloadOne(Object context, ClassLoader loader) throws ReflectiveOperationException {
-        Class<?> stringArgument = Class.forName("com.mojang.brigadier.arguments.StringArgumentType", true, loader);
-        String id = (String) stringArgument.getMethod("getString", context.getClass(), String.class)
-            .invoke(null, context, "plugin");
-        sendSuccess(context, loader, ROOT + "reload_one.starting", "Reloading plugin %s...", id);
+    private static int reloadOne(CommandContext<CommandSourceStack> context) {
+        String id = StringArgumentType.getString(context, "plugin");
+        sendSuccess(context, ROOT + "reload_one.starting", "Reloading plugin %s...", id);
         long started = System.nanoTime();
         Optional<PluginManager.ReloadResult> optional = AerogelRuntime.pluginManager().reload(id);
         if (optional.isEmpty()) {
-            sendFailure(context, loader, ROOT + "unknown", "Unknown plugin: %s", id);
+            sendFailure(context, ROOT + "unknown", "Unknown plugin: %s", id);
             return 0;
         }
         PluginManager.ReloadResult result = optional.get();
         String elapsed = elapsedSeconds(started);
         if (!result.successful()) {
-            sendFailure(context, loader, ROOT + "reload_failed",
+            sendFailure(context, ROOT + "reload_failed",
                 "Could not reload plugin %s after %s seconds", id, elapsed);
-            sendMixinNotice(context, loader, result.mixinRestartRequired());
+            sendMixinNotice(context, result.mixinRestartRequired());
             return 0;
         }
         if (result.unloaded().contains(id)) {
-            sendSuccess(context, loader, ROOT + "reload_one.unloaded",
+            sendSuccess(context, ROOT + "reload_one.unloaded",
                 "Unloaded plugin %s in %s seconds", id, elapsed);
-            sendMixinNotice(context, loader, result.mixinRestartRequired());
+            sendMixinNotice(context, result.mixinRestartRequired());
             return 1;
         }
-        sendSuccess(context, loader, ROOT + "reload_one.success",
+        sendSuccess(context, ROOT + "reload_one.success",
             "Reloaded plugin %s in %s seconds", id, elapsed);
-        sendMixinNotice(context, loader, result.mixinRestartRequired());
+        sendMixinNotice(context, result.mixinRestartRequired());
         return 1;
     }
 
-    private static void sendMixinNotice(Object context, ClassLoader loader, List<String> pluginIds)
-        throws ReflectiveOperationException {
-        if (pluginIds.isEmpty()) return;
-        sendWarning(context, loader, ROOT + "mixin_notice",
-            "Some Mixin changes for %s may not be applied until the server restarts",
-            String.join(", ", pluginIds));
+    private static void sendMixinNotice(
+        CommandContext<CommandSourceStack> context, List<String> pluginIds
+    ) {
+        if (!pluginIds.isEmpty()) {
+            sendWarning(context, ROOT + "mixin_notice",
+                "Some Mixin changes for %s may not be applied until the server restarts",
+                String.join(", ", pluginIds));
+        }
     }
 
-    private static int tps(Object context, ClassLoader loader, Object minecraftServer)
-        throws ReflectiveOperationException {
+    private static int tps(
+        CommandContext<CommandSourceStack> context, MinecraftServer minecraftServer
+    ) {
         TpsMonitor.Snapshot snapshot = TpsMonitor.snapshot();
-        long averageNanos = (long) minecraftServer.getClass().getMethod("getAverageTickTimeNanos")
-            .invoke(minecraftServer);
-        sendSuccess(context, loader, "commands.aerogel.tps",
+        sendSuccess(context, "commands.aerogel.tps",
             "TPS (1m, 5m, 15m): %s, %s, %s | MSPT: %s",
             decimal(snapshot.oneMinute()), decimal(snapshot.fiveMinutes()),
-            decimal(snapshot.fifteenMinutes()), decimal(averageNanos / 1_000_000.0));
+            decimal(snapshot.fifteenMinutes()),
+            decimal(minecraftServer.getAverageTickTimeNanos() / 1_000_000.0));
         return 1;
+    }
+
+    private static int networkStats(CommandContext<CommandSourceStack> context) {
+        PacketQueueMetrics.Snapshot snapshot = PacketQueueMetrics.snapshot();
+        sendNetworkStatsMode(context, false);
+        if (snapshot.samples() == 0L) {
+            sendSuccess(context, "commands.aerogel.networkstats.empty",
+                "No inbound packet queue samples have been recorded yet.");
+            return 1;
+        }
+        sendSuccess(context, "commands.aerogel.networkstats.summary",
+            "Packet queue delay (%s packets over %s seconds): avg %s ms | p50 %s ms | "
+                + "p95 %s ms | p99 %s ms | max %s ms",
+            grouped(snapshot.samples()), decimal(snapshot.elapsedNanos() / 1_000_000_000.0D),
+            milliseconds(snapshot.averageDelayNanos()), milliseconds(snapshot.p50DelayNanos()),
+            milliseconds(snapshot.p95DelayNanos()), milliseconds(snapshot.p99DelayNanos()),
+            milliseconds(snapshot.maximumDelayNanos()));
+        sendSuccess(context, "commands.aerogel.networkstats.paths",
+            "Idle pump: %s%% (%s) | Tick boundary: %s%% (%s)",
+            percentage(snapshot.idlePumpRatio()), grouped(snapshot.idlePumpSamples()),
+            percentage(snapshot.tickBoundaryRatio()), grouped(snapshot.tickBoundarySamples()));
+        return 1;
+    }
+
+    private static int resetNetworkStats(CommandContext<CommandSourceStack> context) {
+        PacketQueueMetrics.reset();
+        sendSuccess(context, "commands.aerogel.networkstats.reset",
+            "Inbound packet queue statistics were reset.");
+        return 1;
+    }
+
+    private static int setNetworkStatsMode(
+        CommandContext<CommandSourceStack> context, boolean aerogel
+    ) {
+        PacketQueueMetrics.setIdlePumpEnabled(aerogel);
+        sendNetworkStatsMode(context, true);
+        return 1;
+    }
+
+    private static void sendNetworkStatsMode(
+        CommandContext<CommandSourceStack> context, boolean measurementRestarted
+    ) {
+        boolean enabled = PacketQueueMetrics.idlePumpEnabled();
+        sendSuccess(context,
+            measurementRestarted
+                ? "commands.aerogel.networkstats.mode_changed." + (enabled ? "aerogel" : "vanilla")
+                : "commands.aerogel.networkstats.mode." + (enabled ? "aerogel" : "vanilla"),
+            measurementRestarted
+                ? "Packet handling mode changed to " + (enabled ? "Aerogel idle pump" : "vanilla tick boundary")
+                    + ". Statistics were reset."
+                : "Packet handling mode: " + (enabled ? "Aerogel idle pump." : "vanilla tick boundary."));
+    }
+
+    private static Component displayPlugins(
+        CommandContext<CommandSourceStack> context, List<PluginManager.PluginInfo> plugins
+    ) {
+        if (plugins.isEmpty()) {
+            return Component.literal(CommandTranslations.fallback(
+                sourceLanguage(context.getSource()), ROOT + "none", "None"));
+        }
+        MutableComponent result = Component.empty();
+        for (int index = 0; index < plugins.size(); index++) {
+            PluginManager.PluginInfo plugin = plugins.get(index);
+            if (index > 0) result.append(", ");
+            MutableComponent name = Component.literal(
+                plugin.name().equals(plugin.id()) ? plugin.id() : plugin.name());
+            if (!plugin.enabled()) name.withStyle(ChatFormatting.RED);
+            result.append(name);
+            if (!plugin.name().equals(plugin.id())) {
+                result.append(Component.literal(" <" + plugin.id() + ">")
+                    .withStyle(ChatFormatting.GRAY));
+            }
+            if (!plugin.enabled()) {
+                Component status = component(context.getSource(), ROOT + "disabled", "Disabled")
+                    .copy().withStyle(ChatFormatting.RED);
+                result.append(" — ").append(status);
+            }
+        }
+        return result;
+    }
+
+    private static void sendSuccess(
+        CommandContext<CommandSourceStack> context, String key, String fallback, Object... args
+    ) {
+        Component message = component(context.getSource(), key, fallback, args);
+        context.getSource().sendSuccess(() -> message, false);
+    }
+
+    private static void sendFailure(
+        CommandContext<CommandSourceStack> context, String key, String fallback, Object... args
+    ) {
+        context.getSource().sendFailure(component(context.getSource(), key, fallback, args));
+    }
+
+    private static void sendWarning(
+        CommandContext<CommandSourceStack> context, String key, String fallback, Object... args
+    ) {
+        MutableComponent message = component(context.getSource(), key, fallback, args)
+            .copy().withStyle(ChatFormatting.YELLOW);
+        context.getSource().sendSuccess(() -> message, false);
+    }
+
+    private static Component component(
+        CommandSourceStack source, String key, String fallback, Object... args
+    ) {
+        return Component.translatableWithFallback(key,
+            CommandTranslations.fallback(sourceLanguage(source), key, fallback), args);
+    }
+
+    private static String sourceLanguage(CommandSourceStack source) {
+        ServerPlayer player = source.getPlayer();
+        return player == null ? "en_us" : player.clientInformation().language();
     }
 
     private static String decimal(double value) {
         return String.format(Locale.ROOT, "%.2f", value);
     }
 
+    private static String milliseconds(double nanos) {
+        return String.format(Locale.ROOT, "%.3f", nanos / 1_000_000.0D);
+    }
+
+    private static String percentage(double ratio) {
+        return String.format(Locale.ROOT, "%.1f", ratio * 100.0D);
+    }
+
+    private static String grouped(long value) {
+        return String.format(Locale.ROOT, "%,d", value);
+    }
+
     private static String elapsedSeconds(long started) {
         return decimal((System.nanoTime() - started) / 1_000_000_000.0);
-    }
-
-    private static Object displayPlugins(Object context, ClassLoader loader, List<PluginManager.PluginInfo> plugins)
-        throws ReflectiveOperationException {
-        if (!plugins.isEmpty()) {
-            Class<?> componentType = Class.forName("net.minecraft.network.chat.Component", true, loader);
-            Class<?> mutableType = Class.forName("net.minecraft.network.chat.MutableComponent", true, loader);
-            Class<?> formattingType = Class.forName("net.minecraft.ChatFormatting", true, loader);
-            Object gray = formattingType.getField("GRAY").get(null);
-            Object red = formattingType.getField("RED").get(null);
-            Object result = componentType.getMethod("empty").invoke(null);
-            Method appendString = mutableType.getMethod("append", String.class);
-            Method appendComponent = mutableType.getMethod("append", componentType);
-            Method withStyle = mutableType.getMethod("withStyle", formattingType);
-            for (int index = 0; index < plugins.size(); index++) {
-                PluginManager.PluginInfo plugin = plugins.get(index);
-                if (index > 0) {
-                    appendString.invoke(result, ", ");
-                }
-                if (plugin.name().equals(plugin.id())) {
-                    Object name = componentType.getMethod("literal", String.class)
-                        .invoke(null, plugin.id());
-                    if (!plugin.enabled()) {
-                        withStyle.invoke(name, red);
-                    }
-                    appendComponent.invoke(result, name);
-                } else {
-                    Object name = componentType.getMethod("literal", String.class)
-                        .invoke(null, plugin.name());
-                    if (!plugin.enabled()) {
-                        withStyle.invoke(name, red);
-                    }
-                    appendComponent.invoke(result, name);
-                    Object id = componentType.getMethod("literal", String.class)
-                        .invoke(null, " <" + plugin.id() + ">");
-                    withStyle.invoke(id, gray);
-                    appendComponent.invoke(result, id);
-                }
-                if (!plugin.enabled()) {
-                    Object source = context.getClass().getMethod("getSource").invoke(context);
-                    String fallback = CommandTranslations.fallback(
-                        sourceLanguage(source), ROOT + "disabled", "Disabled");
-                    Object status = componentType.getMethod(
-                            "translatableWithFallback", String.class, String.class, Object[].class)
-                        .invoke(null, ROOT + "disabled", fallback, new Object[0]);
-                    withStyle.invoke(status, red);
-                    appendString.invoke(result, " — ");
-                    appendComponent.invoke(result, status);
-                }
-            }
-            return result;
-        }
-        Object source = context.getClass().getMethod("getSource").invoke(context);
-        return CommandTranslations.fallback(sourceLanguage(source), ROOT + "none", "None");
-    }
-
-    private static Object suggestionProxy(Class<?> type) {
-        return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (proxy, method, args) -> {
-            if (!method.getName().equals("getSuggestions")) {
-                return objectMethod(proxy, method, args);
-            }
-            Object builder = args[1];
-            String remaining = ((String) builder.getClass().getMethod("getRemainingLowerCase").invoke(builder))
-                .toLowerCase(Locale.ROOT);
-            Method suggest = builder.getClass().getMethod("suggest", String.class);
-            for (String id : AerogelRuntime.pluginManager().reloadablePluginIds()) {
-                if (id.startsWith(remaining)) {
-                    suggest.invoke(builder, id);
-                }
-            }
-            return builder.getClass().getMethod("buildFuture").invoke(builder);
-        });
-    }
-
-    private static Object commandProxy(Class<?> type, CommandAction action) {
-        InvocationHandler handler = (proxy, method, args) -> {
-            if (method.getName().equals("run")) {
-                return action.run(args[0]);
-            }
-            return objectMethod(proxy, method, args);
-        };
-        return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler);
-    }
-
-    private static void sendSuccess(Object context, ClassLoader loader, String key, String fallback, Object... args)
-        throws ReflectiveOperationException {
-        Object source = context.getClass().getMethod("getSource").invoke(context);
-        Object component = component(loader, source, key, fallback, args);
-        source.getClass().getMethod("sendSuccess", Supplier.class, boolean.class)
-            .invoke(source, (Supplier<Object>) () -> component, false);
-    }
-
-    private static void sendFailure(Object context, ClassLoader loader, String key, String fallback, Object... args)
-        throws ReflectiveOperationException {
-        Object source = context.getClass().getMethod("getSource").invoke(context);
-        Class<?> componentType = Class.forName("net.minecraft.network.chat.Component", true, loader);
-        Object component = component(loader, source, key, fallback, args);
-        source.getClass().getMethod("sendFailure", componentType).invoke(source, component);
-    }
-
-    private static void sendWarning(Object context, ClassLoader loader, String key, String fallback, Object... args)
-        throws ReflectiveOperationException {
-        Object source = context.getClass().getMethod("getSource").invoke(context);
-        Object component = component(loader, source, key, fallback, args);
-        Class<?> mutableType = Class.forName("net.minecraft.network.chat.MutableComponent", true, loader);
-        Class<?> formattingType = Class.forName("net.minecraft.ChatFormatting", true, loader);
-        Object yellow = formattingType.getField("YELLOW").get(null);
-        mutableType.getMethod("withStyle", formattingType).invoke(component, yellow);
-        source.getClass().getMethod("sendSuccess", Supplier.class, boolean.class)
-            .invoke(source, (Supplier<Object>) () -> component, false);
-    }
-
-    private static Object component(ClassLoader loader, Object source, String key, String fallback, Object[] args)
-        throws ReflectiveOperationException {
-        String language = sourceLanguage(source);
-        String localizedFallback = CommandTranslations.fallback(language, key, fallback);
-        Class<?> componentType = Class.forName("net.minecraft.network.chat.Component", true, loader);
-        return componentType.getMethod("translatableWithFallback", String.class, String.class, Object[].class)
-            .invoke(null, key, localizedFallback, args);
-    }
-
-    private static String sourceLanguage(Object source) {
-        try {
-            Object player = source.getClass().getMethod("getPlayer").invoke(source);
-            if (player == null) {
-                return "en_us";
-            }
-            Object information = player.getClass().getMethod("clientInformation").invoke(player);
-            return (String) information.getClass().getMethod("language").invoke(information);
-        } catch (ReflectiveOperationException ignored) {
-            return "en_us";
-        }
-    }
-
-    private static Method findMethod(Class<?> type, String name, Class<?>... approximateParameters)
-        throws NoSuchMethodException {
-        for (Method method : type.getMethods()) {
-            if (method.getName().equals(name) && method.getParameterCount() == approximateParameters.length) {
-                boolean matches = true;
-                Class<?>[] actual = method.getParameterTypes();
-                for (int index = 0; index < actual.length; index++) {
-                    if (approximateParameters[index] != Object.class
-                        && !actual[index].isAssignableFrom(approximateParameters[index])) {
-                        matches = false;
-                        break;
-                    }
-                }
-                if (matches) {
-                    return method;
-                }
-            }
-        }
-        throw new NoSuchMethodException(type.getName() + "." + name);
-    }
-
-    private static Object objectMethod(Object proxy, Method method, Object[] args) {
-        return switch (method.getName()) {
-            case "toString" -> "Aerogel " + proxy.getClass().getInterfaces()[0].getSimpleName();
-            case "hashCode" -> System.identityHashCode(proxy);
-            case "equals" -> proxy == args[0];
-            default -> null;
-        };
-    }
-
-    @FunctionalInterface
-    private interface CommandAction {
-        int run(Object context) throws Exception;
     }
 }

@@ -1,6 +1,9 @@
 package dev.aerogel.loader.event;
 
 import dev.aerogel.api.event.block.BlockStateChangeEvent;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -11,8 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class BlockChangeContextTest {
     @Test
     void nestedOperationsRestoreTheirParentContext() {
-        Object player = new Object();
-        Object position = new Object();
+        Entity player = new Entity() { };
+        BlockPos position = new BlockPos(1, 2, 3);
 
         BlockChangeContext.run(
             BlockStateChangeEvent.Reason.PLAYER_PLACE, player, position, null, () -> {
@@ -37,7 +40,7 @@ class BlockChangeContextTest {
     @Test
     void thrownActionsCannotLeakContext() {
         assertThrows(IllegalStateException.class, () -> BlockChangeContext.run(
-            BlockStateChangeEvent.Reason.EXPLOSION, new Object(), null, new Object(),
+            BlockStateChangeEvent.Reason.EXPLOSION, new Entity() { }, null, new Vec3(),
             () -> { throw new IllegalStateException("boom"); }));
 
         assertEquals(BlockStateChangeEvent.Reason.DIRECT,

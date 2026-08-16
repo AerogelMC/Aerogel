@@ -24,4 +24,9 @@ public final class AerogelEvents {
         }
         return current.post(event);
     }
+
+    public static boolean hasListeners(Class<? extends AerogelEvent> eventType) {
+        EventRegistry current = registry;
+        return current != null && current.hasListeners(eventType);
+    }
 }

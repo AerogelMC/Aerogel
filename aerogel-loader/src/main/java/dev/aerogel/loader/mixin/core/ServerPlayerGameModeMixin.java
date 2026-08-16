@@ -12,8 +12,23 @@ import dev.aerogel.api.event.player.PlayerGameModeChangeEvent;
 import dev.aerogel.api.event.player.PlayerInteractEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.event.BlockChangeContext;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.UseOnContext;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -26,7 +41,9 @@ import java.util.function.Supplier;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayerGameMode")
 abstract class ServerPlayerGameModeMixin {
-    @Unique private Object aerogel$breakingState;
+    @Shadow @Final protected ServerPlayer player;
+    @Shadow protected ServerLevel level;
+    @Unique private BlockState aerogel$breakingState;
 
     @Inject(
         method = "handleBlockBreakAction(Lnet/minecraft/core/BlockPos;"
@@ -36,41 +53,47 @@ abstract class ServerPlayerGameModeMixin {
         cancellable = true
     )
     private void aerogel$onBlockAction(
-        @Coerce Object position,
-        @Coerce Object action,
-        @Coerce Object direction,
+        BlockPos position,
+        ServerboundPlayerActionPacket.Action action,
+        Direction direction,
         int maxBuildHeight,
         int sequence,
         CallbackInfo callbackInfo
     ) {
-        Object player = EventHooks.field(this, "player");
-        Object level = EventHooks.field(this, "level");
-        Object state = EventHooks.call(level, "getBlockState", position);
-        if (aerogel$isAction(action, "START_DESTROY_BLOCK")) {
-            PlayerInteractEvent interaction = PlayerInteractEvent.block(
-                EventHooks.cast(player), PlayerInteractEvent.Action.LEFT_CLICK,
-                InteractionHand.MAIN_HAND, EventHooks.cast(position), EventHooks.cast(direction),
-                null);
-            EventHooks.post(interaction);
-
-            BlockBreakAttemptEvent attempt = new BlockBreakAttemptEvent(
-                EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-                EventHooks.cast(state), EventHooks.cast(direction), sequence);
-            EventHooks.post(attempt);
-            if (interaction.isCancelled() || attempt.isCancelled()) {
+        if (action == ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK) {
+            boolean listenInteraction = EventHooks.hasListeners(PlayerInteractEvent.class);
+            boolean listenAttempt = EventHooks.hasListeners(BlockBreakAttemptEvent.class);
+            if (!listenInteraction && !listenAttempt) return;
+            BlockState state = listenAttempt ? level.getBlockState(position) : null;
+            boolean cancelled = false;
+            if (listenInteraction) {
+                PlayerInteractEvent interaction = PlayerInteractEvent.block(
+                    player, PlayerInteractEvent.Action.LEFT_CLICK,
+                    InteractionHand.MAIN_HAND, position, direction,
+                    null);
+                EventHooks.post(interaction);
+                cancelled = interaction.isCancelled();
+            }
+            if (listenAttempt) {
+                BlockBreakAttemptEvent attempt = new BlockBreakAttemptEvent(
+                    player, level, position, state, direction, sequence);
+                EventHooks.post(attempt);
+                cancelled |= attempt.isCancelled();
+            }
+            if (cancelled) {
                 EventHooks.resyncBlock(player, level, position);
                 callbackInfo.cancel();
             }
-        } else if (aerogel$isAction(action, "STOP_DESTROY_BLOCK")) {
+        } else if (action == ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK) {
+            if (!EventHooks.hasListeners(BlockMiningStopEvent.class)) return;
             BlockMiningStopEvent event = new BlockMiningStopEvent(
-                EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-                EventHooks.cast(state), EventHooks.cast(direction), sequence);
+                player, level, position, level.getBlockState(position), direction, sequence);
             EventHooks.post(event);
             if (event.isCancelled()) callbackInfo.cancel();
-        } else if (aerogel$isAction(action, "ABORT_DESTROY_BLOCK")) {
+        } else if (action == ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK) {
+            if (!EventHooks.hasListeners(BlockMiningAbortEvent.class)) return;
             BlockMiningAbortEvent event = new BlockMiningAbortEvent(
-                EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-                EventHooks.cast(state), EventHooks.cast(direction), sequence);
+                player, level, position, level.getBlockState(position), direction, sequence);
             EventHooks.post(event);
             if (event.isCancelled()) callbackInfo.cancel();
         }
@@ -91,19 +114,16 @@ abstract class ServerPlayerGameModeMixin {
         cancellable = true
     )
     private void aerogel$beforeMiningStarts(
-        @Coerce Object position,
-        @Coerce Object action,
-        @Coerce Object direction,
+        BlockPos position,
+        ServerboundPlayerActionPacket.Action action,
+        Direction direction,
         int maxBuildHeight,
         int sequence,
         CallbackInfo callbackInfo
     ) {
-        Object player = EventHooks.field(this, "player");
-        Object level = EventHooks.field(this, "level");
+        if (!EventHooks.hasListeners(BlockMiningStartEvent.class)) return;
         BlockMiningStartEvent event = new BlockMiningStartEvent(
-            EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-            EventHooks.cast(EventHooks.call(level, "getBlockState", position)),
-            EventHooks.cast(direction), sequence);
+            player, level, position, level.getBlockState(position), direction, sequence);
         EventHooks.post(event);
         if (event.isCancelled()) {
             EventHooks.resyncBlock(player, level, position);
@@ -117,17 +137,15 @@ abstract class ServerPlayerGameModeMixin {
         at = @At("RETURN")
     )
     private void aerogel$afterMiningProgress(
-        @Coerce Object state,
-        @Coerce Object position,
+        BlockState state,
+        BlockPos position,
         int startedAtTick,
         CallbackInfoReturnable<Float> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(BlockMiningProgressEvent.class)) return;
         float progress = callbackInfo.getReturnValueF();
-        Object player = EventHooks.field(this, "player");
-        Object level = EventHooks.field(this, "level");
         BlockMiningProgressEvent event = new BlockMiningProgressEvent(
-            EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-            EventHooks.cast(state), progress, (int) (progress * 10.0F));
+            player, level, position, state, progress, (int) (progress * 10.0F));
         EventHooks.post(event);
         if (event.isCancelled()) {
             EventHooks.resyncBlock(player, level, position);
@@ -148,15 +166,16 @@ abstract class ServerPlayerGameModeMixin {
         cancellable = true
     )
     private void aerogel$beforeBlockBreak(
-        @Coerce Object position,
+        BlockPos position,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        Object player = EventHooks.field(this, "player");
-        Object level = EventHooks.field(this, "level");
-        aerogel$breakingState = EventHooks.call(level, "getBlockState", position);
+        boolean listenBefore = EventHooks.hasListeners(BlockBreakEvent.class);
+        boolean listenAfter = EventHooks.hasListeners(BlockBrokenEvent.class);
+        if (!listenBefore && !listenAfter) return;
+        aerogel$breakingState = level.getBlockState(position);
+        if (!listenBefore) return;
         BlockBreakEvent event = new BlockBreakEvent(
-            EventHooks.cast(player), EventHooks.cast(level), EventHooks.cast(position),
-            EventHooks.cast(aerogel$breakingState));
+            player, level, position, aerogel$breakingState);
         EventHooks.post(event);
         if (event.isCancelled()) {
             aerogel$breakingState = null;
@@ -170,13 +189,14 @@ abstract class ServerPlayerGameModeMixin {
             + "removeBlock(Lnet/minecraft/core/BlockPos;Z)Z")
     )
     private boolean aerogel$removePlayerBrokenBlock(
-        @Coerce Object level, @Coerce Object position, boolean moving
+        ServerLevel level, BlockPos position, boolean moving
     ) {
-        Object player = EventHooks.field(this, "player");
-        Object location = EventHooks.call(player, "position");
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            return level.removeBlock(position, moving);
+        }
         return BlockChangeContext.call(
-            BlockStateChangeEvent.Reason.PLAYER_BREAK, player, position, location,
-            () -> (Boolean) EventHooks.call(level, "removeBlock", position, moving));
+            BlockStateChangeEvent.Reason.PLAYER_BREAK, player, position, player.position(),
+            () -> level.removeBlock(position, moving));
     }
 
     @Redirect(
@@ -191,13 +211,12 @@ abstract class ServerPlayerGameModeMixin {
             + "Lnet/minecraft/world/InteractionHand;Lnet/minecraft/world/phys/BlockHitResult;)"
             + "Lnet/minecraft/world/InteractionResult;")
     )
-    @Coerce
-    private Object aerogel$playerUsesItemOnBlock(
-        @Coerce Object state, @Coerce Object item, @Coerce Object level,
-        @Coerce Object player, @Coerce Object hand, @Coerce Object hitResult
+    private InteractionResult aerogel$playerUsesItemOnBlock(
+        BlockState state, ItemStack item, Level level,
+        Player player, InteractionHand hand, BlockHitResult hitResult
     ) {
-        return aerogel$playerInteraction(player, EventHooks.call(hitResult, "getBlockPos"),
-            () -> EventHooks.call(state, "useItemOn", item, level, player, hand, hitResult));
+        return aerogel$playerInteraction(player, hitResult.getBlockPos(),
+            () -> state.useItemOn(item, level, player, hand, hitResult));
     }
 
     @Redirect(
@@ -212,13 +231,11 @@ abstract class ServerPlayerGameModeMixin {
             + "Lnet/minecraft/world/phys/BlockHitResult;)"
             + "Lnet/minecraft/world/InteractionResult;")
     )
-    @Coerce
-    private Object aerogel$playerUsesBlock(
-        @Coerce Object state, @Coerce Object level,
-        @Coerce Object player, @Coerce Object hitResult
+    private InteractionResult aerogel$playerUsesBlock(
+        BlockState state, Level level, Player player, BlockHitResult hitResult
     ) {
-        return aerogel$playerInteraction(player, EventHooks.call(hitResult, "getBlockPos"),
-            () -> EventHooks.call(state, "useWithoutItem", level, player, hitResult));
+        return aerogel$playerInteraction(player, hitResult.getBlockPos(),
+            () -> state.useWithoutItem(level, player, hitResult));
     }
 
     @Redirect(
@@ -231,24 +248,21 @@ abstract class ServerPlayerGameModeMixin {
             + "useOn(Lnet/minecraft/world/item/context/UseOnContext;)"
             + "Lnet/minecraft/world/InteractionResult;")
     )
-    @Coerce
-    private Object aerogel$playerUsesStackOnBlock(
-        @Coerce Object item, @Coerce Object context
+    private InteractionResult aerogel$playerUsesStackOnBlock(
+        ItemStack item, UseOnContext context
     ) {
-        Object player = EventHooks.call(context, "getPlayer");
-        Object position = EventHooks.call(context, "getClickedPos");
-        return aerogel$playerInteraction(player, position,
-            () -> EventHooks.call(item, "useOn", context));
+        return aerogel$playerInteraction(context.getPlayer(), context.getClickedPos(),
+            () -> item.useOn(context));
     }
 
     @Unique
-    private Object aerogel$playerInteraction(
-        Object player, Object position, Supplier<Object> action
+    private InteractionResult aerogel$playerInteraction(
+        Player player, BlockPos position, Supplier<InteractionResult> action
     ) {
-        Object location = player == null ? null : EventHooks.call(player, "position");
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) return action.get();
         return BlockChangeContext.call(
             BlockStateChangeEvent.Reason.PLAYER_INTERACTION,
-            player, position, location, action);
+            player, position, player == null ? null : player.position(), action);
     }
 
     @Inject(
@@ -261,33 +275,23 @@ abstract class ServerPlayerGameModeMixin {
         )
     )
     private void aerogel$afterBlockWasRemoved(
-        @Coerce Object position,
+        BlockPos position,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        Object previousState = aerogel$breakingState;
+        BlockState previousState = aerogel$breakingState;
         aerogel$breakingState = null;
-        if (previousState != null) {
+        if (previousState != null && EventHooks.hasListeners(BlockBrokenEvent.class)) {
             EventHooks.post(new BlockBrokenEvent(
-                EventHooks.cast(EventHooks.field(this, "player")),
-                EventHooks.cast(EventHooks.field(this, "level")), EventHooks.cast(position),
-                EventHooks.cast(previousState)));
+                player, level, position, previousState));
         }
     }
 
     @Inject(method = "destroyBlock(Lnet/minecraft/core/BlockPos;)Z", at = @At("RETURN"))
     private void aerogel$clearBlockBreakState(
-        @Coerce Object position,
+        BlockPos position,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
         aerogel$breakingState = null;
-    }
-
-    @Unique
-    private boolean aerogel$isAction(Object action, String fieldName) {
-        return action == EventHooks.staticField(
-            this,
-            "net.minecraft.network.protocol.game.ServerboundPlayerActionPacket$Action",
-            fieldName);
     }
 
     @Inject(
@@ -296,11 +300,12 @@ abstract class ServerPlayerGameModeMixin {
         cancellable = true
     )
     private void aerogel$beforeGameModeChange(
-        @Coerce Object gameMode,
+        GameType gameMode,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(PlayerGameModeChangeEvent.class)) return;
         PlayerGameModeChangeEvent event = new PlayerGameModeChangeEvent(
-            EventHooks.cast(EventHooks.field(this, "player")), EventHooks.cast(gameMode));
+            player, gameMode);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);

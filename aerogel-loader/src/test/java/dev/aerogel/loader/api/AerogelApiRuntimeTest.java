@@ -75,8 +75,8 @@ final class AerogelApiRuntimeTest {
         scope.close();
     }
 
-    public static final class FakeServer {
+    public static final class FakeServer extends net.minecraft.server.MinecraftServer {
         private long tick;
-        public int getTickCount() { return (int) tick; }
+        @Override public int getTickCount() { return (int) tick; }
     }
 }

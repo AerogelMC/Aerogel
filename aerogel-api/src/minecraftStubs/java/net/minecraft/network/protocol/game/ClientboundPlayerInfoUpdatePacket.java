@@ -13,6 +13,8 @@ public class ClientboundPlayerInfoUpdatePacket implements Packet<ClientGamePacke
     }
 
     public enum Action {
-        ADD_PLAYER
+        ADD_PLAYER,
+        UPDATE_LISTED,
+        UPDATE_DISPLAY_NAME
     }
 }

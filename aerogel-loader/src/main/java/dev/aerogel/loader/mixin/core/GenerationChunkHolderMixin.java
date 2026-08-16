@@ -2,7 +2,15 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.api.event.world.ChunkPreLoadEvent;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.ChunkMapTrackingBridge;
+import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.ChunkResult;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -11,6 +19,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.minecraft.server.level.GenerationChunkHolder")
 abstract class GenerationChunkHolderMixin {
+    @Shadow public abstract ChunkAccess getLatestChunk();
+    @Shadow public abstract ChunkPos getPos();
+    @Shadow @Final public static java.util.concurrent.CompletableFuture<ChunkResult<ChunkAccess>>
+        UNLOADED_CHUNK_FUTURE;
     @Unique
     private boolean aerogel$loadStarted;
 
@@ -27,19 +39,17 @@ abstract class GenerationChunkHolderMixin {
         cancellable = true
     )
     private void aerogel$preLoad(
-        @Coerce Object requestedStatus, @Coerce Object chunkMap,
-        CallbackInfoReturnable<Object> callbackInfo
+        ChunkStatus requestedStatus, ChunkMap chunkMap,
+        CallbackInfoReturnable<java.util.concurrent.CompletableFuture<ChunkResult<ChunkAccess>>> callbackInfo
     ) {
-        if (aerogel$loadStarted || EventHooks.call(this, "getLatestChunk") != null) return;
+        if (!EventHooks.hasListeners(ChunkPreLoadEvent.class)) return;
+        if (aerogel$loadStarted || getLatestChunk() != null) return;
 
         ChunkPreLoadEvent event = new ChunkPreLoadEvent(
-            EventHooks.cast(EventHooks.field(chunkMap, "level")),
-            EventHooks.cast(EventHooks.call(this, "getPos")),
-            EventHooks.cast(requestedStatus));
+            ((ChunkMapTrackingBridge) chunkMap).aerogel$level(), getPos(), requestedStatus);
         EventHooks.post(event);
         if (event.isCancelled()) {
-            callbackInfo.setReturnValue(EventHooks.staticField(
-                this, "net.minecraft.server.level.GenerationChunkHolder", "UNLOADED_CHUNK_FUTURE"));
+            callbackInfo.setReturnValue(UNLOADED_CHUNK_FUTURE);
             return;
         }
         aerogel$loadStarted = true;

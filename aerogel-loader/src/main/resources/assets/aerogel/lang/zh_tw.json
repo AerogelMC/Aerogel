@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "重新載入插件 %s 失敗，耗時 %s 秒",
   "commands.aerogel.plugins.unknown": "未知插件：%s",
   "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 變更可能要到伺服器重新啟動後才會生效",
-  "commands.aerogel.tps": "TPS（1分鐘、5分鐘、15分鐘）：%s, %s, %s | MSPT：%s"
+  "commands.aerogel.tps": "TPS（1分鐘、5分鐘、15分鐘）：%s, %s, %s | MSPT：%s",
+  "commands.aerogel.networkstats.empty": "尚未記錄入站封包佇列樣本。",
+  "commands.aerogel.networkstats.summary": "封包佇列延遲（%s 個封包，%s 秒）：平均 %s ms | p50 %s ms | p95 %s ms | p99 %s ms | 最大 %s ms",
+  "commands.aerogel.networkstats.paths": "閒置泵：%s%%（%s）| Tick 邊界：%s%%（%s）",
+  "commands.aerogel.networkstats.reset": "已重設入站封包佇列統計。",
+  "commands.aerogel.networkstats.mode.aerogel": "封包處理模式：Aerogel 閒置泵。",
+  "commands.aerogel.networkstats.mode.vanilla": "封包處理模式：原版 Tick 邊界。",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "已切換至 Aerogel 閒置泵並重設統計。",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "已切換至原版 Tick 邊界並重設統計。"
 }

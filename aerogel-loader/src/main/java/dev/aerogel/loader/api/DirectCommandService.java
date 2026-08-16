@@ -11,6 +11,9 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.aerogel.api.command.CommandRegistration;
 import dev.aerogel.api.command.CommandService;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import dev.aerogel.loader.internal.CommandNodeBridge;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,14 +21,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import dev.aerogel.loader.plugin.PluginFailures;
 
-final class ReflectiveCommandService implements CommandService {
+final class DirectCommandService implements CommandService {
     private final PluginApiScope scope;
     private final Set<RegistrationImpl> registrations = ConcurrentHashMap.newKeySet();
     private int batchDepth;
     private boolean synchronizationPending;
-    private Object pendingServer;
+    private MinecraftServer pendingServer;
 
-    ReflectiveCommandService(PluginApiScope scope) {
+    DirectCommandService(PluginApiScope scope) {
         this.scope = scope;
     }
 
@@ -41,7 +44,9 @@ final class ReflectiveCommandService implements CommandService {
         return registerRoot(brigadierRoot.getLiteral(), guarded(brigadierRoot));
     }
 
-    private CommandRegistration registerRoot(String name, Object root) {
+    private CommandRegistration registerRoot(
+        String name, CommandNode<CommandSourceStack> root
+    ) {
         if (name == null || name.isBlank() || name.chars().anyMatch(Character::isWhitespace)) {
             throw new IllegalArgumentException("Invalid command root: " + name);
         }
@@ -68,7 +73,7 @@ final class ReflectiveCommandService implements CommandService {
     }
 
     void endBatch() {
-        Object server = null;
+        MinecraftServer server = null;
         synchronized (this) {
             if (batchDepth <= 0) {
                 throw new IllegalStateException("Command mutation batch is not active");
@@ -85,9 +90,8 @@ final class ReflectiveCommandService implements CommandService {
 
     private synchronized void install(RegistrationImpl registration) {
         if (!registration.active() || registration.installed) return;
-        Object server = scope.serverHandle();
-        Object dispatcher = Reflect.invoke(Reflect.invoke(server, "getCommands"), "getDispatcher");
-        Reflect.invoke(Reflect.invoke(dispatcher, "getRoot"), "addChild", registration.root);
+        MinecraftServer server = scope.vanilla();
+        server.getCommands().getDispatcher().getRoot().addChild(registration.root);
         registration.installed = true;
         requestSynchronization(server);
     }
@@ -136,19 +140,17 @@ final class ReflectiveCommandService implements CommandService {
         return builder.build();
     }
 
-    private void syncCommands(Object server) {
+    private void syncCommands(MinecraftServer server) {
         try {
-            Object commands = Reflect.invoke(server, "getCommands");
-            Object players = Reflect.invoke(Reflect.invoke(server, "getPlayerList"), "getPlayers");
-            if (players instanceof Iterable<?> iterable) {
-                for (Object player : iterable) Reflect.invoke(commands, "sendCommands", player);
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                server.getCommands().sendCommands(player);
             }
         } catch (RuntimeException exception) {
             scope.logger().log(Level.FINE, "Could not immediately synchronize command trees", exception);
         }
     }
 
-    private void requestSynchronization(Object server) {
+    private void requestSynchronization(MinecraftServer server) {
         synchronized (this) {
             if (batchDepth > 0) {
                 synchronizationPending = true;
@@ -161,11 +163,11 @@ final class ReflectiveCommandService implements CommandService {
 
     private final class RegistrationImpl implements CommandRegistration {
         private final String name;
-        private final Object root;
+        private final CommandNode<CommandSourceStack> root;
         private final AtomicBoolean active = new AtomicBoolean(true);
         private volatile boolean installed;
 
-        private RegistrationImpl(String name, Object root) {
+        private RegistrationImpl(String name, CommandNode<CommandSourceStack> root) {
             this.name = name;
             this.root = root;
         }
@@ -182,10 +184,10 @@ final class ReflectiveCommandService implements CommandService {
             if (!active.compareAndSet(true, false)) return;
             registrations.remove(this);
             if (!installed || !scope.ready()) return;
-            Object server = scope.serverHandle();
-            Object rootNode = Reflect.invoke(
-                Reflect.invoke(Reflect.invoke(server, "getCommands"), "getDispatcher"), "getRoot");
-            Reflect.removeNamedChild(rootNode, name);
+            MinecraftServer server = scope.vanilla();
+            CommandNodeBridge bridge = (CommandNodeBridge) (Object)
+                server.getCommands().getDispatcher().getRoot();
+            bridge.aerogel$removeChild(name);
             requestSynchronization(server);
         }
     }

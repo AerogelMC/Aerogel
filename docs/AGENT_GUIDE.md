@@ -568,10 +568,16 @@ Relevant built-in commands:
 /plugins reload
 /plugins reload <plugin-id>
 /tps
+/networkstats
+/networkstats reset
+/networkstats mode vanilla
+/networkstats mode aerogel
 /restart
 ```
 
 `/plugins` alone is intentionally incomplete. Reload discovers new JARs, unloads plugin-owned registrations, stages immutable copies, and loads fresh class loaders. A normal callback exception is logged while the plugin remains active. An entrypoint constructor or `onLoad` failure disables that plugin while server startup continues. Disabled plugins appear in `/plugins list` with localized disabled state.
+
+`/networkstats` measures enqueue-to-handle delay inside Minecraft's inbound `PacketProcessor` queue and reports average, p50, p95, p99, maximum, idle-pump share, and tick-boundary share. `mode vanilla` and `mode aerogel` switch paths and reset the measurement window for controlled comparisons on the same server. Reset and mode changes require game-master permission.
 
 Use `/restart` for loader updates, Minecraft version changes, Mixin structural changes, native libraries, or leaked JVM-global state. A process restart replaces the standalone JAR and plugin JARs from disk; a plugin reload is not a JVM restart.
 

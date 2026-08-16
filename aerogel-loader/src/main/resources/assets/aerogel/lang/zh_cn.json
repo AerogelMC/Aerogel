@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "重载插件 %s 失败，耗时 %s 秒",
   "commands.aerogel.plugins.unknown": "未知插件：%s",
   "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 更改可能要到服务器重启后才会生效",
-  "commands.aerogel.tps": "TPS（1分钟、5分钟、15分钟）：%s, %s, %s | MSPT：%s"
+  "commands.aerogel.tps": "TPS（1分钟、5分钟、15分钟）：%s, %s, %s | MSPT：%s",
+  "commands.aerogel.networkstats.empty": "尚未记录入站数据包队列样本。",
+  "commands.aerogel.networkstats.summary": "数据包队列延迟（%s 个数据包，%s 秒）：平均 %s ms | p50 %s ms | p95 %s ms | p99 %s ms | 最大 %s ms",
+  "commands.aerogel.networkstats.paths": "空闲泵：%s%%（%s）| Tick 边界：%s%%（%s）",
+  "commands.aerogel.networkstats.reset": "已重置入站数据包队列统计。",
+  "commands.aerogel.networkstats.mode.aerogel": "数据包处理模式：Aerogel 空闲泵。",
+  "commands.aerogel.networkstats.mode.vanilla": "数据包处理模式：原版 Tick 边界。",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "已切换到 Aerogel 空闲泵并重置统计。",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "已切换到原版 Tick 边界并重置统计。"
 }

@@ -1,0 +1,135 @@
+package dev.aerogel.loader.api;
+
+import dev.aerogel.api.scoreboard.DisplaySlot;
+import dev.aerogel.api.scoreboard.Objective;
+import dev.aerogel.api.scoreboard.ObjectiveRenderType;
+import dev.aerogel.api.scoreboard.Scoreboard;
+import dev.aerogel.api.scoreboard.ScoreboardService;
+import dev.aerogel.api.scoreboard.Team;
+import net.minecraft.world.scores.PlayerTeam;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.scores.ScoreHolder;
+import net.minecraft.world.scores.ScoreAccess;
+import net.minecraft.world.scores.criteria.ObjectiveCriteria;
+
+import java.util.Collection;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+final class DirectScoreboardService implements ScoreboardService {
+    private final PluginApiScope scope;
+    DirectScoreboardService(PluginApiScope scope) { this.scope = scope; }
+
+    @Override public Scoreboard main() {
+        return new Board(scope.vanilla().getScoreboard());
+    }
+
+    private final class Board implements Scoreboard {
+        private final net.minecraft.world.scores.Scoreboard scoreboard;
+        private Board(net.minecraft.world.scores.Scoreboard scoreboard) { this.scoreboard = scoreboard; }
+        @Override public net.minecraft.world.scores.Scoreboard vanilla() {
+            return scoreboard;
+        }
+
+        @Override public Objective objective(String name, Component displayName) {
+            net.minecraft.world.scores.Objective found = scoreboard.getObjective(name);
+            if (found != null) return new ObjectiveImpl(scoreboard, found, false);
+            net.minecraft.world.scores.Objective created = scoreboard.addObjective(
+                name, ObjectiveCriteria.DUMMY, displayName,
+                ObjectiveCriteria.RenderType.INTEGER, false, null);
+            return scope.own(new ObjectiveImpl(scoreboard, created, true));
+        }
+
+        @Override public Optional<Objective> findObjective(String name) {
+            net.minecraft.world.scores.Objective found = scoreboard.getObjective(name);
+            return found == null ? Optional.empty() : Optional.of(new ObjectiveImpl(scoreboard, found, false));
+        }
+        @Override public Collection<Objective> objectives() {
+            Collection<net.minecraft.world.scores.Objective> values = scoreboard.getObjectives();
+            return values.stream().map(value -> (Objective) new ObjectiveImpl(scoreboard, value, false)).toList();
+        }
+        @Override public Team team(String name) {
+            PlayerTeam found = scoreboard.getPlayerTeam(name);
+            if (found != null) return new TeamImpl(scoreboard, found, false);
+            return scope.own(new TeamImpl(scoreboard, scoreboard.addPlayerTeam(name), true));
+        }
+        @Override public Optional<Team> findTeam(String name) {
+            PlayerTeam found = scoreboard.getPlayerTeam(name);
+            return found == null ? Optional.empty() : Optional.of(new TeamImpl(scoreboard, found, false));
+        }
+        @Override public Collection<Team> teams() {
+            Collection<PlayerTeam> values = scoreboard.getPlayerTeams();
+            return values.stream().map(value -> (Team) new TeamImpl(scoreboard, value, false)).toList();
+        }
+    }
+
+    private final class ObjectiveImpl implements Objective {
+        private final net.minecraft.world.scores.Scoreboard scoreboard;
+        private final net.minecraft.world.scores.Objective objective;
+        private final boolean owned;
+        private final AtomicBoolean active = new AtomicBoolean(true);
+        private ObjectiveImpl(net.minecraft.world.scores.Scoreboard scoreboard,
+                              net.minecraft.world.scores.Objective objective, boolean owned) {
+            this.scoreboard = scoreboard; this.objective = objective; this.owned = owned;
+        }
+        @Override public String name() { return objective.getName(); }
+        @Override public net.minecraft.world.scores.Objective vanilla() {
+            return objective;
+        }
+        @Override public Objective displayName(Component value) {
+            check(); objective.setDisplayName(value); return this;
+        }
+        @Override public Objective renderType(ObjectiveRenderType value) {
+            check(); objective.setRenderType(ObjectiveCriteria.RenderType.valueOf(value.name())); return this;
+        }
+        @Override public Objective display(DisplaySlot slot) {
+            check(); scoreboard.setDisplayObjective(
+                net.minecraft.world.scores.DisplaySlot.valueOf(slot.name()), objective); return this;
+        }
+        @Override public Objective score(String holder, int value) {
+            check(); access(holder).set(value); return this;
+        }
+        @Override public int score(String holder) { check(); return access(holder).get(); }
+        @Override public Objective reset(String holder) {
+            check(); scoreboard.resetSinglePlayerScore(holder(holder), objective); return this;
+        }
+        private ScoreAccess access(String holder) { return scoreboard.getOrCreatePlayerScore(holder(holder), objective); }
+        private ScoreHolder holder(String value) { return ScoreHolder.forNameOnly(value); }
+        @Override public boolean active() { return active.get(); }
+        @Override public void close() {
+            if (active.compareAndSet(true, false) && owned) scoreboard.removeObjective(objective);
+        }
+        private void check() { if (!active()) throw new IllegalStateException("Objective is closed: " + name()); }
+    }
+
+    private final class TeamImpl implements Team {
+        private final net.minecraft.world.scores.Scoreboard scoreboard;
+        private final PlayerTeam team;
+        private final boolean owned;
+        private final AtomicBoolean active = new AtomicBoolean(true);
+        private TeamImpl(net.minecraft.world.scores.Scoreboard scoreboard, PlayerTeam team, boolean owned) {
+            this.scoreboard = scoreboard; this.team = team; this.owned = owned;
+        }
+        @Override public String name() { return team.getName(); }
+        @Override public PlayerTeam vanilla() { return team; }
+        @Override public Team displayName(Component value) { check(); team.setDisplayName(value); return this; }
+        @Override public Team prefix(Component value) { check(); team.setPlayerPrefix(value); return this; }
+        @Override public Team suffix(Component value) { check(); team.setPlayerSuffix(value); return this; }
+        @Override public Team friendlyFire(boolean value) { check(); team.setAllowFriendlyFire(value); return this; }
+        @Override public Team seeFriendlyInvisible(boolean value) { check(); team.setSeeFriendlyInvisibles(value); return this; }
+        @Override public Team add(String holder) { check(); scoreboard.addPlayerToTeam(holder, team); return this; }
+        @Override public Team remove(String holder) { check(); scoreboard.removePlayerFromTeam(holder, team); return this; }
+        @Override public Collection<String> members() {
+            check(); return ListCopy.copy(team.getPlayers());
+        }
+        @Override public boolean active() { return active.get(); }
+        @Override public void close() {
+            if (active.compareAndSet(true, false) && owned) scoreboard.removePlayerTeam(team);
+        }
+        private void check() { if (!active()) throw new IllegalStateException("Team is closed: " + name()); }
+    }
+
+    private static final class ListCopy {
+        private static <T> Collection<T> copy(Collection<T> values) { return java.util.List.copyOf(values); }
+    }
+}

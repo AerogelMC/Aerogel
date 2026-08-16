@@ -19,14 +19,19 @@ import java.util.Map;
 
 /** Captures vanilla death output until plugins have had a chance to edit it. */
 public final class DeathDropCapture {
-    private static final ThreadLocal<Deque<Context>> CONTEXTS =
-        ThreadLocal.withInitial(ArrayDeque::new);
+    private static final ThreadLocal<Deque<Context>> CONTEXTS = new ThreadLocal<>();
 
     private DeathDropCapture() {
     }
 
     public static void begin(LivingEntity entity, DamageSource damageSource) {
-        CONTEXTS.get().push(new Context(entity, damageSource));
+        if (!EventHooks.hasListeners(EntityDeathEvent.class)) return;
+        Deque<Context> contexts = CONTEXTS.get();
+        if (contexts == null) {
+            contexts = new ArrayDeque<>();
+            CONTEXTS.set(contexts);
+        }
+        contexts.push(new Context(entity, damageSource));
     }
 
     public static boolean capture(Entity entity) {
@@ -55,6 +60,7 @@ public final class DeathDropCapture {
         ServerLevel level, LivingEntity entity, DamageSource damageSource
     ) {
         Deque<Context> contexts = CONTEXTS.get();
+        if (contexts == null) return;
         Context context = contexts.peek();
         if (context == null || context.entity != entity) {
             throw new IllegalStateException("Mismatched death-drop capture");
@@ -92,7 +98,7 @@ public final class DeathDropCapture {
 
     private static Context current() {
         Deque<Context> contexts = CONTEXTS.get();
-        return contexts.peek();
+        return contexts == null ? null : contexts.peek();
     }
 
     private static final class Context {

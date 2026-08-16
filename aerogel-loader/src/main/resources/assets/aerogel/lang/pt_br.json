@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "Não foi possível recarregar o plugin %s após %s segundos",
   "commands.aerogel.plugins.unknown": "Plugin desconhecido: %s",
   "commands.aerogel.plugins.mixin_notice": "Algumas alterações de Mixin em %s podem não ser aplicadas até o servidor ser reiniciado",
-  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "Ainda não há amostras registradas da fila de pacotes recebidos.",
+  "commands.aerogel.networkstats.summary": "Latência da fila de pacotes (%s pacotes em %s segundos): média %s ms | p50 %s ms | p95 %s ms | p99 %s ms | máx. %s ms",
+  "commands.aerogel.networkstats.paths": "Bomba ociosa: %s%% (%s) | Limite do tick: %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "As estatísticas da fila de pacotes recebidos foram redefinidas.",
+  "commands.aerogel.networkstats.mode.aerogel": "Modo de processamento: bomba ociosa do Aerogel.",
+  "commands.aerogel.networkstats.mode.vanilla": "Modo de processamento: limite do tick vanilla.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "A bomba ociosa do Aerogel foi ativada e as estatísticas foram redefinidas.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "O limite do tick vanilla foi ativado e as estatísticas foram redefinidas."
 }

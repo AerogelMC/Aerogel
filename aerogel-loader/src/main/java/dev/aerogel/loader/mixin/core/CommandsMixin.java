@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class CommandsMixin {
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$commandsReady(CallbackInfo callbackInfo) {
+        if (!EventHooks.hasListeners(CommandRegistrationEvent.class)) return;
         EventHooks.post(new CommandRegistrationEvent(EventHooks.cast(this)));
     }
 }

@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "Impossible de recharger le plugin %s après %s secondes",
   "commands.aerogel.plugins.unknown": "Plugin inconnu : %s",
   "commands.aerogel.plugins.mixin_notice": "Certaines modifications Mixin de %s peuvent ne pas être appliquées avant le redémarrage du serveur",
-  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min) : %s, %s, %s | MSPT : %s"
+  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min) : %s, %s, %s | MSPT : %s",
+  "commands.aerogel.networkstats.empty": "Aucun échantillon de la file des paquets entrants n'a encore été enregistré.",
+  "commands.aerogel.networkstats.summary": "Latence de la file des paquets (%s paquets sur %s secondes) : moyenne %s ms | p50 %s ms | p95 %s ms | p99 %s ms | max %s ms",
+  "commands.aerogel.networkstats.paths": "Pompe inactive : %s%% (%s) | Limite de tick : %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "Les statistiques de la file des paquets entrants ont été réinitialisées.",
+  "commands.aerogel.networkstats.mode.aerogel": "Mode de traitement : pompe inactive Aerogel.",
+  "commands.aerogel.networkstats.mode.vanilla": "Mode de traitement : limite de tick vanilla.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "Le mode a été réglé sur la pompe inactive Aerogel et les statistiques ont été réinitialisées.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "Le mode a été réglé sur la limite de tick vanilla et les statistiques ont été réinitialisées."
 }

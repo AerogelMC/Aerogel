@@ -3,6 +3,8 @@ package net.minecraft.world.scores;
 import net.minecraft.network.chat.Component;
 
 public class PlayerTeam extends Team {
+    public String getName() { return null; }
+    public void setDisplayName(Component name) { }
     public void setPlayerPrefix(Component prefix) { }
     public void setPlayerSuffix(Component suffix) { }
     public void setNameTagVisibility(Visibility visibility) { }
@@ -14,4 +16,5 @@ public class PlayerTeam extends Team {
     public void setCollisionRule(CollisionRule rule) { }
     public Visibility getDeathMessageVisibility() { return null; }
     public void setDeathMessageVisibility(Visibility visibility) { }
+    public java.util.Collection<String> getPlayers() { return null; }
 }

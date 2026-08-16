@@ -8,4 +8,10 @@ public abstract class Player extends LivingEntity {
     public GameProfile getGameProfile() { return null; }
     public PlayerTeam getTeam() { return null; }
     public double blockInteractionRange() { return 0.0; }
+    public void causeFoodExhaustion(float amount) { }
+    public Inventory getInventory() { return null; }
+
+    public enum BedSleepingProblem {
+        OTHER_PROBLEM
+    }
 }

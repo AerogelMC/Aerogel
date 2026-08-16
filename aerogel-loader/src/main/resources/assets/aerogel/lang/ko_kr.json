@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "플러그인 %s을(를) %s초 동안 리로드했지만 실패했습니다",
   "commands.aerogel.plugins.unknown": "알 수 없는 플러그인: %s",
   "commands.aerogel.plugins.mixin_notice": "%s의 일부 Mixin 변경 사항은 서버를 재시작하기 전까지 반영되지 않을 수 있습니다",
-  "commands.aerogel.tps": "TPS (1분, 5분, 15분): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1분, 5분, 15분): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "아직 기록된 인바운드 패킷 큐 표본이 없습니다.",
+  "commands.aerogel.networkstats.summary": "패킷 큐 지연 (%s개 패킷, %s초): 평균 %sms | p50 %sms | p95 %sms | p99 %sms | 최대 %sms",
+  "commands.aerogel.networkstats.paths": "유휴 펌프: %s%% (%s개) | 틱 경계: %s%% (%s개)",
+  "commands.aerogel.networkstats.reset": "인바운드 패킷 큐 통계를 초기화했습니다.",
+  "commands.aerogel.networkstats.mode.aerogel": "패킷 처리 모드: Aerogel 유휴 펌프.",
+  "commands.aerogel.networkstats.mode.vanilla": "패킷 처리 모드: 바닐라 틱 경계.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "패킷 처리 모드를 Aerogel 유휴 펌프로 변경하고 통계를 초기화했습니다.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "패킷 처리 모드를 바닐라 틱 경계로 변경하고 통계를 초기화했습니다."
 }

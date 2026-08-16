@@ -8,26 +8,30 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.Container;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.MenuProvider;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.MenuType;
 
-import java.lang.reflect.Proxy;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-final class ReflectiveInventoryService implements InventoryService {
+final class DirectInventoryService implements InventoryService {
     private final PluginApiScope scope;
 
-    ReflectiveInventoryService(PluginApiScope scope) { this.scope = scope; }
+    DirectInventoryService(PluginApiScope scope) { this.scope = scope; }
 
     @Override public Inventory create(int rows, Component title) {
         if (rows < 1 || rows > 6) throw new IllegalArgumentException("Chest rows must be between 1 and 6");
-        Object container = Reflect.construct(Reflect.type(scope.loader(), "net.minecraft.world.SimpleContainer"), rows * 9);
+        Container container = new SimpleContainer(rows * 9);
         return scope.own(new InventoryImpl(container, title, rows));
     }
 
     @Override public Inventory wrap(Container container, Component title) {
-        int size = ((Number) Reflect.invoke(container, "getContainerSize")).intValue();
+        int size = container.getContainerSize();
         if (size < 9 || size > 54 || size % 9 != 0) {
             throw new IllegalArgumentException("Wrapped chest container size must be 9, 18, 27, 36, 45, or 54");
         }
@@ -35,55 +39,62 @@ final class ReflectiveInventoryService implements InventoryService {
     }
 
     private final class InventoryImpl implements Inventory {
-        private final Object container;
+        private final Container container;
         private final Component title;
         private final int rows;
         private final Set<View> views = ConcurrentHashMap.newKeySet();
         private final AtomicBoolean active = new AtomicBoolean(true);
 
-        private InventoryImpl(Object container, Component title, int rows) {
+        private InventoryImpl(Container container, Component title, int rows) {
             this.container = java.util.Objects.requireNonNull(container, "container");
             this.title = java.util.Objects.requireNonNull(title, "title");
             this.rows = rows;
         }
 
         @Override public int size() { return rows * 9; }
-        @Override public Container vanilla() { return (Container) container; }
+        @Override public Container vanilla() { return container; }
         @Override public ItemStack item(int slot) {
-            checkSlot(slot); return (ItemStack) Reflect.invoke(container, "getItem", slot);
+            checkSlot(slot); return container.getItem(slot);
         }
         @Override public void item(int slot, ItemStack itemStack) {
-            checkActive(); checkSlot(slot); Reflect.invoke(container, "setItem", slot, itemStack);
+            checkActive(); checkSlot(slot); container.setItem(slot, itemStack);
         }
-        @Override public void clear() { checkActive(); Reflect.invoke(container, "clearContent"); }
+        @Override public void clear() { checkActive(); container.clearContent(); }
 
         @Override public InventoryView open(ServerPlayer player) {
             checkActive();
-            Class<?> providerType = Reflect.type(scope.loader(), "net.minecraft.world.MenuProvider");
-            Object provider = Proxy.newProxyInstance(providerType.getClassLoader(), new Class<?>[]{providerType},
-                (proxy, method, arguments) -> switch (method.getName()) {
-                    case "getDisplayName" -> title;
-                    case "createMenu" -> createMenu(((Number) arguments[0]).intValue(), arguments[1]);
-                    case "toString" -> "Aerogel inventory provider";
-                    case "hashCode" -> System.identityHashCode(proxy);
-                    case "equals" -> proxy == arguments[0];
-                    default -> null;
-                });
-            Object opened = Reflect.invoke(player, "openMenu", provider);
-            if (opened instanceof java.util.OptionalInt value && value.isEmpty()) {
+            MenuProvider provider = new MenuProvider() {
+                @Override public Component getDisplayName() { return title; }
+                @Override public AbstractContainerMenu createMenu(
+                    int containerId, net.minecraft.world.entity.player.Inventory playerInventory,
+                    Player ignored
+                ) {
+                    return InventoryImpl.this.createMenu(containerId, playerInventory);
+                }
+            };
+            java.util.OptionalInt opened = player.openMenu(provider);
+            if (opened.isEmpty()) {
                 throw new IllegalStateException("Minecraft refused to open the inventory");
             }
-            Object menu = Reflect.field(player, "containerMenu");
+            AbstractContainerMenu menu = player.containerMenu;
             View view = new View(player, menu);
             views.add(view);
             return view;
         }
 
-        private Object createMenu(int containerId, Object playerInventory) {
-            Class<?> menuType = Reflect.type(scope.loader(), "net.minecraft.world.inventory.MenuType");
-            Object type = Reflect.staticField(menuType, "GENERIC_9x" + rows);
-            return Reflect.construct(Reflect.type(scope.loader(), "net.minecraft.world.inventory.ChestMenu"),
-                type, containerId, playerInventory, container, rows);
+        private AbstractContainerMenu createMenu(
+            int containerId, net.minecraft.world.entity.player.Inventory playerInventory
+        ) {
+            MenuType<?> type = switch (rows) {
+                case 1 -> MenuType.GENERIC_9x1;
+                case 2 -> MenuType.GENERIC_9x2;
+                case 3 -> MenuType.GENERIC_9x3;
+                case 4 -> MenuType.GENERIC_9x4;
+                case 5 -> MenuType.GENERIC_9x5;
+                case 6 -> MenuType.GENERIC_9x6;
+                default -> throw new IllegalStateException("Unsupported row count: " + rows);
+            };
+            return new ChestMenu(type, containerId, playerInventory, container, rows);
         }
 
         @Override public Collection<ServerPlayer> viewers() {
@@ -100,18 +111,17 @@ final class ReflectiveInventoryService implements InventoryService {
         }
 
         private final class View implements InventoryView {
-            private final Object player;
-            private final Object menu;
+            private final ServerPlayer player;
+            private final AbstractContainerMenu menu;
             private final AtomicBoolean active = new AtomicBoolean(true);
-            private View(Object player, Object menu) { this.player = player; this.menu = menu; }
-            private Object rawPlayer() { return player; }
-            @Override public ServerPlayer player() { return (ServerPlayer) player; }
-            @Override public AbstractContainerMenu menu() { return (AbstractContainerMenu) menu; }
+            private View(ServerPlayer player, AbstractContainerMenu menu) { this.player = player; this.menu = menu; }
+            @Override public ServerPlayer player() { return player; }
+            @Override public AbstractContainerMenu menu() { return menu; }
             @Override public boolean active() { return active.get(); }
             @Override public void close() {
                 if (!active.compareAndSet(true, false)) return;
                 views.remove(this);
-                if (Reflect.field(player, "containerMenu") == menu) Reflect.invoke(player, "closeContainer");
+                if (player.containerMenu == menu) player.closeContainer();
             }
         }
     }

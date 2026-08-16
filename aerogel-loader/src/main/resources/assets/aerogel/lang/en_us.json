@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "Could not reload plugin %s after %s seconds",
   "commands.aerogel.plugins.unknown": "Unknown plugin: %s",
   "commands.aerogel.plugins.mixin_notice": "Some Mixin changes for %s may not be applied until the server restarts",
-  "commands.aerogel.tps": "TPS (1m, 5m, 15m): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1m, 5m, 15m): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "No inbound packet queue samples have been recorded yet.",
+  "commands.aerogel.networkstats.summary": "Packet queue delay (%s packets over %s seconds): avg %s ms | p50 %s ms | p95 %s ms | p99 %s ms | max %s ms",
+  "commands.aerogel.networkstats.paths": "Idle pump: %s%% (%s) | Tick boundary: %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "Inbound packet queue statistics were reset.",
+  "commands.aerogel.networkstats.mode.aerogel": "Packet handling mode: Aerogel idle pump.",
+  "commands.aerogel.networkstats.mode.vanilla": "Packet handling mode: vanilla tick boundary.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "Packet handling mode changed to Aerogel idle pump. Statistics were reset.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "Packet handling mode changed to vanilla tick boundary. Statistics were reset."
 }

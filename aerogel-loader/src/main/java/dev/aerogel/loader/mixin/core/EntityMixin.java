@@ -24,7 +24,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.level.portal.TeleportTransition;
 
 import java.util.Collection;
 import java.util.List;
@@ -53,22 +57,18 @@ abstract class EntityMixin {
 
     @Unique
     public Collection<Entity> nearbyEntities(double radius, Predicate<Entity> filter) {
-        Object level = EventHooks.call(this, "level");
-        if (!EventHooks.isInstance(level, "net.minecraft.server.level.ServerLevel")) return List.of();
-        Collection<Entity> nearby = ((ServerLevel) level).nearbyEntities(
-            ((Number) EventHooks.call(this, "getX")).doubleValue(),
-            ((Number) EventHooks.call(this, "getY")).doubleValue(),
-            ((Number) EventHooks.call(this, "getZ")).doubleValue(), radius,
+        Entity self = (Entity) (Object) this;
+        if (!(self.level() instanceof ServerLevel level)) return List.of();
+        Collection<Entity> nearby = level.nearbyEntities(
+            self.getX(), self.getY(), self.getZ(), radius,
             Objects.requireNonNull(filter, "filter"));
-        Object self = this;
         return nearby.stream().filter(entity -> entity != self).toList();
     }
 
     @Unique
     public boolean teleport(ServerLevel destination, double x, double y, double z) {
         return teleport(destination, x, y, z,
-            ((Number) EventHooks.call(this, "getYRot")).floatValue(),
-            ((Number) EventHooks.call(this, "getXRot")).floatValue());
+            ((Entity) (Object) this).getYRot(), ((Entity) (Object) this).getXRot());
     }
 
     @Unique
@@ -76,31 +76,32 @@ abstract class EntityMixin {
         ServerLevel destination, double x, double y, double z, float yaw, float pitch
     ) {
         Objects.requireNonNull(destination, "destination");
-        return (boolean) EventHooks.call(this, "teleportTo", destination,
-            x, y, z, Set.of(), yaw, pitch, true);
+        return ((Entity) (Object) this).teleportTo(
+            destination, x, y, z, Set.of(), yaw, pitch, true);
     }
 
     @Inject(method = "remove(Lnet/minecraft/world/entity/Entity$RemovalReason;)V", at = @At("HEAD"))
-    private void aerogel$removed(@Coerce Object reason, CallbackInfo callbackInfo) {
-        EventHooks.post(new EntityRemoveEvent(EventHooks.cast(this), EventHooks.cast(reason)));
+    private void aerogel$removed(Entity.RemovalReason reason, CallbackInfo callbackInfo) {
+        if (!EventHooks.hasListeners(EntityRemoveEvent.class)) return;
+        EventHooks.post(new EntityRemoveEvent((Entity) (Object) this, reason));
     }
 
     @Inject(method = "startRiding(Lnet/minecraft/world/entity/Entity;ZZ)Z",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$mount(
-        @Coerce Object vehicle, boolean force, boolean teleport,
+        Entity vehicle, boolean force, boolean teleport,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$mountOverride) return;
-        EntityMountEvent event = new EntityMountEvent(
-            EventHooks.cast(this), EventHooks.cast(vehicle), force);
+        if (aerogel$mountOverride || !EventHooks.hasListeners(EntityMountEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        EntityMountEvent event = new EntityMountEvent(self, vehicle, force);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
         } else if (event.vehicle() != vehicle || event.force() != force) {
             aerogel$mountOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(this, "startRiding",
+                callbackInfo.setReturnValue(self.startRiding(
                     event.vehicle(), event.force(), teleport));
             } finally {
                 aerogel$mountOverride = false;
@@ -110,10 +111,11 @@ abstract class EntityMixin {
 
     @Inject(method = "stopRiding()V", at = @At("HEAD"), cancellable = true)
     private void aerogel$dismount(CallbackInfo callbackInfo) {
-        Object vehicle = EventHooks.call(this, "getVehicle");
+        if (!EventHooks.hasListeners(EntityDismountEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        Entity vehicle = self.getVehicle();
         if (vehicle != null) {
-            EntityDismountEvent event = new EntityDismountEvent(
-                EventHooks.cast(this), EventHooks.cast(vehicle));
+            EntityDismountEvent event = new EntityDismountEvent(self, vehicle);
             EventHooks.post(event);
             if (event.isCancelled()) callbackInfo.cancel();
         }
@@ -121,15 +123,16 @@ abstract class EntityMixin {
 
     @Inject(method = "igniteForTicks(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$combust(int durationTicks, CallbackInfo callbackInfo) {
-        if (aerogel$combustOverride) return;
-        EntityCombustEvent event = new EntityCombustEvent(EventHooks.cast(this), durationTicks);
+        if (aerogel$combustOverride || !EventHooks.hasListeners(EntityCombustEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        EntityCombustEvent event = new EntityCombustEvent(self, durationTicks);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.durationTicks() != durationTicks) {
             aerogel$combustOverride = true;
             try {
-                EventHooks.call(this, "igniteForTicks", event.durationTicks());
+                self.igniteForTicks(event.durationTicks());
             } finally {
                 aerogel$combustOverride = false;
             }
@@ -140,18 +143,18 @@ abstract class EntityMixin {
     @Inject(method = "teleport(Lnet/minecraft/world/level/portal/TeleportTransition;)"
         + "Lnet/minecraft/world/entity/Entity;", at = @At("HEAD"), cancellable = true)
     private void aerogel$teleport(
-        @Coerce Object transition, CallbackInfoReturnable<Object> callbackInfo
+        TeleportTransition transition, CallbackInfoReturnable<Entity> callbackInfo
     ) {
-        if (aerogel$teleportOverride) return;
-        EntityTeleportEvent event = new EntityTeleportEvent(
-            EventHooks.cast(this), EventHooks.cast(transition));
+        if (aerogel$teleportOverride || !EventHooks.hasListeners(EntityTeleportEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        EntityTeleportEvent event = new EntityTeleportEvent(self, transition);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(null);
         } else if (event.transition() != transition) {
             aerogel$teleportOverride = true;
             try {
-                callbackInfo.setReturnValue(EventHooks.call(this, "teleport", event.transition()));
+                callbackInfo.setReturnValue(self.teleport(event.transition()));
             } finally {
                 aerogel$teleportOverride = false;
             }
@@ -160,18 +163,19 @@ abstract class EntityMixin {
 
     @Inject(method = "setAirSupply(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$airSupply(int airSupply, CallbackInfo callbackInfo) {
-        if (aerogel$airOverride) return;
-        int previous = ((Number) EventHooks.call(this, "getAirSupply")).intValue();
+        if (aerogel$airOverride || !EventHooks.hasListeners(EntityAirSupplyChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        int previous = self.getAirSupply();
         if (previous == airSupply) return;
         EntityAirSupplyChangeEvent event = new EntityAirSupplyChangeEvent(
-            EventHooks.cast(this), previous, airSupply);
+            self, previous, airSupply);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.airSupply() != airSupply) {
             aerogel$airOverride = true;
             try {
-                EventHooks.call(this, "setAirSupply", event.airSupply());
+                self.setAirSupply(event.airSupply());
             } finally {
                 aerogel$airOverride = false;
             }
@@ -181,18 +185,19 @@ abstract class EntityMixin {
 
     @Inject(method = "setTicksFrozen(I)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$freezeTicks(int frozenTicks, CallbackInfo callbackInfo) {
-        if (aerogel$freezeOverride) return;
-        int previous = ((Number) EventHooks.call(this, "getTicksFrozen")).intValue();
+        if (aerogel$freezeOverride || !EventHooks.hasListeners(EntityFreezeTicksChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        int previous = self.getTicksFrozen();
         if (previous == frozenTicks) return;
         EntityFreezeTicksChangeEvent event = new EntityFreezeTicksChangeEvent(
-            EventHooks.cast(this), previous, frozenTicks);
+            self, previous, frozenTicks);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.frozenTicks() != frozenTicks) {
             aerogel$freezeOverride = true;
             try {
-                EventHooks.call(this, "setTicksFrozen", event.frozenTicks());
+                self.setTicksFrozen(event.frozenTicks());
             } finally {
                 aerogel$freezeOverride = false;
             }
@@ -202,19 +207,20 @@ abstract class EntityMixin {
 
     @Inject(method = "setPose(Lnet/minecraft/world/entity/Pose;)V",
         at = @At("HEAD"), cancellable = true)
-    private void aerogel$pose(@Coerce Object pose, CallbackInfo callbackInfo) {
-        if (aerogel$poseOverride) return;
-        Object previous = EventHooks.call(this, "getPose");
+    private void aerogel$pose(Pose pose, CallbackInfo callbackInfo) {
+        if (aerogel$poseOverride || !EventHooks.hasListeners(EntityPoseChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        Pose previous = self.getPose();
         if (previous == pose) return;
         EntityPoseChangeEvent event = new EntityPoseChangeEvent(
-            EventHooks.cast(this), EventHooks.cast(previous), EventHooks.cast(pose));
+            self, previous, pose);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.pose() != pose) {
             aerogel$poseOverride = true;
             try {
-                EventHooks.call(this, "setPose", event.pose());
+                self.setPose(event.pose());
             } finally {
                 aerogel$poseOverride = false;
             }
@@ -224,19 +230,20 @@ abstract class EntityMixin {
 
     @Inject(method = "setCustomName(Lnet/minecraft/network/chat/Component;)V",
         at = @At("HEAD"), cancellable = true)
-    private void aerogel$customName(@Coerce Object customName, CallbackInfo callbackInfo) {
-        if (aerogel$customNameOverride) return;
-        Object previous = EventHooks.call(this, "getCustomName");
+    private void aerogel$customName(Component customName, CallbackInfo callbackInfo) {
+        if (aerogel$customNameOverride || !EventHooks.hasListeners(EntityCustomNameChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        Component previous = self.getCustomName();
         if (Objects.equals(previous, customName)) return;
         EntityCustomNameChangeEvent event = new EntityCustomNameChangeEvent(
-            EventHooks.cast(this), EventHooks.cast(previous), EventHooks.cast(customName));
+            self, previous, customName);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (!Objects.equals(event.customName(), customName)) {
             aerogel$customNameOverride = true;
             try {
-                EventHooks.call(this, "setCustomName", event.customName());
+                self.setCustomName(event.customName());
             } finally {
                 aerogel$customNameOverride = false;
             }
@@ -246,18 +253,19 @@ abstract class EntityMixin {
 
     @Inject(method = "setInvisible(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$visibility(boolean invisible, CallbackInfo callbackInfo) {
-        if (aerogel$visibilityOverride) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isInvisible");
+        if (aerogel$visibilityOverride || !EventHooks.hasListeners(EntityVisibilityChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        boolean previous = self.isInvisible();
         if (previous == invisible) return;
         EntityVisibilityChangeEvent event = new EntityVisibilityChangeEvent(
-            EventHooks.cast(this), previous, invisible);
+            self, previous, invisible);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.invisible() != invisible) {
             aerogel$visibilityOverride = true;
             try {
-                EventHooks.call(this, "setInvisible", event.invisible());
+                self.setInvisible(event.invisible());
             } finally {
                 aerogel$visibilityOverride = false;
             }
@@ -267,18 +275,19 @@ abstract class EntityMixin {
 
     @Inject(method = "setNoGravity(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$gravity(boolean noGravity, CallbackInfo callbackInfo) {
-        if (aerogel$gravityOverride) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isNoGravity");
+        if (aerogel$gravityOverride || !EventHooks.hasListeners(EntityGravityChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        boolean previous = self.isNoGravity();
         if (previous == noGravity) return;
         EntityGravityChangeEvent event = new EntityGravityChangeEvent(
-            EventHooks.cast(this), previous, noGravity);
+            self, previous, noGravity);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.noGravity() != noGravity) {
             aerogel$gravityOverride = true;
             try {
-                EventHooks.call(this, "setNoGravity", event.noGravity());
+                self.setNoGravity(event.noGravity());
             } finally {
                 aerogel$gravityOverride = false;
             }
@@ -288,18 +297,19 @@ abstract class EntityMixin {
 
     @Inject(method = "setSilent(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$silent(boolean silent, CallbackInfo callbackInfo) {
-        if (aerogel$silentOverride) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isSilent");
+        if (aerogel$silentOverride || !EventHooks.hasListeners(EntitySilentChangeEvent.class)) return;
+        Entity self = (Entity) (Object) this;
+        boolean previous = self.isSilent();
         if (previous == silent) return;
         EntitySilentChangeEvent event = new EntitySilentChangeEvent(
-            EventHooks.cast(this), previous, silent);
+            self, previous, silent);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.silent() != silent) {
             aerogel$silentOverride = true;
             try {
-                EventHooks.call(this, "setSilent", event.silent());
+                self.setSilent(event.silent());
             } finally {
                 aerogel$silentOverride = false;
             }
@@ -310,18 +320,19 @@ abstract class EntityMixin {
     @Inject(method = "setShiftKeyDown(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$sneaking(boolean sneaking, CallbackInfo callbackInfo) {
         if (aerogel$playerStateOverride
-            || !EventHooks.isInstance(this, "net.minecraft.server.level.ServerPlayer")) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isShiftKeyDown");
+            || !EventHooks.hasListeners(PlayerSneakChangeEvent.class)
+            || !((Object) this instanceof ServerPlayer player)) return;
+        boolean previous = player.isShiftKeyDown();
         if (previous == sneaking) return;
         PlayerSneakChangeEvent event = new PlayerSneakChangeEvent(
-            EventHooks.cast(this), previous, sneaking);
+            player, previous, sneaking);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.sneaking() != sneaking) {
             aerogel$playerStateOverride = true;
             try {
-                EventHooks.call(this, "setShiftKeyDown", event.sneaking());
+                player.setShiftKeyDown(event.sneaking());
             } finally {
                 aerogel$playerStateOverride = false;
             }
@@ -332,18 +343,19 @@ abstract class EntityMixin {
     @Inject(method = "setSwimming(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$swimming(boolean swimming, CallbackInfo callbackInfo) {
         if (aerogel$playerStateOverride
-            || !EventHooks.isInstance(this, "net.minecraft.server.level.ServerPlayer")) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isSwimming");
+            || !EventHooks.hasListeners(PlayerSwimChangeEvent.class)
+            || !((Object) this instanceof ServerPlayer player)) return;
+        boolean previous = player.isSwimming();
         if (previous == swimming) return;
         PlayerSwimChangeEvent event = new PlayerSwimChangeEvent(
-            EventHooks.cast(this), previous, swimming);
+            player, previous, swimming);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.swimming() != swimming) {
             aerogel$playerStateOverride = true;
             try {
-                EventHooks.call(this, "setSwimming", event.swimming());
+                player.setSwimming(event.swimming());
             } finally {
                 aerogel$playerStateOverride = false;
             }

@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "プラグイン %s の再読み込みに %s 秒かかりましたが失敗しました",
   "commands.aerogel.plugins.unknown": "不明なプラグイン: %s",
   "commands.aerogel.plugins.mixin_notice": "%s の一部の Mixin 変更は、サーバーを再起動するまで反映されない場合があります",
-  "commands.aerogel.tps": "TPS (1分、5分、15分): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1分、5分、15分): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "受信パケットキューのサンプルはまだ記録されていません。",
+  "commands.aerogel.networkstats.summary": "パケットキュー遅延（%s パケット、%s 秒）: 平均 %s ms | p50 %s ms | p95 %s ms | p99 %s ms | 最大 %s ms",
+  "commands.aerogel.networkstats.paths": "アイドルポンプ: %s%%（%s）| ティック境界: %s%%（%s）",
+  "commands.aerogel.networkstats.reset": "受信パケットキュー統計をリセットしました。",
+  "commands.aerogel.networkstats.mode.aerogel": "パケット処理モード: Aerogel アイドルポンプ。",
+  "commands.aerogel.networkstats.mode.vanilla": "パケット処理モード: バニラのティック境界。",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "パケット処理モードを Aerogel アイドルポンプに変更し、統計をリセットしました。",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "パケット処理モードをバニラのティック境界に変更し、統計をリセットしました。"
 }

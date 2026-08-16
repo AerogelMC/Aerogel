@@ -4,7 +4,16 @@ import dev.aerogel.api.event.block.BlockPlaceEvent;
 import dev.aerogel.api.event.block.BlockStateChangeEvent;
 import dev.aerogel.loader.event.BlockChangeContext;
 import dev.aerogel.loader.event.EventHooks;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -13,14 +22,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.minecraft.world.item.BlockItem")
 abstract class BlockItemMixin {
+    @Shadow protected abstract boolean placeBlock(BlockPlaceContext context, BlockState state);
+    @Shadow private BlockState updateBlockStateFromTag(
+        BlockPos position, Level level, ItemStack item, BlockState state) {
+        throw new AssertionError();
+    }
+
     @Inject(method = "place(Lnet/minecraft/world/item/context/BlockPlaceContext;)"
         + "Lnet/minecraft/world/InteractionResult;", at = @At("HEAD"), cancellable = true)
-    private void aerogel$place(@Coerce Object context, CallbackInfoReturnable<Object> callbackInfo) {
-        BlockPlaceEvent event = new BlockPlaceEvent(EventHooks.cast(this), EventHooks.cast(context));
+    private void aerogel$place(
+        BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> callbackInfo
+    ) {
+        if (!EventHooks.hasListeners(BlockPlaceEvent.class)) return;
+        BlockPlaceEvent event = new BlockPlaceEvent((BlockItem) (Object) this, context);
         EventHooks.post(event);
         if (event.isCancelled()) {
-            callbackInfo.setReturnValue(EventHooks.staticField(
-                this, "net.minecraft.world.InteractionResult", "FAIL"));
+            callbackInfo.setReturnValue(InteractionResult.FAIL);
         }
     }
 
@@ -32,14 +49,16 @@ abstract class BlockItemMixin {
             + "Lnet/minecraft/world/level/block/state/BlockState;)Z")
     )
     private boolean aerogel$placeBlockWithContext(
-        @Coerce Object blockItem, @Coerce Object context, @Coerce Object state
+        BlockItem blockItem, BlockPlaceContext context, BlockState state
     ) {
-        Object player = EventHooks.call(context, "getPlayer");
-        Object position = EventHooks.call(context, "getClickedPos");
-        Object location = player == null ? null : EventHooks.call(player, "position");
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            return placeBlock(context, state);
+        }
+        Player player = context.getPlayer();
+        BlockPos position = context.getClickedPos();
         return BlockChangeContext.call(
-            BlockStateChangeEvent.Reason.PLAYER_PLACE, player, position, location,
-            () -> (Boolean) EventHooks.call(blockItem, "placeBlock", context, state));
+            BlockStateChangeEvent.Reason.PLAYER_PLACE, player, position,
+            player == null ? null : player.position(), () -> placeBlock(context, state));
     }
 
     @Redirect(
@@ -51,16 +70,17 @@ abstract class BlockItemMixin {
             + "Lnet/minecraft/world/level/block/state/BlockState;)"
             + "Lnet/minecraft/world/level/block/state/BlockState;")
     )
-    @Coerce
-    private Object aerogel$applyPlacementStateWithContext(
-        @Coerce Object blockItem, @Coerce Object position, @Coerce Object level,
-        @Coerce Object item, @Coerce Object state, @Coerce Object originalContext
+    private BlockState aerogel$applyPlacementStateWithContext(
+        BlockItem blockItem, BlockPos position, Level level,
+        ItemStack item, BlockState state, BlockPlaceContext originalContext
     ) {
-        Object player = EventHooks.call(originalContext, "getPlayer");
-        Object location = player == null ? null : EventHooks.call(player, "position");
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            return updateBlockStateFromTag(position, level, item, state);
+        }
+        Player player = originalContext.getPlayer();
         return BlockChangeContext.call(
-            BlockStateChangeEvent.Reason.PLAYER_PLACE, player, position, location,
-            () -> EventHooks.call(blockItem, "updateBlockStateFromTag",
-                position, level, item, state));
+            BlockStateChangeEvent.Reason.PLAYER_PLACE, player, position,
+            player == null ? null : player.position(),
+            () -> updateBlockStateFromTag(position, level, item, state));
     }
 }

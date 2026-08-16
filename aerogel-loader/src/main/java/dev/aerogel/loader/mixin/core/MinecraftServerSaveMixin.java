@@ -15,6 +15,7 @@ abstract class MinecraftServerSaveMixin {
         boolean suppressLog, boolean flush, boolean force,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
+        if (!EventHooks.hasListeners(ServerSaveStartEvent.class)) return;
         ServerSaveStartEvent event = new ServerSaveStartEvent(
             EventHooks.cast(this), suppressLog, flush, force);
         EventHooks.post(event);
@@ -26,7 +27,9 @@ abstract class MinecraftServerSaveMixin {
         boolean suppressLog, boolean flush, boolean force,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        EventHooks.post(new ServerSaveEndEvent(
-            EventHooks.cast(this), suppressLog, flush, force, callbackInfo.getReturnValueZ()));
+        if (EventHooks.hasListeners(ServerSaveEndEvent.class)) {
+            EventHooks.post(new ServerSaveEndEvent(
+                EventHooks.cast(this), suppressLog, flush, force, callbackInfo.getReturnValueZ()));
+        }
     }
 }

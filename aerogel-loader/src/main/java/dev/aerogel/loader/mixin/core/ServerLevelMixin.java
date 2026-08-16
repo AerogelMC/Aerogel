@@ -24,8 +24,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.particles.ExplosionParticleInfo;
+import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.util.RandomSource;
+import net.minecraft.util.random.WeightedList;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.ExplosionDamageCalculator;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.saveddata.WeatherData;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -48,12 +62,15 @@ abstract class ServerLevelMixin {
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
     )
     private void aerogel$scheduledBlockTick(
-        @Coerce Object state, @Coerce Object level, @Coerce Object position,
-        @Coerce Object random
+        BlockState state, ServerLevel level, BlockPos position, RandomSource random
     ) {
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            state.tick(level, position, random);
+            return;
+        }
         BlockChangeContext.run(
             BlockStateChangeEvent.Reason.SCHEDULED_TICK, null, position, null,
-            () -> EventHooks.call(state, "tick", level, position, random));
+            () -> state.tick(level, position, random));
     }
 
     @Redirect(
@@ -65,12 +82,15 @@ abstract class ServerLevelMixin {
             + "Lnet/minecraft/world/level/block/state/BlockState;)V")
     )
     private void aerogel$scheduledFluidTick(
-        @Coerce Object fluidState, @Coerce Object level, @Coerce Object position,
-        @Coerce Object blockState
+        FluidState fluidState, ServerLevel level, BlockPos position, BlockState blockState
     ) {
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            fluidState.tick(level, position, blockState);
+            return;
+        }
         BlockChangeContext.run(
             BlockStateChangeEvent.Reason.FLUID, null, position, null,
-            () -> EventHooks.call(fluidState, "tick", level, position, blockState));
+            () -> fluidState.tick(level, position, blockState));
     }
 
     @Redirect(
@@ -80,12 +100,15 @@ abstract class ServerLevelMixin {
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
     )
     private void aerogel$randomBlockTick(
-        @Coerce Object state, @Coerce Object level, @Coerce Object position,
-        @Coerce Object random
+        BlockState state, ServerLevel level, BlockPos position, RandomSource random
     ) {
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            state.randomTick(level, position, random);
+            return;
+        }
         BlockChangeContext.run(
             BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
-            () -> EventHooks.call(state, "randomTick", level, position, random));
+            () -> state.randomTick(level, position, random));
     }
 
     @Redirect(
@@ -95,62 +118,39 @@ abstract class ServerLevelMixin {
             + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/util/RandomSource;)V")
     )
     private void aerogel$randomFluidTick(
-        @Coerce Object state, @Coerce Object level, @Coerce Object position,
-        @Coerce Object random
+        FluidState state, ServerLevel level, BlockPos position, RandomSource random
     ) {
+        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
+            state.randomTick(level, position, random);
+            return;
+        }
         BlockChangeContext.run(
             BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
-            () -> EventHooks.call(state, "randomTick", level, position, random));
-    }
-
-    @Redirect(
-        method = "tickNonPassenger(Lnet/minecraft/world/entity/Entity;)V",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;tick()V")
-    )
-    private void aerogel$entityTick(@Coerce Object entity) {
-        aerogel$withEntityBlockChangeContext(entity, "tick");
-    }
-
-    @Redirect(
-        method = "tickPassenger(Lnet/minecraft/world/entity/Entity;"
-            + "Lnet/minecraft/world/entity/Entity;)V",
-        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;rideTick()V")
-    )
-    private void aerogel$passengerTick(@Coerce Object entity) {
-        aerogel$withEntityBlockChangeContext(entity, "rideTick");
-    }
-
-    @Unique
-    private void aerogel$withEntityBlockChangeContext(Object entity, String method) {
-        Object position = EventHooks.call(entity, "blockPosition");
-        Object location = EventHooks.call(entity, "position");
-        BlockChangeContext.run(
-            BlockStateChangeEvent.Reason.ENTITY_ACTION, entity, position, location,
-            () -> EventHooks.call(entity, method));
+            () -> state.randomTick(level, position, random));
     }
 
     @Unique
     public String identifier() {
-        return String.valueOf(EventHooks.call(EventHooks.call(this, "dimension"), "identifier"));
+        return String.valueOf(((ServerLevel) (Object) this).dimension().identifier());
     }
 
     @Unique
     public Collection<Entity> entities() {
-        Iterable<?> entities = (Iterable<?>) EventHooks.call(this, "getAllEntities");
+        Iterable<Entity> entities = ((ServerLevel) (Object) this).getAllEntities();
         List<Entity> result = new ArrayList<>();
-        for (Object entity : entities) result.add(EventHooks.cast(entity));
+        for (Entity entity : entities) result.add(entity);
         return List.copyOf(result);
     }
 
     @Unique
     public Optional<Entity> findEntity(UUID uniqueId) {
-        return Optional.ofNullable(EventHooks.cast(EventHooks.call(this, "getEntityInAnyDimension",
-            Objects.requireNonNull(uniqueId, "uniqueId"))));
+        return Optional.ofNullable(((ServerLevel) (Object) this).getEntityInAnyDimension(
+            Objects.requireNonNull(uniqueId, "uniqueId")));
     }
 
     @Unique
     public Optional<Entity> findEntity(int entityId) {
-        return Optional.ofNullable(EventHooks.cast(EventHooks.call(this, "getEntity", entityId)));
+        return Optional.ofNullable(((ServerLevel) (Object) this).getEntity(entityId));
     }
 
     @Unique
@@ -182,12 +182,12 @@ abstract class ServerLevelMixin {
         if (durationTicks < 0) throw new IllegalArgumentException("durationTicks must not be negative");
         boolean raining = value > 0;
         boolean thundering = value > 1;
-        Object weather = EventHooks.call(this, "getWeatherData");
-        EventHooks.call(weather, "setClearWeatherTime", value == 0 ? durationTicks : 0);
-        EventHooks.call(weather, "setRainTime", raining ? durationTicks : 0);
-        EventHooks.call(weather, "setThunderTime", thundering ? durationTicks : 0);
-        EventHooks.call(weather, "setRaining", raining);
-        EventHooks.call(weather, "setThundering", thundering);
+        WeatherData weather = ((ServerLevel) (Object) this).getWeatherData();
+        weather.setClearWeatherTime(value == 0 ? durationTicks : 0);
+        weather.setRainTime(raining ? durationTicks : 0);
+        weather.setThunderTime(thundering ? durationTicks : 0);
+        weather.setRaining(raining);
+        weather.setThundering(thundering);
     }
 
     @Unique
@@ -207,27 +207,26 @@ abstract class ServerLevelMixin {
 
     @Unique
     public BlockState block(int x, int y, int z) {
-        return EventHooks.cast(EventHooks.call(this, "getBlockState", EventHooks.construct(this,
-            "net.minecraft.core.BlockPos", x, y, z)));
+        return ((ServerLevel) (Object) this).getBlockState(new BlockPos(x, y, z));
     }
 
     @Unique
     public boolean block(int x, int y, int z, BlockState state, int flags) {
-        return (boolean) EventHooks.call(this, "setBlock", EventHooks.construct(this,
-            "net.minecraft.core.BlockPos", x, y, z), Objects.requireNonNull(state, "state"), flags);
+        return ((ServerLevel) (Object) this).setBlock(
+            new BlockPos(x, y, z), Objects.requireNonNull(state, "state"), flags);
     }
 
     @Unique
     public boolean spawn(Entity entity) {
-        return (boolean) EventHooks.call(this, "addFreshEntity", Objects.requireNonNull(entity, "entity"));
+        return ((ServerLevel) (Object) this).addFreshEntity(
+            Objects.requireNonNull(entity, "entity"));
     }
 
     @Unique
     public boolean teleport(ServerPlayer player, double x, double y, double z) {
         Objects.requireNonNull(player, "player");
         return teleport(player, x, y, z,
-            ((Number) EventHooks.call(player, "getYRot")).floatValue(),
-            ((Number) EventHooks.call(player, "getXRot")).floatValue());
+            player.getYRot(), player.getXRot());
     }
 
     @Unique
@@ -235,18 +234,22 @@ abstract class ServerLevelMixin {
         ServerPlayer player, double x, double y, double z, float yaw, float pitch
     ) {
         Objects.requireNonNull(player, "player");
-        return (boolean) EventHooks.call(player, "teleportTo", this,
+        return player.teleportTo((ServerLevel) (Object) this,
             x, y, z, Set.of(), yaw, pitch, true);
     }
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$worldLoaded(CallbackInfo callbackInfo) {
-        EventHooks.post(new WorldLoadEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(WorldLoadEvent.class)) {
+            EventHooks.post(new WorldLoadEvent(EventHooks.cast(this)));
+        }
     }
 
     @Inject(method = "close()V", at = @At("HEAD"))
     private void aerogel$worldUnloaded(CallbackInfo callbackInfo) {
-        EventHooks.post(new WorldUnloadEvent(EventHooks.cast(this)));
+        if (EventHooks.hasListeners(WorldUnloadEvent.class)) {
+            EventHooks.post(new WorldUnloadEvent(EventHooks.cast(this)));
+        }
     }
 
     @Inject(
@@ -262,7 +265,8 @@ abstract class ServerLevelMixin {
             callbackInfo.setReturnValue(true);
             return;
         }
-        if (EventHooks.isInstance(entity, "net.minecraft.world.entity.projectile.Projectile")) {
+        if (EventHooks.hasListeners(ProjectileLaunchEvent.class)
+            && entity instanceof Projectile) {
             ProjectileLaunchEvent projectileEvent = new ProjectileLaunchEvent(
                 EventHooks.cast(this), EventHooks.cast(entity));
             EventHooks.post(projectileEvent);
@@ -271,30 +275,38 @@ abstract class ServerLevelMixin {
                 return;
             }
         }
-        EntitySpawnEvent event = new EntitySpawnEvent(
-            EventHooks.cast(this), EventHooks.cast(entity));
-        EventHooks.post(event);
-        if (event.isCancelled()) {
-            callbackInfo.setReturnValue(false);
+        if (EventHooks.hasListeners(EntitySpawnEvent.class)) {
+            EntitySpawnEvent event = new EntitySpawnEvent(
+                EventHooks.cast(this), EventHooks.cast(entity));
+            EventHooks.post(event);
+            if (event.isCancelled()) {
+                callbackInfo.setReturnValue(false);
+            }
         }
     }
 
     @Inject(method = "startTickingChunk(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
         at = @At("RETURN"))
     private void aerogel$chunkLoaded(@Coerce Object chunk, CallbackInfo callbackInfo) {
-        EventHooks.post(new ChunkLoadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        if (EventHooks.hasListeners(ChunkLoadEvent.class)) {
+            EventHooks.post(new ChunkLoadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        }
     }
 
     @Inject(method = "unload(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
         at = @At("HEAD"))
     private void aerogel$chunkUnload(@Coerce Object chunk, CallbackInfo callbackInfo) {
-        EventHooks.post(new ChunkPreUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        if (EventHooks.hasListeners(ChunkPreUnloadEvent.class)) {
+            EventHooks.post(new ChunkPreUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        }
     }
 
     @Inject(method = "unload(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
         at = @At("RETURN"))
     private void aerogel$chunkUnloaded(@Coerce Object chunk, CallbackInfo callbackInfo) {
-        EventHooks.post(new ChunkUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        if (EventHooks.hasListeners(ChunkUnloadEvent.class)) {
+            EventHooks.post(new ChunkUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
+        }
     }
 
     @Redirect(
@@ -302,15 +314,19 @@ abstract class ServerLevelMixin {
         at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/level/saveddata/WeatherData;setRaining(Z)V")
     )
-    private void aerogel$rainChange(@Coerce Object weather, boolean raining) {
-        boolean previous = (Boolean) EventHooks.call(weather, "isRaining");
+    private void aerogel$rainChange(WeatherData weather, boolean raining) {
+        if (!EventHooks.hasListeners(RainChangeEvent.class)) {
+            weather.setRaining(raining);
+            return;
+        }
+        boolean previous = weather.isRaining();
         if (previous == raining) {
-            EventHooks.call(weather, "setRaining", raining);
+            weather.setRaining(raining);
             return;
         }
         RainChangeEvent event = new RainChangeEvent(EventHooks.cast(this), raining);
         EventHooks.post(event);
-        if (!event.isCancelled()) EventHooks.call(weather, "setRaining", raining);
+        if (!event.isCancelled()) weather.setRaining(raining);
     }
 
     @Redirect(
@@ -318,31 +334,35 @@ abstract class ServerLevelMixin {
         at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/level/saveddata/WeatherData;setThundering(Z)V")
     )
-    private void aerogel$thunderChange(@Coerce Object weather, boolean thundering) {
-        boolean previous = (Boolean) EventHooks.call(weather, "isThundering");
+    private void aerogel$thunderChange(WeatherData weather, boolean thundering) {
+        if (!EventHooks.hasListeners(ThunderChangeEvent.class)) {
+            weather.setThundering(thundering);
+            return;
+        }
+        boolean previous = weather.isThundering();
         if (previous == thundering) {
-            EventHooks.call(weather, "setThundering", thundering);
+            weather.setThundering(thundering);
             return;
         }
         ThunderChangeEvent event = new ThunderChangeEvent(EventHooks.cast(this), thundering);
         EventHooks.post(event);
-        if (!event.isCancelled()) EventHooks.call(weather, "setThundering", thundering);
+        if (!event.isCancelled()) weather.setThundering(thundering);
     }
 
     @Inject(method = "explode", at = @At("HEAD"), cancellable = true)
     private void aerogel$explode(
-        @Coerce Object source,
-        @Coerce Object damageSource,
-        @Coerce Object calculator,
+        Entity source,
+        DamageSource damageSource,
+        ExplosionDamageCalculator calculator,
         double x, double y, double z, float radius, boolean fire,
-        @Coerce Object interaction,
-        @Coerce Object smallParticle,
-        @Coerce Object largeParticle,
-        @Coerce Object particles,
-        @Coerce Object sound,
+        Level.ExplosionInteraction interaction,
+        ParticleOptions smallParticle,
+        ParticleOptions largeParticle,
+        WeightedList<ExplosionParticleInfo> particles,
+        Holder<SoundEvent> sound,
         CallbackInfo callbackInfo
     ) {
-        if (aerogel$explosionOverride) return;
+        if (aerogel$explosionOverride || !EventHooks.hasListeners(ExplosionEvent.class)) return;
         ExplosionEvent event = new ExplosionEvent(
             EventHooks.cast(this), EventHooks.cast(source), x, y, z, radius, fire);
         EventHooks.post(event);
@@ -355,7 +375,7 @@ abstract class ServerLevelMixin {
             || event.fire() != fire) {
             aerogel$explosionOverride = true;
             try {
-                EventHooks.call(this, "explode", source, damageSource, calculator,
+                ((ServerLevel) (Object) this).explode(source, damageSource, calculator,
                     event.x(), event.y(), event.z(), event.radius(), event.fire(), interaction,
                     smallParticle, largeParticle, particles, sound);
             } finally {

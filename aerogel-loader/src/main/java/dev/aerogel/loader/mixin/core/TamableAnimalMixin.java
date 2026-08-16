@@ -2,6 +2,8 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.api.event.entity.EntityTameEvent;
 import dev.aerogel.loader.event.EventHooks;
+import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -15,17 +17,17 @@ abstract class TamableAnimalMixin {
 
     @Inject(method = "tame(Lnet/minecraft/world/entity/player/Player;)V",
         at = @At("HEAD"), cancellable = true)
-    private void aerogel$tame(@Coerce Object player, CallbackInfo callbackInfo) {
-        if (aerogel$tameOverride) return;
-        EntityTameEvent event = new EntityTameEvent(
-            EventHooks.cast(this), EventHooks.cast(player));
+    private void aerogel$tame(Player player, CallbackInfo callbackInfo) {
+        if (aerogel$tameOverride || !EventHooks.hasListeners(EntityTameEvent.class)) return;
+        TamableAnimal self = (TamableAnimal) (Object) this;
+        EntityTameEvent event = new EntityTameEvent(self, player);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.player() != player) {
             aerogel$tameOverride = true;
             try {
-                EventHooks.call(this, "tame", event.player());
+                self.tame(event.player());
             } finally {
                 aerogel$tameOverride = false;
             }

@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "No se pudo recargar el plugin %s después de %s segundos",
   "commands.aerogel.plugins.unknown": "Plugin desconocido: %s",
   "commands.aerogel.plugins.mixin_notice": "Es posible que algunos cambios de Mixin de %s no se apliquen hasta que se reinicie el servidor",
-  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "Todavía no se han registrado muestras de la cola de paquetes entrantes.",
+  "commands.aerogel.networkstats.summary": "Latencia de la cola de paquetes (%s paquetes en %s segundos): media %s ms | p50 %s ms | p95 %s ms | p99 %s ms | máx. %s ms",
+  "commands.aerogel.networkstats.paths": "Bomba inactiva: %s%% (%s) | Límite de tick: %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "Se restablecieron las estadísticas de la cola de paquetes entrantes.",
+  "commands.aerogel.networkstats.mode.aerogel": "Modo de procesamiento: bomba inactiva de Aerogel.",
+  "commands.aerogel.networkstats.mode.vanilla": "Modo de procesamiento: límite de tick de vanilla.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "Se activó la bomba inactiva de Aerogel y se restablecieron las estadísticas.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "Se activó el límite de tick de vanilla y se restablecieron las estadísticas."
 }

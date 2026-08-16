@@ -6,10 +6,17 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.item.ItemStack;
 import java.util.function.Predicate;
+import net.minecraft.world.entity.player.Abilities;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.entity.Relative;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Inventory;
+import java.util.Set;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class ServerPlayer extends Player {
     public ServerGamePacketListenerImpl connection;
+    public AbstractContainerMenu containerMenu;
     @Override public ServerLevel level() { return null; }
     public void setDisplayName(Component displayName) { }
     public void clearDisplayName() { }
@@ -38,4 +45,16 @@ public class ServerPlayer extends Player {
     public void sendOverlayMessage(Component message) { }
     public void giveExperiencePoints(int points) { }
     public void giveExperienceLevels(int levels) { }
+    public Abilities getAbilities() { return null; }
+    public void onUpdateAbilities() { }
+    public ItemStack getMainHandItem() { return null; }
+    public ItemStack getOffhandItem() { return null; }
+    public ClientInformation clientInformation() { return null; }
+    public java.util.OptionalInt openMenu(net.minecraft.world.MenuProvider provider) {
+        return java.util.OptionalInt.empty();
+    }
+    public void closeContainer() { }
+    public void openDialog(net.minecraft.core.Holder<net.minecraft.server.dialog.Dialog> dialog) { }
+    public Inventory getInventory() { return null; }
+    public ItemEntity drop(ItemStack stack, boolean randomThrow, boolean retainOwnership) { return null; }
 }

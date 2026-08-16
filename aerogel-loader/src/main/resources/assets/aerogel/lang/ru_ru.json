@@ -17,5 +17,13 @@
   "commands.aerogel.plugins.reload_failed": "Не удалось перезагрузить плагин %s за %s с",
   "commands.aerogel.plugins.unknown": "Неизвестный плагин: %s",
   "commands.aerogel.plugins.mixin_notice": "Некоторые изменения Mixin для %s могут не примениться до перезапуска сервера",
-  "commands.aerogel.tps": "TPS (1 мин, 5 мин, 15 мин): %s, %s, %s | MSPT: %s"
+  "commands.aerogel.tps": "TPS (1 мин, 5 мин, 15 мин): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.networkstats.empty": "Замеры очереди входящих пакетов ещё не записаны.",
+  "commands.aerogel.networkstats.summary": "Задержка очереди пакетов (%s пакетов за %s с): средняя %s мс | p50 %s мс | p95 %s мс | p99 %s мс | макс. %s мс",
+  "commands.aerogel.networkstats.paths": "Фоновая обработка: %s%% (%s) | Граница тика: %s%% (%s)",
+  "commands.aerogel.networkstats.reset": "Статистика очереди входящих пакетов сброшена.",
+  "commands.aerogel.networkstats.mode.aerogel": "Режим обработки: фоновая обработка Aerogel.",
+  "commands.aerogel.networkstats.mode.vanilla": "Режим обработки: граница тика vanilla.",
+  "commands.aerogel.networkstats.mode_changed.aerogel": "Включена фоновая обработка Aerogel, статистика сброшена.",
+  "commands.aerogel.networkstats.mode_changed.vanilla": "Включена обработка на границе тика vanilla, статистика сброшена."
 }

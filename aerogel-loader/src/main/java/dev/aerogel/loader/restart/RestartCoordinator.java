@@ -3,11 +3,19 @@ package dev.aerogel.loader.restart;
 import dev.aerogel.loader.command.CommandTranslations;
 import dev.aerogel.loader.command.InteractiveConsole;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.internal.RestartGameListenerBridge;
+import dev.aerogel.loader.internal.ServerCommonConnectionBridge;
+import net.minecraft.network.Connection;
+import net.minecraft.network.PacketListener;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.common.ClientboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ClientboundTransferPacket;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import org.apache.logging.log4j.LogManager;
 
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +55,8 @@ public final class RestartCoordinator {
     private static final Set<String> RETURNING_ADDRESSES = new HashSet<>();
     private static final Set<Object> FROZEN_CONNECTIONS =
         Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+    private static final Set<Object> FROZEN_LISTENERS =
+        Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
     private static volatile RestartState state;
     private static volatile String completedSeconds;
     private static volatile long readyAt;
@@ -62,7 +72,8 @@ public final class RestartCoordinator {
         return REQUESTED.get();
     }
 
-    public static boolean request(Object server) {
+    public static boolean request(Object serverObject) {
+        MinecraftServer server = (MinecraftServer) serverObject;
         if (!available() || !REQUESTED.compareAndSet(false, true)) {
             return false;
         }
@@ -70,15 +81,14 @@ public final class RestartCoordinator {
         List<HeldConnection> held = new ArrayList<>();
         try {
             long startedAt = System.currentTimeMillis();
-            Object playerList = EventHooks.call(server, "getPlayerList");
-            List<?> players = new ArrayList<>((List<?>) EventHooks.call(playerList, "getPlayers"));
+            List<ServerPlayer> players = new ArrayList<>(server.getPlayerList().getPlayers());
             held = new ArrayList<>(players.size());
 
-            for (Object player : players) {
+            for (ServerPlayer player : players) {
                 send(player, STARTING_KEY, STARTING_FALLBACK);
-                Object listener = EventHooks.field(player, "connection");
-                Object connection = EventHooks.field(listener, "connection");
-                UUID uuid = (UUID) EventHooks.call(player, "getUUID");
+                ServerGamePacketListenerImpl listener = player.connection;
+                Connection connection = ((ServerCommonConnectionBridge) listener).aerogel$connection();
+                UUID uuid = player.getUUID();
                 String language = language(player);
                 held.add(new HeldConnection(connection, listener, RestartAddressRegistry.address(connection), uuid,
                     language, remoteHost(connection)));
@@ -90,14 +100,15 @@ public final class RestartCoordinator {
                 FROZEN_CONNECTIONS.add(connection.connection());
             }
             for (HeldConnection connection : held) {
-                EventHooks.call(connection.originalListener(), "removePlayerFromWorld");
+                ((RestartGameListenerBridge) connection.originalListener())
+                    .aerogel$removePlayerFromWorld();
                 installHoldingListener(connection);
             }
 
             state = new RestartState(startedAt, List.copyOf(held));
             System.out.printf("[Aerogel] Restarting server; holding %d player connection(s).%n", held.size());
             InteractiveConsole.stop();
-            EventHooks.call(server, "halt", false);
+            server.halt(false);
             return true;
         } catch (RuntimeException exception) {
             for (HeldConnection connection : held) {
@@ -183,12 +194,13 @@ public final class RestartCoordinator {
         }
     }
 
-    public static void playerJoined(Object player) {
+    public static void playerJoined(Object playerObject) {
+        ServerPlayer player = (ServerPlayer) playerObject;
         String elapsed = completedSeconds;
         if (elapsed == null) {
             return;
         }
-        UUID uuid = (UUID) EventHooks.call(player, "getUUID");
+        UUID uuid = player.getUUID();
         synchronized (RETURNING_PLAYERS) {
             if (!RETURNING_PLAYERS.remove(uuid)) {
                 return;
@@ -197,7 +209,8 @@ public final class RestartCoordinator {
         send(player, COMPLETE_KEY, COMPLETE_FALLBACK, elapsed);
     }
 
-    public static boolean acceptsRestartTransfer(Object connection) {
+    public static boolean acceptsRestartTransfer(Object connectionObject) {
+        Connection connection = (Connection) connectionObject;
         long started = readyAt;
         if (GENERATION <= 0 || started == 0L
             || System.currentTimeMillis() - started > TRANSFER_ACCEPT_WINDOW_MILLIS) {
@@ -210,11 +223,12 @@ public final class RestartCoordinator {
         }
     }
 
-    public static boolean isReturningPlayer(Object player) {
+    public static boolean isReturningPlayer(Object playerObject) {
+        ServerPlayer player = (ServerPlayer) playerObject;
         if (completedSeconds == null) {
             return false;
         }
-        UUID uuid = (UUID) EventHooks.call(player, "getUUID");
+        UUID uuid = player.getUUID();
         synchronized (RETURNING_PLAYERS) {
             return RETURNING_PLAYERS.contains(uuid);
         }
@@ -229,6 +243,10 @@ public final class RestartCoordinator {
             && !type.equals("net.minecraft.network.protocol.common.ClientboundTransferPacket")
             && !type.equals("net.minecraft.network.protocol.common.ClientboundDisconnectPacket")
             && !type.equals("net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket");
+    }
+
+    public static boolean suppressInbound(Object listener) {
+        return FROZEN_LISTENERS.contains(listener);
     }
 
     private static void holdConnections(RestartState current) {
@@ -276,49 +294,13 @@ public final class RestartCoordinator {
     }
 
     private static void installHoldingListener(HeldConnection held) {
-        Object original = held.originalListener();
-        ClassLoader loader = original.getClass().getClassLoader();
-        try {
-            Class<?> listenerType = Class.forName(
-                "net.minecraft.network.protocol.game.ServerGamePacketListener", true, loader);
-            InvocationHandler handler = (proxy, method, arguments) -> holdingInvocation(
-                proxy, original, method, arguments);
-            Object replacement = Proxy.newProxyInstance(loader, new Class<?>[]{listenerType}, handler);
-            EventHooks.setField(held.connection(), "packetListener", replacement);
-            EventHooks.setField(held.connection(), "disconnectListener", replacement);
-        } catch (ClassNotFoundException exception) {
-            throw new IllegalStateException("Cannot create restart holding listener", exception);
-        }
-    }
-
-    private static Object holdingInvocation(Object proxy, Object original, Method method, Object[] arguments)
-        throws Throwable {
-        String name = method.getName();
-        if (method.getDeclaringClass() == Object.class) {
-            return switch (name) {
-                case "toString" -> "Aerogel restart holding listener";
-                case "hashCode" -> System.identityHashCode(proxy);
-                case "equals" -> proxy == arguments[0];
-                default -> null;
-            };
-        }
-        if (name.startsWith("handle") || name.equals("onDisconnect")) {
-            return defaultValue(method.getReturnType());
-        }
-        if (name.equals("isAcceptingMessages") || name.equals("shouldHandleMessage")) {
-            return true;
-        }
-        try {
-            return method.invoke(original, arguments);
-        } catch (InvocationTargetException exception) {
-            throw exception.getCause();
-        }
+        FROZEN_LISTENERS.add(held.originalListener());
     }
 
     private static void tickConnections(List<HeldConnection> connections) {
         for (HeldConnection held : connections) {
-            if ((boolean) EventHooks.call(held.connection(), "isConnected")) {
-                EventHooks.call(held.connection(), "tick");
+            if (held.connection().isConnected()) {
+                held.connection().tick();
             }
         }
     }
@@ -326,10 +308,7 @@ public final class RestartCoordinator {
     private static void sendKeepAlive(List<HeldConnection> connections, long id) {
         for (HeldConnection held : connections) {
             try {
-                Object packet = construct(held.connection(),
-                    "net.minecraft.network.protocol.common.ClientboundKeepAlivePacket",
-                    new Class<?>[]{long.class}, id);
-                EventHooks.call(held.connection(), "send", packet);
+                held.connection().send(new ClientboundKeepAlivePacket(id));
             } catch (RuntimeException exception) {
                 System.err.println("[Aerogel] Could not keep a player connection alive: " + exception.getMessage());
             }
@@ -342,19 +321,8 @@ public final class RestartCoordinator {
                 disconnect(held, FAILED_KEY, FAILED_FALLBACK);
                 continue;
             }
-            Object packet = construct(held.connection(),
-                "net.minecraft.network.protocol.common.ClientboundTransferPacket",
-                new Class<?>[]{String.class, int.class}, held.address().host(), held.address().port());
-            EventHooks.call(held.connection(), "send", packet);
-        }
-    }
-
-    private static Object construct(Object owner, String className, Class<?>[] parameters, Object... arguments) {
-        try {
-            Class<?> type = Class.forName(className, true, owner.getClass().getClassLoader());
-            return type.getConstructor(parameters).newInstance(arguments);
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Cannot create vanilla packet " + className, exception);
+            held.connection().send(new ClientboundTransferPacket(
+                held.address().host(), held.address().port()));
         }
     }
 
@@ -366,42 +334,31 @@ public final class RestartCoordinator {
 
     private static void disconnect(HeldConnection held, String key, String fallback) {
         try {
-            Object component = component(held.connection(), held.language(), key, fallback);
-            EventHooks.call(held.connection(), "disconnect", component);
+            held.connection().disconnect(component(held.language(), key, fallback));
         } catch (RuntimeException ignored) {
             // A connection that already left needs no further cleanup.
         }
     }
 
-    private static void send(Object player, String key, String fallback, Object... arguments) {
-        Object component = component(player, language(player), key, fallback, arguments);
-        EventHooks.call(player, "sendSystemMessage", component);
+    private static void send(ServerPlayer player, String key, String fallback, Object... arguments) {
+        player.sendSystemMessage(component(language(player), key, fallback, arguments));
     }
 
-    private static Object component(Object owner, String language, String key, String fallback, Object... arguments) {
-        try {
-            Class<?> type = Class.forName(
-                "net.minecraft.network.chat.Component", true, owner.getClass().getClassLoader());
-            String localized = CommandTranslations.fallback(language, key, fallback);
-            return type.getMethod("translatableWithFallback", String.class, String.class, Object[].class)
-                .invoke(null, key, localized, arguments);
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Cannot create restart message", exception);
-        }
+    private static Component component(
+        String language, String key, String fallback, Object... arguments
+    ) {
+        String localized = CommandTranslations.fallback(language, key, fallback);
+        return Component.translatableWithFallback(key, localized, arguments);
     }
 
-    private static String language(Object player) {
-        try {
-            Object information = EventHooks.call(player, "clientInformation");
-            return (String) EventHooks.call(information, "language");
-        } catch (RuntimeException ignored) {
-            return "en_us";
-        }
+    private static String language(ServerPlayer player) {
+        String language = player.clientInformation().language();
+        return language == null ? "en_us" : language;
     }
 
-    private static String remoteHost(Object connection) {
+    private static String remoteHost(Connection connection) {
         try {
-            SocketAddress address = (SocketAddress) EventHooks.call(connection, "getRemoteAddress");
+            SocketAddress address = connection.getRemoteAddress();
             if (address instanceof InetSocketAddress internet) {
                 return internet.getAddress() == null
                     ? internet.getHostString()
@@ -411,18 +368,6 @@ public final class RestartCoordinator {
         } catch (RuntimeException ignored) {
             return "*";
         }
-    }
-
-    private static Object defaultValue(Class<?> type) {
-        if (!type.isPrimitive() || type == void.class) return null;
-        if (type == boolean.class) return false;
-        if (type == char.class) return '\0';
-        if (type == byte.class) return (byte) 0;
-        if (type == short.class) return (short) 0;
-        if (type == int.class) return 0;
-        if (type == long.class) return 0L;
-        if (type == float.class) return 0.0F;
-        return 0.0D;
     }
 
     private static void sleep(long milliseconds) {
@@ -435,10 +380,8 @@ public final class RestartCoordinator {
 
     private static void shutdownLogging() {
         try {
-            Class<?> logManager = Class.forName(
-                "org.apache.logging.log4j.LogManager", true, RestartCoordinator.class.getClassLoader());
-            logManager.getMethod("shutdown").invoke(null);
-        } catch (ReflectiveOperationException exception) {
+            LogManager.shutdown();
+        } catch (RuntimeException exception) {
             System.err.println("[Aerogel] Could not release the old log files before restart: "
                 + exception.getMessage());
         }
@@ -498,8 +441,8 @@ public final class RestartCoordinator {
     }
 
     private record HeldConnection(
-        Object connection,
-        Object originalListener,
+        Connection connection,
+        ServerGamePacketListenerImpl originalListener,
         RestartAddressRegistry.Address address,
         UUID uuid,
         String language,

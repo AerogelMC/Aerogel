@@ -4,4 +4,5 @@ import java.util.concurrent.CompletableFuture;
 
 public class Suggestions {
     public static CompletableFuture<Suggestions> empty() { return null; }
+    public java.util.List<Suggestion> getList() { return null; }
 }

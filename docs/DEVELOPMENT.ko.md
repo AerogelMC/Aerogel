@@ -980,10 +980,16 @@ Aerogel은 다음 명령어를 제공합니다.
 /plugins reload
 /plugins reload <plugin-id>
 /tps
+/networkstats
+/networkstats reset
+/networkstats mode vanilla
+/networkstats mode aerogel
 /restart
 ```
 
 `/plugins`만 입력하면 의도적으로 불완전한 명령어로 처리됩니다. `/plugins list`에는 표시 이름과 회색 `<id>`가 함께 나오며, 초기화 실패로 비활성화된 플러그인은 비활성 상태로 표시됩니다.
+
+`/networkstats`는 인바운드 패킷 큐 지연의 평균, p50, p95, p99, 최대값을 표시합니다. 또한 유휴 펌프에서 처리한 패킷과 일반 틱 경계에서 처리한 패킷을 구분합니다. `mode vanilla`와 `mode aerogel`은 같은 실행 중인 서버에서 두 경로를 전환하고 측정 구간을 초기화하므로 통제된 A/B 비교가 가능합니다. 통계 초기화와 모드 변경에는 게임 마스터 권한이 필요합니다.
 
 리로드 동작:
 

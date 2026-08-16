@@ -16,10 +16,20 @@ import dev.aerogel.api.event.player.PlayerSprintChangeEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.DeathDropCapture;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.core.Holder;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.ExperienceOrb;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -30,6 +40,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "net.minecraft.world.entity.LivingEntity")
 abstract class LivingEntityMixin {
+    @Shadow private int useItemRemaining;
     @Unique private boolean aerogel$damageOverride;
     @Unique private boolean aerogel$healOverride;
     @Unique private boolean aerogel$effectAddOverride;
@@ -49,22 +60,23 @@ abstract class LivingEntityMixin {
         cancellable = true
     )
     private void aerogel$beforeDamage(
-        @Coerce Object level,
-        @Coerce Object source,
+        ServerLevel level,
+        DamageSource source,
         float amount,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$damageOverride) return;
+        if (aerogel$damageOverride || !EventHooks.hasListeners(EntityDamageEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
         EntityDamageEvent event = new EntityDamageEvent(
-            EventHooks.cast(this), EventHooks.cast(level), EventHooks.cast(source), amount);
+            self, level, source, amount);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
         } else if (event.damageSource() != source || Float.compare(event.amount(), amount) != 0) {
             aerogel$damageOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(
-                    this, "hurtServer", level, event.damageSource(), event.amount()));
+                callbackInfo.setReturnValue(self.hurtServer(
+                    level, event.damageSource(), event.amount()));
             } finally {
                 aerogel$damageOverride = false;
             }
@@ -74,9 +86,9 @@ abstract class LivingEntityMixin {
     @Inject(method = "dropAllDeathLoot(Lnet/minecraft/server/level/ServerLevel;"
         + "Lnet/minecraft/world/damagesource/DamageSource;)V", at = @At("HEAD"))
     private void aerogel$beginDeathDrops(
-        ServerLevel level, @Coerce Object source, CallbackInfo callbackInfo
+        ServerLevel level, DamageSource source, CallbackInfo callbackInfo
     ) {
-        DeathDropCapture.begin(EventHooks.cast(this), EventHooks.cast(source));
+        DeathDropCapture.begin((LivingEntity) (Object) this, source);
     }
 
     @Redirect(method = "dropExperience(Lnet/minecraft/server/level/ServerLevel;"
@@ -92,22 +104,23 @@ abstract class LivingEntityMixin {
     @Inject(method = "dropAllDeathLoot(Lnet/minecraft/server/level/ServerLevel;"
         + "Lnet/minecraft/world/damagesource/DamageSource;)V", at = @At("RETURN"))
     private void aerogel$completeDeathDrops(
-        ServerLevel level, @Coerce Object source, CallbackInfo callbackInfo
+        ServerLevel level, DamageSource source, CallbackInfo callbackInfo
     ) {
-        DeathDropCapture.complete(level, EventHooks.cast(this), EventHooks.cast(source));
+        DeathDropCapture.complete(level, (LivingEntity) (Object) this, source);
     }
 
     @Inject(method = "heal(F)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$heal(float amount, CallbackInfo callbackInfo) {
-        if (aerogel$healOverride) return;
-        EntityHealEvent event = new EntityHealEvent(EventHooks.cast(this), amount);
+        if (aerogel$healOverride || !EventHooks.hasListeners(EntityHealEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
+        EntityHealEvent event = new EntityHealEvent(self, amount);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (Float.compare(event.amount(), amount) != 0) {
             aerogel$healOverride = true;
             try {
-                EventHooks.call(this, "heal", event.amount());
+                self.heal(event.amount());
             } finally {
                 aerogel$healOverride = false;
             }
@@ -118,19 +131,18 @@ abstract class LivingEntityMixin {
     @Inject(method = "addEffect(Lnet/minecraft/world/effect/MobEffectInstance;"
         + "Lnet/minecraft/world/entity/Entity;)Z", at = @At("HEAD"), cancellable = true)
     private void aerogel$effectAdded(
-        @Coerce Object effect, @Coerce Object source, CallbackInfoReturnable<Boolean> callbackInfo
+        MobEffectInstance effect, Entity source, CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$effectAddOverride) return;
-        EntityEffectAddEvent event = new EntityEffectAddEvent(
-            EventHooks.cast(this), EventHooks.cast(effect), EventHooks.cast(source));
+        if (aerogel$effectAddOverride || !EventHooks.hasListeners(EntityEffectAddEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
+        EntityEffectAddEvent event = new EntityEffectAddEvent(self, effect, source);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
         } else if (event.effect() != effect || event.source() != source) {
             aerogel$effectAddOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(
-                    this, "addEffect", event.effect(), event.source()));
+                callbackInfo.setReturnValue(self.addEffect(event.effect(), event.source()));
             } finally {
                 aerogel$effectAddOverride = false;
             }
@@ -139,19 +151,18 @@ abstract class LivingEntityMixin {
 
     @Inject(method = "removeEffect(Lnet/minecraft/core/Holder;)Z", at = @At("HEAD"), cancellable = true)
     private void aerogel$effectRemoved(
-        @Coerce Object effect, CallbackInfoReturnable<Boolean> callbackInfo
+        Holder<MobEffect> effect, CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$effectRemoveOverride) return;
-        EntityEffectRemoveEvent event = new EntityEffectRemoveEvent(
-            EventHooks.cast(this), EventHooks.cast(effect));
+        if (aerogel$effectRemoveOverride || !EventHooks.hasListeners(EntityEffectRemoveEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
+        EntityEffectRemoveEvent event = new EntityEffectRemoveEvent(self, effect);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
         } else if (event.effect() != effect) {
             aerogel$effectRemoveOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(
-                    this, "removeEffect", event.effect()));
+                callbackInfo.setReturnValue(self.removeEffect(event.effect()));
             } finally {
                 aerogel$effectRemoveOverride = false;
             }
@@ -161,19 +172,19 @@ abstract class LivingEntityMixin {
     @Inject(method = "setItemSlot(Lnet/minecraft/world/entity/EquipmentSlot;"
         + "Lnet/minecraft/world/item/ItemStack;)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$equipmentChanged(
-        @Coerce Object slot, @Coerce Object item, CallbackInfo callbackInfo
+        EquipmentSlot slot, ItemStack item, CallbackInfo callbackInfo
     ) {
-        if (aerogel$equipmentOverride) return;
+        if (aerogel$equipmentOverride || !EventHooks.hasListeners(EntityEquipmentChangeEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
         EntityEquipmentChangeEvent event = new EntityEquipmentChangeEvent(
-            EventHooks.cast(this), EventHooks.cast(slot),
-            EventHooks.cast(EventHooks.call(this, "getItemBySlot", slot)), EventHooks.cast(item));
+            self, slot, self.getItemBySlot(slot), item);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.item() != item) {
             aerogel$equipmentOverride = true;
             try {
-                EventHooks.call(this, "setItemSlot", slot, event.item());
+                self.setItemSlot(slot, event.item());
             } finally {
                 aerogel$equipmentOverride = false;
             }
@@ -187,23 +198,25 @@ abstract class LivingEntityMixin {
                 + "Lnet/minecraft/world/entity/LivingEntity;)I"),
         cancellable = true)
     private void aerogel$itemUseStarted(
-        @Coerce Object hand, CallbackInfo callbackInfo
+        InteractionHand hand, CallbackInfo callbackInfo
     ) {
-        if (!aerogel$isServerPlayer()) return;
-        Object item = EventHooks.call(this, "getItemInHand", hand);
+        if (!EventHooks.hasListeners(PlayerItemUseStartEvent.class)
+            || !((Object) this instanceof ServerPlayer player)) return;
+        ItemStack item = player.getItemInHand(hand);
         PlayerItemUseStartEvent event = new PlayerItemUseStartEvent(
-            EventHooks.cast(this), EventHooks.cast(hand), EventHooks.cast(item));
+            player, hand, item);
         EventHooks.post(event);
         if (event.isCancelled()) callbackInfo.cancel();
     }
 
     @Inject(method = "releaseUsingItem()V", at = @At("HEAD"), cancellable = true)
     private void aerogel$itemUseReleased(CallbackInfo callbackInfo) {
-        if (!aerogel$isServerPlayer() || !(Boolean) EventHooks.call(this, "isUsingItem")) return;
+        if (!EventHooks.hasListeners(PlayerItemUseEndEvent.class)
+            || !aerogel$isServerPlayer() || !((LivingEntity) (Object) this).isUsingItem()) return;
         PlayerItemUseEndEvent event = aerogel$itemUseEndEvent(
             PlayerItemUseEndEvent.Reason.RELEASED);
         EventHooks.post(event);
-        EventHooks.setField(this, "useItemRemaining", event.remainingTicks());
+        useItemRemaining = event.remainingTicks();
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else {
@@ -230,11 +243,12 @@ abstract class LivingEntityMixin {
         cancellable = true
     )
     private void aerogel$itemUseCompleted(CallbackInfo callbackInfo) {
-        if (!aerogel$isServerPlayer() || !(Boolean) EventHooks.call(this, "isUsingItem")) return;
+        if (!EventHooks.hasListeners(PlayerItemUseEndEvent.class)
+            || !aerogel$isServerPlayer() || !((LivingEntity) (Object) this).isUsingItem()) return;
         PlayerItemUseEndEvent event = aerogel$itemUseEndEvent(
             PlayerItemUseEndEvent.Reason.COMPLETED);
         EventHooks.post(event);
-        EventHooks.setField(this, "useItemRemaining", event.remainingTicks());
+        useItemRemaining = event.remainingTicks();
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else {
@@ -252,29 +266,31 @@ abstract class LivingEntityMixin {
     @Inject(method = "stopUsingItem()V", at = @At("HEAD"), cancellable = true)
     private void aerogel$itemUseInterrupted(CallbackInfo callbackInfo) {
         if (aerogel$itemUseEndReason != null
+            || !EventHooks.hasListeners(PlayerItemUseEndEvent.class)
             || !aerogel$isServerPlayer()
-            || !(Boolean) EventHooks.call(this, "isUsingItem")) return;
+            || !((LivingEntity) (Object) this).isUsingItem()) return;
         PlayerItemUseEndEvent event = aerogel$itemUseEndEvent(
             PlayerItemUseEndEvent.Reason.INTERRUPTED);
         EventHooks.post(event);
-        EventHooks.setField(this, "useItemRemaining", event.remainingTicks());
+        useItemRemaining = event.remainingTicks();
         if (event.isCancelled()) callbackInfo.cancel();
     }
 
     @Inject(method = "setHealth(F)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$health(float health, CallbackInfo callbackInfo) {
-        if (aerogel$healthOverride) return;
-        float previous = ((Number) EventHooks.call(this, "getHealth")).floatValue();
+        if (aerogel$healthOverride || !EventHooks.hasListeners(EntityHealthChangeEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
+        float previous = self.getHealth();
         if (Float.compare(previous, health) == 0) return;
         EntityHealthChangeEvent event = new EntityHealthChangeEvent(
-            EventHooks.cast(this), previous, health);
+            self, previous, health);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (Float.compare(event.health(), health) != 0) {
             aerogel$healthOverride = true;
             try {
-                EventHooks.call(this, "setHealth", event.health());
+                self.setHealth(event.health());
             } finally {
                 aerogel$healthOverride = false;
             }
@@ -284,18 +300,19 @@ abstract class LivingEntityMixin {
 
     @Inject(method = "setAbsorptionAmount(F)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$absorption(float absorption, CallbackInfo callbackInfo) {
-        if (aerogel$absorptionOverride) return;
-        float previous = ((Number) EventHooks.call(this, "getAbsorptionAmount")).floatValue();
+        if (aerogel$absorptionOverride || !EventHooks.hasListeners(EntityAbsorptionChangeEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
+        float previous = self.getAbsorptionAmount();
         if (Float.compare(previous, absorption) == 0) return;
         EntityAbsorptionChangeEvent event = new EntityAbsorptionChangeEvent(
-            EventHooks.cast(this), previous, absorption);
+            self, previous, absorption);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (Float.compare(event.absorption(), absorption) != 0) {
             aerogel$absorptionOverride = true;
             try {
-                EventHooks.call(this, "setAbsorptionAmount", event.absorption());
+                self.setAbsorptionAmount(event.absorption());
             } finally {
                 aerogel$absorptionOverride = false;
             }
@@ -309,15 +326,16 @@ abstract class LivingEntityMixin {
         double strength,
         double directionX,
         double directionZ,
-        @Coerce Object damageSource,
+        DamageSource damageSource,
         float verticalStrength,
         boolean limitVertical,
         CallbackInfo callbackInfo
     ) {
-        if (aerogel$knockbackOverride) return;
+        if (aerogel$knockbackOverride || !EventHooks.hasListeners(EntityKnockbackEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
         EntityKnockbackEvent event = new EntityKnockbackEvent(
-            EventHooks.cast(this), strength, directionX, directionZ,
-            EventHooks.cast(damageSource), verticalStrength, limitVertical);
+            self, strength, directionX, directionZ,
+            damageSource, verticalStrength, limitVertical);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
@@ -329,7 +347,7 @@ abstract class LivingEntityMixin {
             || event.limitVertical() != limitVertical) {
             aerogel$knockbackOverride = true;
             try {
-                EventHooks.call(this, "knockback", event.strength(), event.directionX(),
+                self.knockback(event.strength(), event.directionX(),
                     event.directionZ(), event.damageSource(), event.verticalStrength(),
                     event.limitVertical());
             } finally {
@@ -341,7 +359,8 @@ abstract class LivingEntityMixin {
 
     @Inject(method = "jumpFromGround()V", at = @At("HEAD"), cancellable = true)
     private void aerogel$jump(CallbackInfo callbackInfo) {
-        EntityJumpEvent event = new EntityJumpEvent(EventHooks.cast(this));
+        if (!EventHooks.hasListeners(EntityJumpEvent.class)) return;
+        EntityJumpEvent event = new EntityJumpEvent((LivingEntity) (Object) this);
         EventHooks.post(event);
         if (event.isCancelled()) callbackInfo.cancel();
     }
@@ -354,9 +373,10 @@ abstract class LivingEntityMixin {
         boolean showParticles,
         CallbackInfoReturnable<Boolean> callbackInfo
     ) {
-        if (aerogel$randomTeleportOverride) return;
+        if (aerogel$randomTeleportOverride || !EventHooks.hasListeners(EntityRandomTeleportEvent.class)) return;
+        LivingEntity self = (LivingEntity) (Object) this;
         EntityRandomTeleportEvent event = new EntityRandomTeleportEvent(
-            EventHooks.cast(this), x, y, z, showParticles);
+            self, x, y, z, showParticles);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.setReturnValue(false);
@@ -366,7 +386,7 @@ abstract class LivingEntityMixin {
             || event.showParticles() != showParticles) {
             aerogel$randomTeleportOverride = true;
             try {
-                callbackInfo.setReturnValue((Boolean) EventHooks.call(this, "randomTeleport",
+                callbackInfo.setReturnValue(self.randomTeleport(
                     event.x(), event.y(), event.z(), event.showParticles()));
             } finally {
                 aerogel$randomTeleportOverride = false;
@@ -376,18 +396,19 @@ abstract class LivingEntityMixin {
 
     @Inject(method = "setSprinting(Z)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$sprinting(boolean sprinting, CallbackInfo callbackInfo) {
-        if (aerogel$sprintOverride || !aerogel$isServerPlayer()) return;
-        boolean previous = (Boolean) EventHooks.call(this, "isSprinting");
+        if (aerogel$sprintOverride || !EventHooks.hasListeners(PlayerSprintChangeEvent.class)
+            || !((Object) this instanceof ServerPlayer player)) return;
+        boolean previous = player.isSprinting();
         if (previous == sprinting) return;
         PlayerSprintChangeEvent event = new PlayerSprintChangeEvent(
-            EventHooks.cast(this), previous, sprinting);
+            player, previous, sprinting);
         EventHooks.post(event);
         if (event.isCancelled()) {
             callbackInfo.cancel();
         } else if (event.sprinting() != sprinting) {
             aerogel$sprintOverride = true;
             try {
-                EventHooks.call(this, "setSprinting", event.sprinting());
+                player.setSprinting(event.sprinting());
             } finally {
                 aerogel$sprintOverride = false;
             }
@@ -397,18 +418,16 @@ abstract class LivingEntityMixin {
 
     @Unique
     private boolean aerogel$isServerPlayer() {
-        return EventHooks.isInstance(this, "net.minecraft.server.level.ServerPlayer");
+        return (Object) this instanceof ServerPlayer;
     }
 
     @Unique
     private PlayerItemUseEndEvent aerogel$itemUseEndEvent(
         PlayerItemUseEndEvent.Reason reason
     ) {
+        LivingEntity self = (LivingEntity) (Object) this;
         return new PlayerItemUseEndEvent(
-            EventHooks.cast(this),
-            EventHooks.cast(EventHooks.call(this, "getUsedItemHand")),
-            EventHooks.cast(EventHooks.call(this, "getUseItem")),
-            reason,
-            ((Number) EventHooks.call(this, "getUseItemRemainingTicks")).intValue());
+            (ServerPlayer) (Object) this, self.getUsedItemHand(), self.getUseItem(),
+            reason, self.getUseItemRemainingTicks());
     }
 }
