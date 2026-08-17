@@ -25,4 +25,19 @@ class TpsMonitorTest {
         assertTrue(snapshot.fiveMinutes() < snapshot.fifteenMinutes());
         assertTrue(snapshot.fifteenMinutes() < 20.0);
     }
+
+    @Test
+    void reportsTickRatesAboveTwenty() {
+        long time = 1_000_000_000L;
+        TpsMonitor.tick(time);
+        for (int tick = 0; tick < 20; tick++) {
+            time += 10_000_000L;
+            TpsMonitor.tick(time);
+        }
+
+        TpsMonitor.Snapshot snapshot = TpsMonitor.snapshot();
+        assertTrue(snapshot.oneMinute() > 20.0);
+        assertTrue(snapshot.fiveMinutes() > 20.0);
+        assertTrue(snapshot.fifteenMinutes() > 20.0);
+    }
 }

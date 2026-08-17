@@ -22,7 +22,7 @@ public final class TpsMonitor {
         }
         double elapsedSeconds = (nowNanos - sampleStartedNanos) / 1_000_000_000.0;
         if (elapsedSeconds > 0.0) {
-            double current = Math.min(20.0, sampledTicks / elapsedSeconds);
+            double current = sampledTicks / elapsedSeconds;
             oneMinute = average(oneMinute, current, elapsedSeconds, 60.0);
             fiveMinutes = average(fiveMinutes, current, elapsedSeconds, 300.0);
             fifteenMinutes = average(fifteenMinutes, current, elapsedSeconds, 900.0);
