@@ -169,12 +169,31 @@ public final class PluginsCommand {
         CommandContext<CommandSourceStack> context, MinecraftServer minecraftServer
     ) {
         TpsMonitor.Snapshot snapshot = TpsMonitor.snapshot();
+        double targetTps = minecraftServer.tickRateManager().tickrate();
         sendSuccess(context, "commands.aerogel.tps",
             "TPS (1m, 5m, 15m): %s, %s, %s | MSPT: %s",
-            decimal(snapshot.oneMinute()), decimal(snapshot.fiveMinutes()),
-            decimal(snapshot.fifteenMinutes()),
+            tpsValue(snapshot.oneMinute(), targetTps),
+            tpsValue(snapshot.fiveMinutes(), targetTps),
+            tpsValue(snapshot.fifteenMinutes(), targetTps),
             decimal(minecraftServer.getAverageTickTimeNanos() / 1_000_000.0));
         return 1;
+    }
+
+    private static Component tpsValue(double value, double targetTps) {
+        return Component.literal(formatTps(value, targetTps)).withStyle(tpsColor(value, targetTps));
+    }
+
+    static String formatTps(double value, double targetTps) {
+        if (value >= targetTps) {
+            return String.format(Locale.ROOT, "%.1f*", targetTps);
+        }
+        return decimal(value);
+    }
+
+    static ChatFormatting tpsColor(double value, double targetTps) {
+        if (value >= targetTps * 0.95D) return ChatFormatting.GREEN;
+        if (value >= targetTps * 0.90D) return ChatFormatting.YELLOW;
+        return ChatFormatting.RED;
     }
 
     private static int networkStats(CommandContext<CommandSourceStack> context) {

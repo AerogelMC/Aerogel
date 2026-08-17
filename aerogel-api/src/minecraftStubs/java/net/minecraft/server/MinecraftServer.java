@@ -34,6 +34,7 @@ public abstract class MinecraftServer {
     public WorldGenSettings getWorldGenSettings() { return null; }
     public WorldData getWorldData() { return null; }
     public long getAverageTickTimeNanos() { return 0L; }
+    public ServerTickRateManager tickRateManager() { return null; }
     public Commands getCommands() { return null; }
     public net.minecraft.world.item.crafting.RecipeManager getRecipeManager() { return null; }
     public net.minecraft.server.ReloadableServerRegistries.Holder reloadableRegistries() { return null; }
