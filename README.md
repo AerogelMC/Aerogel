@@ -1,28 +1,100 @@
+<div align="center">
+
+<img src="logo.png" width="128" height="128" alt="Aerogel logo"/>
+
 # Aerogel
 
-Aerogel is a Minecraft: Java Edition server plugin loader for Minecraft 26.2 and later.
+Minecraft Java Edition **server plugin platform** for **Minecraft 26.2**.
 
-> Aerogel is in early development. Expect breaking changes before the first stable release.
+[![Version](https://img.shields.io/github/v/release/AerogelMC/Aerogel?include_prereleases&sort=semver&display_name=tag&style=for-the-badge)](https://github.com/AerogelMC/Aerogel/releases/latest)
+[![Minecraft](https://img.shields.io/badge/Minecraft-26.2-2b84ff?style=for-the-badge)](README.md)
+[![Java](https://img.shields.io/badge/Java-25-ED8B00?style=for-the-badge)](https://www.oracle.com/java/technologies/javase/jdk25-archive-downloads.html)
+[![License](https://img.shields.io/badge/License-Apache--2.0-6A0DAD?style=for-the-badge)](LICENSE)
+[![Repository](https://img.shields.io/badge/GitHub-AerogelMC/Aerogel-181717?style=for-the-badge&logo=github)](https://github.com/AerogelMC/Aerogel)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/ZgYFHyP8hK)
 
-## Run a server
+[Features](#features) · [How it works](#how-it-works) · [Compatibility](#compatibility) · [Installation](#installation) · [Build](#build) · [Contributing](#contributing) · [Report a bug](https://github.com/AerogelMC/Aerogel/issues)
 
-Install JDK 25, place `Aerogel-26.2-1.jar` in an empty server directory, and run:
+</div>
 
-```shell
+---
+
+## What is Aerogel?
+
+Aerogel is a plugin loader that runs on top of the official Mojang server jar.
+It replaces the vanilla bootstrap with a runtime that:
+
+- loads and runs plugins from the `plugins` directory,
+- injects mixins to support high-level plugin behavior,
+- exposes a high-level Java/Kotlin API for server, world, player, inventory, events, commands, and utilities.
+
+Aerogel is not a client mod. It is a server-side runtime only.
+
+## Features
+
+- Plugin-first architecture with classpath isolation and lifecycle control.
+- Automatic Minecraft runtime handling from Mojang manifests.
+- Command registration and command execution support.
+- Event system for server, player, world, entity, inventory, block, and command workflows.
+- Mixin support for advanced behavior and compatibility.
+- Kotlin-friendly API surface and optional Kotlin DSL for mixins.
+- Multi-language chat and message handling hooks.
+- Built-in diagnostics, restart/reload flow, and plugin lifecycle logging.
+
+## How it works
+
+```text
+Minecraft jar selected
+        -> runtime bootstrap
+        -> runtime class loader / transforms
+        -> plugin discovery + dependency scan
+        -> mixin configuration + API init
+        -> server boot + plugin load
+        -> runtime events
+```
+
+### Runtime model
+
+1. Aerogel downloads or reuses a pinned Minecraft `server.jar` version.
+2. The runtime loads Aerogel core and then boots the server.
+3. Plugins are discovered from `plugins/` and loaded through Aerogel's plugin API.
+4. Mixins are applied to target vanilla internals so plugin code can interact at server level.
+5. Plugins receive API views (`plugin.minecraft()`, `plugin.worlds()`, command/event registries, etc.).
+
+### Plugin and API philosophy
+
+- Plugin code should be simple to write and practical for server operators.
+- Advanced users can go deep with mixins and raw vanilla interactions.
+- High-level APIs are preferred for common tasks; low-level access remains available when needed.
+
+## Compatibility
+
+| Component | Status |
+|---|---|
+| Minecraft | 26.2 |
+| Java | 25 |
+| Plugin languages | Java / Kotlin |
+| Platform | Server-side only |
+
+## Installation
+
+1. Install **JDK 25**.
+2. Copy `Aerogel-26.2-1.jar` to a fresh server directory.
+3. Start once:
+
+```bash
 java -Xms2G -Xmx4G -jar Aerogel-26.2-1.jar nogui
 ```
 
-On the first run, Minecraft creates `eula.txt` and stops. Read the [Minecraft EULA](https://aka.ms/MinecraftEULA), set `eula=true` if you agree, then run the same command again.
+4. On first run, `eula.txt` is generated. Accept EULA if you agree.
+5. Put plugin JAR files into `plugins/`.
+6. Restart server.
 
-Place plugin JARs in the `plugins` directory.
+If you are using the example project, run in `example-plugin` with its own Gradle setup.
 
-## Create a plugin
+## Build
 
-The [`example-plugin`](example-plugin) project is the quickest starting point. Read the complete development guide in [English](docs/DEVELOPMENT.md) or [한국어](docs/DEVELOPMENT.ko.md). Focused references are also available for the [API](docs/API.md), [events](docs/EVENTS.md), [Gradle plugin](docs/GRADLE_PLUGIN.md), and Mixins in [English](docs/MIXINS.md) or [한국어](docs/MIXINS.ko.md). AI coding agents should start with the single-file [Aerogel Agent Guide](docs/AGENT_GUIDE.md).
-
-## Build from source
-
-```shell
+```bash
 ./gradlew clean build
 ```
 
@@ -32,16 +104,40 @@ On Windows:
 .\gradlew.bat clean build
 ```
 
-The standalone server JAR is written to `aerogel-loader/build/libs/Aerogel-26.2-1.jar`.
+Artifacts:
+- `aerogel-loader/build/libs/Aerogel-26.2-1.jar`
+- `aerogel-loader/build/libs/Aerogel-26.2-1-all.jar` (standalone, depending on selected task)
 
-## Versioning
+## Configuration
 
-Releases use `Minecraft version-build number`. For example, the first Minecraft 26.2 release is `26.2-1`, followed by `26.2-2`. The build number starts at `1` again for each Minecraft version.
+Runtime and plugin options are controlled from:
+
+- server arguments in the launch command
+- `aerogel` config files written under the server runtime directory
+- plugin-provided configuration via the API
+
+## Development
+
+- Read the full development guide: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+- API reference: [docs/API.md](docs/API.md)
+- Event reference: [docs/EVENTS.md](docs/EVENTS.md)
+- Command/mixin guides:
+  - [docs/MIXINS.md](docs/MIXINS.md)
+  - [docs/GRADLE_PLUGIN.md](docs/GRADLE_PLUGIN.md)
+
+You can start from [`example-plugin`](example-plugin) for a minimal project.
+
+## Contributing
+
+Bug reports and pull requests are welcome:
+- Use clear repro steps and server logs
+- Include Minecraft and Java version
+- Mention whether the issue is observed in plugin loading, events, or command handling
+- Community + help: [Discord](https://discord.gg/ZgYFHyP8hK)
 
 ## License
 
-Aerogel is licensed under the [Apache License 2.0](LICENSE).
+Aerogel is released under the [Apache License 2.0](LICENSE).
 
-Aerogel does not distribute Minecraft server code. It downloads the official server files from Mojang when needed and verifies their published hashes. Minecraft is licensed separately by Mojang and Microsoft. Aerogel is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
-
-Third-party licenses and notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Minecraft server code is not redistributed by Aerogel. This project only downloads official Mojang server artifacts.
+Third-party license notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
