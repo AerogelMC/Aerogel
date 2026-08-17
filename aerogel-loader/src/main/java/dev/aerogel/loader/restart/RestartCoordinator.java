@@ -249,6 +249,10 @@ public final class RestartCoordinator {
         return FROZEN_LISTENERS.contains(listener);
     }
 
+    public static boolean suppressListenerTick(Object connection) {
+        return FROZEN_CONNECTIONS.contains(connection);
+    }
+
     private static void holdConnections(RestartState current) {
         long lastKeepAlive = 0L;
         long deadline = current.startedAt() + MAX_HOLD_MILLIS;
