@@ -31,8 +31,8 @@ Java remains supported. Do not translate a mature Java plugin solely to satisfy 
 
 ## Compatibility and legal boundaries
 
-- Current baseline: Aerogel `26.2-1`, Minecraft server `26.2`, Java `25`, Kotlin `2.4.10`.
-- Aerogel release versions follow `<minecraft-version>-<revision>`, for example `26.2-1`.
+- Current baseline: Aerogel `26.2-2`, Minecraft server `26.2`, Java `25`, Kotlin `2.4.10`.
+- Aerogel release versions follow `<minecraft-version>-<revision>`, for example `26.2-2`.
 - Compile against the official Minecraft server artifacts prepared by the Aerogel Gradle plugin.
 - Minecraft, Mojang, Brigadier, Sponge Mixin, Kotlin DSL runtime, and Aerogel API classes are compile-time or server-provided dependencies. Do not package their classes inside a plugin JAR.
 - Do not redistribute Mojang's server JAR or extracted Minecraft classes with a plugin.
@@ -102,7 +102,7 @@ For a downloaded Aerogel Gradle repository package, extract the release ZIP and 
 ```kotlin
 pluginManagement {
     repositories {
-        maven { url = uri("C:/path/to/aerogel-gradle-plugin-26.2-1") }
+        maven { url = uri("C:/path/to/aerogel-gradle-plugin-26.2-2") }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -118,7 +118,7 @@ Use a portable repository path in a published template. Never commit a path to o
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("dev.aerogel.plugin") version "26.2-1"
+    id("dev.aerogel.plugin") version "26.2-2"
 }
 
 group = "com.example"
