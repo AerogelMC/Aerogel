@@ -3,6 +3,7 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.api.DialogCallbackRegistry;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.PlayerViewService;
+import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.api.event.player.PlayerCustomClickActionEvent;
 import dev.aerogel.api.event.player.PlayerCustomPayloadEvent;
 import dev.aerogel.api.event.player.PlayerResourcePackStatusEvent;
@@ -80,6 +81,6 @@ abstract class ServerCommonPacketListenerMixin {
 
     @Unique
     private static boolean aerogel$serverThread(ServerPlayer player) {
-        return player != null && player.level().getServer().isSameThread();
+        return player != null && AerogelRuntime.isEntityMutationThread(player);
     }
 }

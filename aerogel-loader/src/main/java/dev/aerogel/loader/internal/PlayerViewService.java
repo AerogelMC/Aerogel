@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.WeakHashMap;
@@ -199,21 +200,23 @@ public final class PlayerViewService {
                 breakId(position), position, -1));
         }
         for (UUID uuid : state.hidden) {
-            level.findEntity(uuid).ifPresent(entity -> {
+            Optional.ofNullable(level.getEntityInAnyDimension(uuid)).ifPresent(entity -> {
                 TrackedEntityBridge tracked = tracked(entity);
                 if (tracked != null) tracked.aerogel$updatePlayer(viewer);
             });
         }
         for (UUID uuid : state.flags.keySet()) {
-            level.findEntity(uuid).ifPresent(entity -> sendFlags(viewer, entity, null));
+            Optional.ofNullable(level.getEntityInAnyDimension(uuid))
+                .ifPresent(entity -> sendFlags(viewer, entity, null));
         }
         for (Map.Entry<UUID, TeamColor> entry : state.glowColors.entrySet()) {
-            level.findEntity(entry.getKey()).ifPresent(entity ->
+            Optional.ofNullable(level.getEntityInAnyDimension(entry.getKey())).ifPresent(entity ->
                 restoreGlowTeam(viewer, entity, entry.getValue()));
         }
         for (Map.Entry<UUID, EnumMap<EquipmentSlot, ItemStack>> entry
             : state.equipment.entrySet()) {
-            level.findEntity(entry.getKey()).filter(LivingEntity.class::isInstance)
+            Optional.ofNullable(level.getEntityInAnyDimension(entry.getKey()))
+                .filter(LivingEntity.class::isInstance)
                 .map(LivingEntity.class::cast).ifPresent(entity -> {
                     List<Pair<EquipmentSlot, ItemStack>> actual = new ArrayList<>();
                     for (EquipmentSlot slot : entry.getValue().keySet()) {

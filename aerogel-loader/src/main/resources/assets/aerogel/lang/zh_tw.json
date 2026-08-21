@@ -18,6 +18,7 @@
   "commands.aerogel.plugins.unknown": "未知插件：%s",
   "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 變更可能要到伺服器重新啟動後才會生效",
   "commands.aerogel.tps": "TPS（1分鐘、5分鐘、15分鐘）：%s, %s, %s | MSPT：%s",
+  "commands.aerogel.tps.chunk": "目前區塊 [%s, %s] MSPT：%s | 最大：%s | 排隊：%s",
   "commands.aerogel.networkstats.empty": "尚未記錄入站封包佇列樣本。",
   "commands.aerogel.networkstats.summary": "封包佇列延遲（%s 個封包，%s 秒）：平均 %s ms | p50 %s ms | p95 %s ms | p99 %s ms | 最大 %s ms",
   "commands.aerogel.networkstats.paths": "閒置泵：%s%%（%s）| Tick 邊界：%s%%（%s）",

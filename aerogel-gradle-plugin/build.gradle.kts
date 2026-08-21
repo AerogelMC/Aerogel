@@ -22,6 +22,17 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+tasks.test {
+    dependsOn(
+        ":aerogel-api:publishMavenJavaPublicationToAerogelBuildRepository",
+        ":aerogel-mixin-dsl:publishMavenJavaPublicationToAerogelBuildRepository"
+    )
+    systemProperty(
+        "aerogel.test.mavenRepository",
+        rootProject.layout.buildDirectory.dir("aerogel-maven").get().asFile.absolutePath
+    )
+}
+
 tasks.processResources {
     val pluginVersion = project.version.toString()
     inputs.property("version", pluginVersion)

@@ -3,6 +3,8 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.api.event.block.BlockStateChangeEvent;
 import dev.aerogel.loader.event.BlockChangeContext;
 import dev.aerogel.loader.event.EventHooks;
+import dev.aerogel.loader.runtime.AerogelRuntime;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ServerExplosion;
@@ -21,6 +23,7 @@ import java.util.List;
 abstract class ServerExplosionMixin {
     @Shadow @Final private Entity source;
     @Shadow @Final private Vec3 center;
+    @Shadow @Final private ServerLevel level;
 
     @Invoker("interactWithBlocks")
     protected abstract void aerogel$interactWithBlocks(List<BlockPos> positions);
@@ -36,7 +39,9 @@ abstract class ServerExplosionMixin {
     private void aerogel$explosionBlockChanges(
         ServerExplosion explosion, List<BlockPos> positions
     ) {
-        aerogel$withExplosionContext(() -> aerogel$interactWithBlocks(positions));
+        Runnable changes = () -> aerogel$withExplosionContext(
+            () -> aerogel$interactWithBlocks(positions));
+        if (!AerogelRuntime.routeBlockEffects(level, positions, changes)) changes.run();
     }
 
     @Redirect(
@@ -47,7 +52,9 @@ abstract class ServerExplosionMixin {
     private void aerogel$explosionFireChanges(
         ServerExplosion explosion, List<BlockPos> positions
     ) {
-        aerogel$withExplosionContext(() -> aerogel$createFire(positions));
+        Runnable changes = () -> aerogel$withExplosionContext(
+            () -> aerogel$createFire(positions));
+        if (!AerogelRuntime.routeBlockEffects(level, positions, changes)) changes.run();
     }
 
     private void aerogel$withExplosionContext(Runnable action) {

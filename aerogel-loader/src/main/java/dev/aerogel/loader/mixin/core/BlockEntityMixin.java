@@ -11,6 +11,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -18,8 +19,26 @@ import java.util.function.Consumer;
 /** Stores Aerogel data in the block entity's own vanilla NBT payload. */
 @Mixin(targets = "net.minecraft.world.level.block.entity.BlockEntity")
 abstract class BlockEntityMixin implements PersistentDataHolderBridge {
+    @Unique private volatile boolean aerogel$removed;
     @Unique private CompoundTag aerogel$persistentData = new CompoundTag();
     @Unique private PersistentDataView aerogel$dataView;
+
+    @Inject(method = "setRemoved()V", at = @At("TAIL"))
+    private void aerogel$publishRemoved(CallbackInfo callbackInfo) {
+        aerogel$removed = true;
+    }
+
+    @Inject(method = "clearRemoved()V", at = @At("TAIL"))
+    private void aerogel$publishActive(CallbackInfo callbackInfo) {
+        aerogel$removed = false;
+    }
+
+    @Inject(method = "isRemoved()Z", at = @At("HEAD"), cancellable = true)
+    private void aerogel$readPublishedRemoval(
+        CallbackInfoReturnable<Boolean> callbackInfo
+    ) {
+        callbackInfo.setReturnValue(aerogel$removed);
+    }
 
     @Unique
     public synchronized PersistentDataView data() {

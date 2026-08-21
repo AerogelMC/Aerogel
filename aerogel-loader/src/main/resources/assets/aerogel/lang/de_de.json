@@ -18,6 +18,7 @@
   "commands.aerogel.plugins.unknown": "Unbekanntes Plugin: %s",
   "commands.aerogel.plugins.mixin_notice": "Einige Mixin-Änderungen für %s werden möglicherweise erst nach einem Serverneustart angewendet",
   "commands.aerogel.tps": "TPS (1 Min., 5 Min., 15 Min.): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.tps.chunk": "Aktueller Chunk [%s, %s] MSPT: %s | Maximum: %s | Warteschlange: %s",
   "commands.aerogel.networkstats.empty": "Es wurden noch keine Messwerte der eingehenden Paketwarteschlange erfasst.",
   "commands.aerogel.networkstats.summary": "Paketwarteschlangen-Latenz (%s Pakete in %s Sekunden): Mittel %s ms | p50 %s ms | p95 %s ms | p99 %s ms | Max. %s ms",
   "commands.aerogel.networkstats.paths": "Leerlauf-Pumpe: %s%% (%s) | Tick-Grenze: %s%% (%s)",

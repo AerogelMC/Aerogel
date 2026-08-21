@@ -18,6 +18,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.ChunkPos;
+import dev.aerogel.api.context.ContextSnapshot;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -176,6 +178,16 @@ public final class PluginsCommand {
             tpsValue(snapshot.fiveMinutes(), targetTps),
             tpsValue(snapshot.fifteenMinutes(), targetTps),
             decimal(minecraftServer.getAverageTickTimeNanos() / 1_000_000.0));
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player != null) {
+            ChunkPos position = player.chunkPosition();
+            ContextSnapshot chunk = AerogelRuntime.playerChunkSnapshot(player);
+            sendSuccess(context, "commands.aerogel.tps.chunk",
+                "Current chunk [%s, %s] MSPT: %s | max: %s | queued: %s",
+                position.x(), position.z(), decimal(chunk.averageExecutionMillis()),
+                decimal(chunk.maximumExecutionNanos() / 1_000_000.0D),
+                chunk.queuedTasks());
+        }
         return 1;
     }
 

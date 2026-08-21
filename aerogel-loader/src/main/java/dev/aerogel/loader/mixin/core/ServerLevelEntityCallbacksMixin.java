@@ -1,0 +1,76 @@
+package dev.aerogel.loader.mixin.core;
+
+import dev.aerogel.loader.context.NativeTickCoordinator;
+import net.minecraft.world.entity.Entity;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+/** Keeps secondary global indexes asynchronous while the chunk-owned entity is published. */
+@Mixin(targets = "net.minecraft.server.level.ServerLevel$EntityCallbacks")
+abstract class ServerLevelEntityCallbacksMixin {
+    @Shadow public abstract void onCreated(Entity entity);
+    @Shadow public abstract void onDestroyed(Entity entity);
+    @Shadow public abstract void onTickingStart(Entity entity);
+    @Shadow public abstract void onTickingEnd(Entity entity);
+    @Shadow public abstract void onTrackingStart(Entity entity);
+    @Shadow public abstract void onTrackingEnd(Entity entity);
+    @Shadow public abstract void onSectionChange(Entity entity);
+
+    @Inject(method = "onCreated", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferCreated(Entity entity, CallbackInfo callback) {
+        defer("onCreated", entity, callback);
+    }
+
+    @Inject(method = "onDestroyed", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferDestroyed(Entity entity, CallbackInfo callback) {
+        defer("onDestroyed", entity, callback);
+    }
+
+    @Inject(method = "onTickingStart", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferTickingStart(Entity entity, CallbackInfo callback) {
+        defer("onTickingStart", entity, callback);
+    }
+
+    @Inject(method = "onTickingEnd", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferTickingEnd(Entity entity, CallbackInfo callback) {
+        defer("onTickingEnd", entity, callback);
+    }
+
+    @Inject(method = "onTrackingStart", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferTrackingStart(Entity entity, CallbackInfo callback) {
+        defer("onTrackingStart", entity, callback);
+    }
+
+    @Inject(method = "onTrackingEnd", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferTrackingEnd(Entity entity, CallbackInfo callback) {
+        defer("onTrackingEnd", entity, callback);
+    }
+
+    @Inject(method = "onSectionChange", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferSectionChange(Entity entity, CallbackInfo callback) {
+        defer("onSectionChange", entity, callback);
+    }
+
+    private void defer(String method, Entity entity, CallbackInfo callback) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        if (NativeTickCoordinator.deferGlobalCommit(() -> invoke(method, entity))) {
+            callback.cancel();
+        }
+    }
+
+    private void invoke(String method, Entity entity) {
+        switch (method) {
+            case "onCreated" -> onCreated(entity);
+            case "onDestroyed" -> onDestroyed(entity);
+            case "onTickingStart" -> onTickingStart(entity);
+            case "onTickingEnd" -> onTickingEnd(entity);
+            case "onTrackingStart" -> onTrackingStart(entity);
+            case "onTrackingEnd" -> onTrackingEnd(entity);
+            case "onSectionChange" -> onSectionChange(entity);
+            default -> throw new IllegalArgumentException("Unknown entity callback " + method);
+        }
+    }
+}

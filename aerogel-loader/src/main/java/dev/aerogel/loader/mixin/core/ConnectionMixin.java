@@ -1,7 +1,9 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.restart.RestartCoordinator;
+import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.network.TickablePacketListener;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -22,6 +24,8 @@ abstract class ConnectionMixin {
     )
     private void aerogel$freezeRestartListenerTick(TickablePacketListener listener) {
         if (!RestartCoordinator.suppressListenerTick(this)) {
+            if (listener instanceof ServerGamePacketListenerImpl game
+                && AerogelRuntime.routeEntityTask(game.player, listener::tick)) return;
             listener.tick();
         }
     }

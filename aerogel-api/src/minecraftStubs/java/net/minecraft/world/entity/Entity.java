@@ -7,19 +7,22 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.scores.PlayerTeam;
 import net.minecraft.world.level.portal.TeleportTransition;
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.entity.EntityInLevelCallback;
 
 import java.util.Collection;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.Set;
 
-public abstract class Entity {
+public abstract class Entity implements net.minecraft.world.level.entity.EntityAccess {
     public Collection<Entity> nearbyEntities(double radius) { return null; }
     public Collection<Entity> nearbyEntities(double radius, Predicate<Entity> filter) { return null; }
     public boolean teleport(ServerLevel destination, double x, double y, double z) { return false; }
@@ -36,10 +39,15 @@ public abstract class Entity {
     public BlockPos blockPosition() { return null; }
     public SynchedEntityData getEntityData() { return null; }
     public UUID getUUID() { return null; }
+    public ChunkPos chunkPosition() { return null; }
+    public void setLevelCallback(EntityInLevelCallback callback) { }
     public String getScoreboardName() { return null; }
     public PlayerTeam getTeam() { return null; }
     public Vec3 position() { return null; }
     public Vec3 getDeltaMovement() { return null; }
+    public AABB getBoundingBox() { return null; }
+    public BlockPos getOnPosLegacy() { return null; }
+    public BlockPos getOnPos() { return null; }
     public boolean onGround() { return false; }
     public HitResult pick(double distance, float partialTick, boolean includeFluids) { return null; }
     public Level level() { return null; }
@@ -71,6 +79,8 @@ public abstract class Entity {
     public void setSwimming(boolean swimming) { }
     public ItemEntity spawnAtLocation(ServerLevel level, ItemStack stack) { return null; }
     public void discard() { }
+    public boolean isRemoved() { return false; }
+    public void remove(RemovalReason reason) { }
     public void saveWithoutId(ValueOutput output) { }
     public void load(ValueInput input) { }
 

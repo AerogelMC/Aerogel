@@ -15,6 +15,7 @@ import dev.aerogel.api.translation.TranslationService;
 import dev.aerogel.api.world.WorldService;
 import dev.aerogel.api.virtualentity.VirtualEntityService;
 import dev.aerogel.api.blockbatch.BlockBatchService;
+import dev.aerogel.api.context.ContextService;
 import net.minecraft.server.MinecraftServer;
 
 /** Plugin-owned access to Aerogel conveniences and the live vanilla server. */
@@ -38,4 +39,5 @@ public interface AerogelServer {
     MenuService menus();
     VirtualEntityService virtualEntities();
     BlockBatchService blockBatches();
+    ContextService contexts();
 }

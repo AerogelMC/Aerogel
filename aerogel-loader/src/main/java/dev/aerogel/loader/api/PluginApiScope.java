@@ -18,6 +18,7 @@ import dev.aerogel.api.menu.MenuService;
 import dev.aerogel.api.virtualentity.VirtualEntityService;
 import dev.aerogel.api.blockbatch.BlockBatchService;
 import dev.aerogel.api.event.EventBus;
+import dev.aerogel.api.context.ContextService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -141,6 +142,7 @@ public final class PluginApiScope implements AerogelServer, AutoCloseable {
     @Override public MenuService menus() { return menus; }
     @Override public VirtualEntityService virtualEntities() { return virtualEntities; }
     @Override public BlockBatchService blockBatches() { return blockBatches; }
+    @Override public ContextService contexts() { return runtime.contexts(); }
 
     @Override public void close() {
         if (!closed.compareAndSet(false, true)) return;

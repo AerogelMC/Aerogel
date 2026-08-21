@@ -16,6 +16,7 @@ import dev.aerogel.api.loot.LootService;
 import dev.aerogel.api.menu.MenuService;
 import dev.aerogel.api.virtualentity.VirtualEntityService;
 import dev.aerogel.api.blockbatch.BlockBatchService;
+import dev.aerogel.api.context.ContextService;
 import net.minecraft.server.MinecraftServer;
 
 import java.nio.file.Path;
@@ -55,4 +56,5 @@ public interface PluginContext {
     default MenuService menus() { return server().menus(); }
     default VirtualEntityService virtualEntities() { return server().virtualEntities(); }
     default BlockBatchService blockBatches() { return server().blockBatches(); }
+    default ContextService contexts() { return server().contexts(); }
 }

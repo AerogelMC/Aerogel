@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -318,9 +319,12 @@ class AerogelGradlePluginTest {
     }
 
     private GradleRunner runner(String... arguments) {
+        List<String> buildArguments = new ArrayList<>(List.of(arguments));
+        buildArguments.add("-PaerogelMavenRepository="
+            + System.getProperty("aerogel.test.mavenRepository"));
         return GradleRunner.create()
             .withProjectDir(project.toFile())
-            .withArguments(arguments)
+            .withArguments(buildArguments)
             .withPluginClasspath();
     }
 

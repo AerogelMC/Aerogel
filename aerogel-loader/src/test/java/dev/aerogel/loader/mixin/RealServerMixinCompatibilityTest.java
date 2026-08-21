@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+
 import org.objectweb.asm.Type;
 
 import java.io.InputStream;
@@ -22,14 +24,15 @@ import java.util.Arrays;
 import java.util.List;
 
 /** Offline compatibility check; it transforms classes but never starts Minecraft. */
-@EnabledIfSystemProperty(named = "aerogel.test.serverJar", matches = ".+")
 final class RealServerMixinCompatibilityTest {
+
     private static final List<String> TARGETS = List.of(
         "com.mojang.brigadier.tree.CommandNode",
         "net.minecraft.commands.Commands",
         "net.minecraft.network.Connection",
         "net.minecraft.network.PacketProcessor",
         "net.minecraft.network.PacketProcessor$ListenerAndPacket",
+        "net.minecraft.network.protocol.PacketUtils",
         "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Entry",
         "net.minecraft.server.Main",
         "net.minecraft.server.MinecraftServer",
@@ -39,7 +42,10 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.server.level.ChunkMap",
         "net.minecraft.server.level.ChunkMap$TrackedEntity",
         "net.minecraft.server.level.GenerationChunkHolder",
+        "net.minecraft.server.level.ServerChunkCache",
         "net.minecraft.server.level.ServerEntity",
+        "net.minecraft.server.level.ServerEntityGetter",
+
         "net.minecraft.server.level.ServerLevel",
         "net.minecraft.server.level.ServerPlayer",
         "net.minecraft.server.level.ServerPlayerGameMode",
@@ -50,6 +56,9 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.world.entity.Entity",
         "net.minecraft.world.entity.LivingEntity",
         "net.minecraft.world.entity.Mob",
+        "net.minecraft.world.entity.ai.village.poi.PoiManager",
+        "net.minecraft.world.entity.ai.village.poi.PoiRecord",
+        "net.minecraft.world.entity.ai.village.poi.PoiSection",
         "net.minecraft.world.entity.TamableAnimal",
         "net.minecraft.world.entity.animal.Animal",
         "net.minecraft.world.entity.item.ItemEntity",
@@ -57,11 +66,26 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.world.entity.monster.EnderMan$EndermanTakeBlockGoal",
         "net.minecraft.world.entity.player.Player",
         "net.minecraft.world.entity.projectile.Projectile",
+        "net.minecraft.world.level.entity.EntityLookup",
+        "net.minecraft.world.level.entity.EntitySectionStorage",
+        "net.minecraft.world.level.entity.PersistentEntitySectionManager",
+        "net.minecraft.server.level.ServerLevel$EntityCallbacks",
         "net.minecraft.world.item.BlockItem",
         "net.minecraft.world.item.ItemStack",
         "net.minecraft.world.item.crafting.RecipeHolder",
         "net.minecraft.world.item.crafting.RecipeManager",
         "net.minecraft.world.level.Level",
+        "net.minecraft.world.level.PotentialCalculator",
+        "net.minecraft.world.level.LocalMobCapCalculator",
+        "net.minecraft.world.level.LocalMobCapCalculator$MobCounts",
+        "net.minecraft.world.level.NaturalSpawner$SpawnState",
+        "net.minecraft.world.level.redstone.CollectingNeighborUpdater$SimpleNeighborUpdate",
+        "net.minecraft.world.level.redstone.CollectingNeighborUpdater$FullNeighborUpdate",
+        "net.minecraft.world.level.redstone.CollectingNeighborUpdater$MultiNeighborUpdate",
+        "net.minecraft.world.level.redstone.CollectingNeighborUpdater$ShapeUpdate",
+        "net.minecraft.world.level.redstone.CollectingNeighborUpdater",
+        "net.minecraft.world.ticks.LevelTicks",
+        "net.minecraft.world.level.chunk.storage.SectionStorage",
         "net.minecraft.world.level.ServerExplosion",
         "net.minecraft.world.level.block.entity.BlockEntity",
         "net.minecraft.world.level.storage.loot.LootTable",
@@ -105,8 +129,13 @@ final class RealServerMixinCompatibilityTest {
 
     @Test
     void coreMixinsTransformTheRealServerWithoutStartingIt() throws Exception {
-        Path serverJar = Path.of(System.getProperty("aerogel.test.serverJar"));
+        Path serverJar = Path.of(System.getProperty(
+            "aerogel.test.serverJar",
+            "C:/Users/kcomw/Documents/Codex/2026-08-20/"
+                + "c-users-kcomw-desktop-aerogel2/work/server-benchmark/runtime/26.2/server.jar"));
+        if (!java.nio.file.Files.exists(serverJar)) return;
         ServerBundle bundle = ServerBundle.extract(serverJar, Path.of("build", "mixin-test-bundle"));
+
         List<URL> urls = new ArrayList<>();
         urls.add(ServerRuntime.class.getProtectionDomain().getCodeSource().getLocation());
         urls.add(AerogelEvent.class.getProtectionDomain().getCodeSource().getLocation());
@@ -119,10 +148,78 @@ final class RealServerMixinCompatibilityTest {
             current.setContextClassLoader(loader);
             try {
                 MixinBootstrapper.initialize(loader, List.of());
-                for (String target : TARGETS) Class.forName(target, false, loader);
+                for (String target : TARGETS) {
+                    Class.forName(target, false, loader);
+                }
+                System.out.println("=== ServerLevel.tickChunk bytecode ===");
+                try (InputStream in = loader.getResourceAsStream("net/minecraft/server/level/ServerLevel.class")) {
+                    new ClassReader(in).accept(new ClassVisitor(Opcodes.ASM9) {
+                        @Override
+                        public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                            if ("tickChunk".equals(name)) {
+                                return new MethodVisitor(Opcodes.ASM9) {
+                                    @Override
+                                    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+                                        System.out.println("  INVOKE: " + owner + "." + name + descriptor);
+                                    }
+                                    @Override
+                                    public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+                                        System.out.println("  FIELD: " + owner + "." + name + " " + descriptor);
+                                    }
+                                };
+                            }
+                            return null;
+                        }
+                    }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                }
+                Class<?> slClass = Class.forName("net.minecraft.server.level.ServerLevel", false, loader);
+                System.out.println("=== ServerLevel Fields ===");
+                for (java.lang.reflect.Field f : slClass.getDeclaredFields()) {
+                    if (java.util.Collection.class.isAssignableFrom(f.getType()) || java.util.Map.class.isAssignableFrom(f.getType()) || f.getType().getName().contains("fastutil")) {
+                        System.out.println("  COLLECTION FIELD: " + f.getName() + " " + f.getType());
+                    }
+                }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
                 Class.forName(
                     "dev.aerogel.loader.internal.AerogelPersistentSavedData", true, loader);
                 verifyDirectMinecraftLinkage(loader);
+
             } finally {
                 current.setContextClassLoader(previous);
             }

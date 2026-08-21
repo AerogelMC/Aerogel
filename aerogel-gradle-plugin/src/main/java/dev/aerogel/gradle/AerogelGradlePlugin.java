@@ -183,6 +183,14 @@ public final class AerogelGradlePlugin implements Plugin<Project> {
     }
 
     private static void configureRepositories(Project project) {
+        Object localRepository = project.findProperty("aerogelMavenRepository");
+        if (localRepository != null) {
+            project.getRepositories().maven(repository -> {
+                repository.setName("AerogelLocal");
+                repository.setUrl(project.uri(localRepository));
+                repository.content(content -> content.includeGroup("dev.aerogel"));
+            });
+        }
         project.getRepositories().mavenCentral();
         project.getRepositories().maven(repository -> {
             repository.setName("Aerogel");

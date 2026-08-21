@@ -99,6 +99,16 @@ public final class ServerProcessLauncher {
             command.add("--enable-native-access=ALL-UNNAMED");
         }
         command.addAll(options.jvmArguments());
+        int lastContendedFlag = -1;
+        for (int index = 0; index < command.size(); index++) {
+            if (command.get(index).matches("-XX:[+-]RestrictContended")) {
+                lastContendedFlag = index;
+            }
+        }
+        if (lastContendedFlag < 0
+            || !command.get(lastContendedFlag).equals("-XX:-RestrictContended")) {
+            command.add("-XX:-RestrictContended");
+        }
         Path runtimeJar = RuntimeSnapshot.latestOrCurrent(options.gameDirectory());
         Path agentJar = agentJar(runtimeJar);
         if (agentJar != null) {

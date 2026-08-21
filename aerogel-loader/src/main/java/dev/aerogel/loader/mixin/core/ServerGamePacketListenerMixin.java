@@ -41,6 +41,8 @@ import dev.aerogel.loader.plugin.PluginFailures;
 import dev.aerogel.loader.restart.RestartCoordinator;
 import dev.aerogel.loader.internal.RestartGameListenerBridge;
 import dev.aerogel.loader.internal.RespawnGameListenerBridge;
+import dev.aerogel.loader.internal.EntityOwnedPacketListener;
+import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.network.protocol.game.ServerboundAttackPacket;
@@ -84,7 +86,8 @@ import java.util.logging.Logger;
 
 @Mixin(targets = "net.minecraft.server.network.ServerGamePacketListenerImpl")
 abstract class ServerGamePacketListenerMixin
-    implements RestartGameListenerBridge, RespawnGameListenerBridge {
+    implements RestartGameListenerBridge, RespawnGameListenerBridge,
+    EntityOwnedPacketListener {
     @Shadow public ServerPlayer player;
 
     @Override
@@ -633,7 +636,12 @@ abstract class ServerGamePacketListenerMixin
 
     @Unique
     private boolean aerogel$serverThread() {
-        return player.level().getServer().isSameThread();
+        return AerogelRuntime.isEntityMutationThread(player);
+    }
+
+    @Override
+    public Entity aerogel$packetOwner() {
+        return player;
     }
 
     private ServerPlayer player() {

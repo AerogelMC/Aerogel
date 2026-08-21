@@ -44,6 +44,7 @@ public abstract class MinecraftServer {
     public int getTickCount() { return 0; }
     public ServerScoreboard getScoreboard() { return null; }
     public void halt(boolean waitForShutdown) { }
+    public void execute(Runnable task) { task.run(); }
 
     public boolean acceptsTransfers() {
         return false;

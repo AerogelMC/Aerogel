@@ -18,7 +18,15 @@ import dev.aerogel.api.persistence.PersistentDataView;
 import dev.aerogel.api.blockbatch.BlockBatch;
 import dev.aerogel.loader.internal.PersistentDataViews;
 import dev.aerogel.loader.api.DirectBlockBatchService;
+import dev.aerogel.loader.runtime.AerogelRuntime;
+import dev.aerogel.loader.context.ContextRandomRouting;
+import dev.aerogel.loader.context.ContextNeighborRouting;
+import dev.aerogel.loader.context.LevelNeighborUpdaterBridge;
+import dev.aerogel.loader.context.NativeTickCoordinator;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mutable;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -30,6 +38,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ExplosionParticleInfo;
 import net.minecraft.core.particles.ParticleOptions;
@@ -42,8 +51,11 @@ import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.ExplosionDamageCalculator;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluid;
 import net.minecraft.world.level.saveddata.WeatherData;
+import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -52,11 +64,71 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin {
+    @Shadow @Final @Mutable private List<ServerPlayer> players;
     @Unique private boolean aerogel$explosionOverride;
+    @Unique private final List<Entity> aerogel$entityTickSnapshot = new ArrayList<>();
+
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void aerogel$publishPlayerIndexConcurrently(CallbackInfo callback) {
+        players = new CopyOnWriteArrayList<>(players);
+    }
+
+    @Inject(method = "sendBlockUpdated(Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/world/level/block/state/BlockState;"
+        + "Lnet/minecraft/world/level/block/state/BlockState;I)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$commitBlockUpdateSideEffects(
+        BlockPos position, BlockState previousState, BlockState state, int flags,
+        CallbackInfo callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        BlockPos immutablePosition = position.immutable();
+        if (NativeTickCoordinator.deferGlobalCommit(() ->
+            ((ServerLevel) (Object) this).sendBlockUpdated(
+                immutablePosition, previousState, state, flags))) callback.cancel();
+    }
+
+    @Inject(method = "blockEvent(Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/world/level/block/Block;II)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$commitBlockEvent(
+        BlockPos position, Block block, int type, int data, CallbackInfo callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        BlockPos immutablePosition = position.immutable();
+        if (NativeTickCoordinator.deferGlobalCommit(() ->
+            ((ServerLevel) (Object) this).blockEvent(
+                immutablePosition, block, type, data))) callback.cancel();
+    }
+
+    @Redirect(
+        method = {
+            "updateNeighborsAt(Lnet/minecraft/core/BlockPos;"
+                + "Lnet/minecraft/world/level/block/Block;"
+                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
+            "updateNeighborsAtExceptFromFacing(Lnet/minecraft/core/BlockPos;"
+                + "Lnet/minecraft/world/level/block/Block;Lnet/minecraft/core/Direction;"
+                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
+            "neighborChanged(Lnet/minecraft/core/BlockPos;"
+                + "Lnet/minecraft/world/level/block/Block;"
+                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
+            "neighborChanged(Lnet/minecraft/world/level/block/state/BlockState;"
+                + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/Block;"
+                + "Lnet/minecraft/world/level/redstone/Orientation;Z)V"
+        },
+        at = @At(value = "FIELD", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
+    )
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdater(ServerLevel level) {
+        CollectingNeighborUpdater fallback =
+            ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
+        return ContextNeighborRouting.current(level, fallback);
+    }
 
     @Unique
     public PersistentDataView data() {
@@ -93,6 +165,17 @@ abstract class ServerLevelMixin {
             () -> state.tick(level, position, random));
     }
 
+    @Inject(method = "tickBlock(Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/world/level/block/Block;)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$routeScheduledBlockTick(
+        BlockPos position, Block block, CallbackInfo callback
+    ) {
+        if (NativeTickCoordinator.isNativeWorker()) return;
+        ServerLevel level = (ServerLevel) (Object) this;
+        if (AerogelRuntime.routeBlockTask(level, position,
+            () -> level.tickBlock(position, block))) callback.cancel();
+    }
+
     @Redirect(
         method = "tickFluid(Lnet/minecraft/core/BlockPos;"
             + "Lnet/minecraft/world/level/material/Fluid;)V",
@@ -113,6 +196,28 @@ abstract class ServerLevelMixin {
             () -> fluidState.tick(level, position, blockState));
     }
 
+    @Inject(method = "tickFluid(Lnet/minecraft/core/BlockPos;"
+        + "Lnet/minecraft/world/level/material/Fluid;)V", at = @At("HEAD"), cancellable = true)
+    private void aerogel$routeScheduledFluidTick(
+        BlockPos position, Fluid fluid, CallbackInfo callback
+    ) {
+        if (NativeTickCoordinator.isNativeWorker()) return;
+        ServerLevel level = (ServerLevel) (Object) this;
+        if (AerogelRuntime.routeBlockTask(level, position,
+            () -> level.tickFluid(position, fluid))) callback.cancel();
+    }
+
+    @Redirect(
+        method = "tickChunk(Lnet/minecraft/world/level/chunk/LevelChunk;I)V",
+        at = @At(value = "FIELD",
+            target = "Lnet/minecraft/server/level/ServerLevel;"
+                + "random:Lnet/minecraft/util/RandomSource;")
+    )
+    private RandomSource aerogel$chunkRandom(ServerLevel level) {
+        RandomSource owned = ContextRandomRouting.current(level);
+        return owned != null ? owned : level.getRandom();
+    }
+
     @Redirect(
         method = "tickChunk(Lnet/minecraft/world/level/chunk/LevelChunk;I)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/state/"
@@ -122,13 +227,13 @@ abstract class ServerLevelMixin {
     private void aerogel$randomBlockTick(
         BlockState state, ServerLevel level, BlockPos position, RandomSource random
     ) {
-        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
-            state.randomTick(level, position, random);
-            return;
-        }
-        BlockChangeContext.run(
-            BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
-            () -> state.randomTick(level, position, random));
+        Runnable tick = !EventHooks.hasListeners(BlockStateChangeEvent.class)
+            ? () -> state.randomTick(level, position, random)
+            : () -> BlockChangeContext.run(
+                BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
+                () -> state.randomTick(level, position, random));
+        if (!NativeTickCoordinator.isNativeWorker()
+            || !AerogelRuntime.routeBlockTask(level, position, tick)) tick.run();
     }
 
     @Redirect(
@@ -140,13 +245,13 @@ abstract class ServerLevelMixin {
     private void aerogel$randomFluidTick(
         FluidState state, ServerLevel level, BlockPos position, RandomSource random
     ) {
-        if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) {
-            state.randomTick(level, position, random);
-            return;
-        }
-        BlockChangeContext.run(
-            BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
-            () -> state.randomTick(level, position, random));
+        Runnable tick = !EventHooks.hasListeners(BlockStateChangeEvent.class)
+            ? () -> state.randomTick(level, position, random)
+            : () -> BlockChangeContext.run(
+                BlockStateChangeEvent.Reason.RANDOM_TICK, null, position, null,
+                () -> state.randomTick(level, position, random));
+        if (!NativeTickCoordinator.isNativeWorker()
+            || !AerogelRuntime.routeBlockTask(level, position, tick)) tick.run();
     }
 
     @Unique
@@ -260,6 +365,7 @@ abstract class ServerLevelMixin {
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$worldLoaded(CallbackInfo callbackInfo) {
+        AerogelRuntime.worldLoaded((ServerLevel) (Object) this);
         if (EventHooks.hasListeners(WorldLoadEvent.class)) {
             EventHooks.post(new WorldLoadEvent(EventHooks.cast(this)));
         }
@@ -267,6 +373,7 @@ abstract class ServerLevelMixin {
 
     @Inject(method = "close()V", at = @At("HEAD"))
     private void aerogel$worldUnloaded(CallbackInfo callbackInfo) {
+        AerogelRuntime.worldUnloaded((ServerLevel) (Object) this);
         if (EventHooks.hasListeners(WorldUnloadEvent.class)) {
             EventHooks.post(new WorldUnloadEvent(EventHooks.cast(this)));
         }
@@ -308,14 +415,25 @@ abstract class ServerLevelMixin {
     @Inject(method = "startTickingChunk(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
         at = @At("RETURN"))
     private void aerogel$chunkLoaded(@Coerce Object chunk, CallbackInfo callbackInfo) {
+        AerogelRuntime.chunkLoaded(
+            (ServerLevel) (Object) this,
+            (net.minecraft.world.level.chunk.LevelChunk) chunk);
         if (EventHooks.hasListeners(ChunkLoadEvent.class)) {
             EventHooks.post(new ChunkLoadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
         }
     }
 
     @Inject(method = "unload(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
-        at = @At("HEAD"))
+        at = @At("HEAD"), cancellable = true)
     private void aerogel$chunkUnload(@Coerce Object chunk, CallbackInfo callbackInfo) {
+        ServerLevel level = (ServerLevel) (Object) this;
+        net.minecraft.world.level.chunk.LevelChunk levelChunk =
+            (net.minecraft.world.level.chunk.LevelChunk) chunk;
+        if (AerogelRuntime.drainBeforeChunkUnload(
+            level, levelChunk, () -> level.unload(levelChunk))) {
+            callbackInfo.cancel();
+            return;
+        }
         if (EventHooks.hasListeners(ChunkPreUnloadEvent.class)) {
             EventHooks.post(new ChunkPreUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
         }
@@ -324,6 +442,9 @@ abstract class ServerLevelMixin {
     @Inject(method = "unload(Lnet/minecraft/world/level/chunk/LevelChunk;)V",
         at = @At("RETURN"))
     private void aerogel$chunkUnloaded(@Coerce Object chunk, CallbackInfo callbackInfo) {
+        AerogelRuntime.chunkUnloaded(
+            (ServerLevel) (Object) this,
+            (net.minecraft.world.level.chunk.LevelChunk) chunk);
         if (EventHooks.hasListeners(ChunkUnloadEvent.class)) {
             EventHooks.post(new ChunkUnloadEvent(EventHooks.cast(this), EventHooks.cast(chunk)));
         }
@@ -403,5 +524,20 @@ abstract class ServerLevelMixin {
             }
             callbackInfo.cancel();
         }
+    }
+    @Redirect(
+        method = "tick(Ljava/util/function/BooleanSupplier;)V",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/world/level/entity/EntityTickList;"
+                + "forEach(Ljava/util/function/Consumer;)V")
+    )
+    private void aerogel$parallelEntityTick(
+        net.minecraft.world.level.entity.EntityTickList list,
+        java.util.function.Consumer<Entity> action
+    ) {
+        aerogel$entityTickSnapshot.clear();
+        list.forEach(aerogel$entityTickSnapshot::add);
+        AerogelRuntime.tickEntities(
+            (ServerLevel) (Object) this, aerogel$entityTickSnapshot, action);
     }
 }

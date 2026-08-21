@@ -278,8 +278,8 @@ abstract class LivingEntityMixin {
 
     @Inject(method = "setHealth(F)V", at = @At("HEAD"), cancellable = true)
     private void aerogel$health(float health, CallbackInfo callbackInfo) {
-        if (aerogel$healthOverride || !EventHooks.hasListeners(EntityHealthChangeEvent.class)) return;
         LivingEntity self = (LivingEntity) (Object) this;
+        if (aerogel$healthOverride || !EventHooks.hasListeners(EntityHealthChangeEvent.class)) return;
         float previous = self.getHealth();
         if (Float.compare(previous, health) == 0) return;
         EntityHealthChangeEvent event = new EntityHealthChangeEvent(

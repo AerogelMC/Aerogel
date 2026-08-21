@@ -1,12 +1,13 @@
 package dev.aerogel.loader.api;
 
-
+import dev.aerogel.loader.context.ContextServiceImpl;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class AerogelApiRuntime implements AutoCloseable {
     private final Set<PluginApiScope> scopes = ConcurrentHashMap.newKeySet();
+    private final ContextServiceImpl contexts = new ContextServiceImpl();
     private volatile net.minecraft.server.MinecraftServer server;
 
     public PluginApiScope openScope(String pluginId, java.util.logging.Logger logger) {
@@ -57,10 +58,12 @@ public final class AerogelApiRuntime implements AutoCloseable {
     }
 
     net.minecraft.server.MinecraftServer server() { return server; }
+    public ContextServiceImpl contexts() { return contexts; }
     boolean ready() { return server != null; }
     void remove(PluginApiScope scope) { scopes.remove(scope); }
 
     @Override public void close() {
         for (PluginApiScope scope : scopes.toArray(PluginApiScope[]::new)) scope.close();
+        contexts.close();
     }
 }

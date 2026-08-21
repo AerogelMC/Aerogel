@@ -18,6 +18,7 @@
   "commands.aerogel.plugins.unknown": "未知插件：%s",
   "commands.aerogel.plugins.mixin_notice": "%s 的部分 Mixin 更改可能要到服务器重启后才会生效",
   "commands.aerogel.tps": "TPS（1分钟、5分钟、15分钟）：%s, %s, %s | MSPT：%s",
+  "commands.aerogel.tps.chunk": "当前区块 [%s, %s] MSPT：%s | 最大：%s | 排队：%s",
   "commands.aerogel.networkstats.empty": "尚未记录入站数据包队列样本。",
   "commands.aerogel.networkstats.summary": "数据包队列延迟（%s 个数据包，%s 秒）：平均 %s ms | p50 %s ms | p95 %s ms | p99 %s ms | 最大 %s ms",
   "commands.aerogel.networkstats.paths": "空闲泵：%s%%（%s）| Tick 边界：%s%%（%s）",

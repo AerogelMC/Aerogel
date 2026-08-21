@@ -1,6 +1,6 @@
 # Aerogel 플러그인 개발 가이드
 
-> **대상:** Aerogel `26.2-2`, Minecraft Java Edition `26.2+`, Java `25`  
+> **대상:** Aerogel `26.2-3`, Minecraft Java Edition `26.2+`, Java `25`
 > **언어:** [English](DEVELOPMENT.md) · 한국어
 
 이 문서는 프로젝트 생성부터 메타데이터, 생명주기, 바닐라 접근, 이벤트, 명령어, GUI, 번역, 리로드, Mixin, 패키징과 문제 해결까지 Aerogel 플러그인 개발의 전체 흐름을 설명합니다.
@@ -57,7 +57,7 @@ Aerogel은 의도적으로 두 계층을 함께 사용합니다.
 
 - JDK 25
 - Gradle 8 호환 프로젝트
-- Aerogel Gradle 플러그인 `26.2-2`
+- Aerogel Gradle 플러그인 `26.2-3`
 - Minecraft Java Edition 서버 `26.2` 또는 설치한 Aerogel 빌드가 지원하는 이후 버전
 - IntelliJ IDEA 등 Gradle을 지원하는 Java IDE
 
@@ -85,13 +85,13 @@ Gradle 플러그인을 사용한다면 `aerogel.plugin.json`을 직접 만들지
 
 ### 2. Aerogel 플러그인 저장소 연결하기
 
-Gradle 플러그인이 공개 저장소에 배포되기 전까지 `aerogel-gradle-plugin-26.2-2.zip`을 압축 해제하고, 그 안의 Maven 저장소를 `pluginManagement`에 연결합니다.
+Gradle 플러그인이 공개 저장소에 배포되기 전까지 `aerogel-gradle-plugin-26.2-3.zip`을 압축 해제하고, 그 안의 Maven 저장소를 `pluginManagement`에 연결합니다.
 
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
-        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-2") }
+        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-3") }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -107,7 +107,7 @@ Windows 경로에는 슬래시(`/`)를 사용하거나 역슬래시를 올바르
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("dev.aerogel.plugin") version "26.2-2"
+    id("dev.aerogel.plugin") version "26.2-3"
 }
 
 group = "com.example"
@@ -1003,7 +1003,7 @@ Mixin 리로드는 최선 시도입니다. 메서드 본문 변경은 hot swap�
 
 ```text
 server/
-├─ Aerogel-26.2-2.jar
+├─ Aerogel-26.2-3.jar
 └─ plugins/
    └─ my-plugin-1.0.0.jar
 ```

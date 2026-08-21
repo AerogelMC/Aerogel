@@ -18,6 +18,7 @@
   "commands.aerogel.plugins.unknown": "Plugin desconocido: %s",
   "commands.aerogel.plugins.mixin_notice": "Es posible que algunos cambios de Mixin de %s no se apliquen hasta que se reinicie el servidor",
   "commands.aerogel.tps": "TPS (1 min, 5 min, 15 min): %s, %s, %s | MSPT: %s",
+  "commands.aerogel.tps.chunk": "Chunk actual [%s, %s] MSPT: %s | máximo: %s | en cola: %s",
   "commands.aerogel.networkstats.empty": "Todavía no se han registrado muestras de la cola de paquetes entrantes.",
   "commands.aerogel.networkstats.summary": "Latencia de la cola de paquetes (%s paquetes en %s segundos): media %s ms | p50 %s ms | p95 %s ms | p99 %s ms | máx. %s ms",
   "commands.aerogel.networkstats.paths": "Bomba inactiva: %s%% (%s) | Límite de tick: %s%% (%s)",

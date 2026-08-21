@@ -34,6 +34,12 @@ dependencies {
 
 tasks.compileJava {
     dependsOn(":aerogel-api:minecraftStubsClasses")
+    // @Contended is a JDK VM contract and is intentionally outside the Java SE API.
+    // Compile this runtime module against the JDK 25 image instead of ct.sym.
+    options.release.set(null as Int?)
+    options.compilerArgs.addAll(listOf(
+        "--add-exports", "java.base/jdk.internal.vm.annotation=ALL-UNNAMED"
+    ))
 }
 
 application {
