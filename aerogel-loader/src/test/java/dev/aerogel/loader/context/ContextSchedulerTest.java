@@ -313,6 +313,31 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void chunkMsptAggregatesAllContextWorkByMinecraftTick() {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            ChunkContextImpl context = new WorldContextImpl(scheduler, null).context(0, 0);
+
+            NativeTickCoordinator.beginServerTick();
+            CompletableFuture.allOf(
+                context.submit(0, Thread::onSpinWait),
+                context.submit(0, Thread::onSpinWait)
+            ).join();
+            var first = context.snapshot();
+            assertEquals(1L, first.measuredTicks());
+            assertEquals(first.totalExecutionNanos(), first.maximumExecutionNanos());
+            assertEquals(first.totalExecutionNanos() / 1_000_000.0D,
+                first.averageExecutionMillis(), 0.0D);
+
+            NativeTickCoordinator.beginServerTick();
+            context.submit(0, Thread::onSpinWait).join();
+            var second = context.snapshot();
+            assertEquals(2L, second.measuredTicks());
+            assertEquals(second.totalExecutionNanos() / 2_000_000.0D,
+                second.averageExecutionMillis(), 0.0D);
+        }
+    }
+
+    @Test
     void neighborhoodReservationExcludesAdjacentMutation() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(3)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);

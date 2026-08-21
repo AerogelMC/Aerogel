@@ -12,6 +12,7 @@ public final class NativeTickCoordinator {
     private static final ConcurrentLinkedQueue<Runnable> GLOBAL_COMMITS =
         new ConcurrentLinkedQueue<>();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
+    private static final PaddedAtomicLong SERVER_TICK = new PaddedAtomicLong();
 
     private NativeTickCoordinator() { }
 
@@ -45,6 +46,14 @@ public final class NativeTickCoordinator {
 
     public static boolean isNativeWorker() {
         return NATIVE_WORK.get() != null;
+    }
+
+    public static void beginServerTick() {
+        SERVER_TICK.incrementAndGet();
+    }
+
+    static long currentServerTick() {
+        return SERVER_TICK.get();
     }
 
     public static boolean deferGlobalCommit(Runnable commit) {

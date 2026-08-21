@@ -20,6 +20,12 @@ public final class PaddedAtomicLong {
 
     private volatile long value;
 
+    public PaddedAtomicLong() { }
+    public PaddedAtomicLong(long initialValue) { value = initialValue; }
+
     public long get() { return (long) VALUE.getVolatile(this); }
+    public void set(long updated) { VALUE.setVolatile(this, updated); }
+    public long getAndSet(long updated) { return (long) VALUE.getAndSet(this, updated); }
+    public long addAndGet(long delta) { return (long) VALUE.getAndAdd(this, delta) + delta; }
     public long incrementAndGet() { return (long) VALUE.getAndAdd(this, 1L) + 1L; }
 }

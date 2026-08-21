@@ -3,6 +3,7 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.ChunkResult;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerChunkCache;
@@ -70,11 +71,18 @@ abstract class ServerChunkCacheMixin {
         ChunkAccess present = holder == null ? null : holder.getChunkIfPresent(targetStatus);
         if (present != null || !create) {
             callback.setReturnValue(present);
-        } else {
-            throw new IllegalStateException(
-                "Context requested synchronous generation of an unloaded chunk "
-                    + chunkX + "," + chunkZ + " at status " + targetStatus);
+            return;
         }
+
+        ChunkResult<ChunkAccess> result = ((ServerChunkCache) (Object) this)
+            .getChunkFuture(chunkX, chunkZ, targetStatus, true).join();
+        ChunkAccess loaded = result.orElse(null);
+        if (loaded == null) {
+            throw new IllegalStateException(
+                "Chunk generation did not produce " + chunkX + "," + chunkZ
+                    + " at status " + targetStatus + ": " + result.getError());
+        }
+        callback.setReturnValue(loaded);
     }
 
     @Inject(method = "move(Lnet/minecraft/server/level/ServerPlayer;)V",

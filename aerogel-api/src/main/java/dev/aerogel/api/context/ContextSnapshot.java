@@ -8,13 +8,14 @@ public record ContextSnapshot(
     long completedTasks,
     long failedTasks,
     long staleTasks,
+    long measuredTicks,
     long totalExecutionNanos,
     long maximumExecutionNanos,
     int queuedTasks
 ) {
     public double averageExecutionMillis() {
-        return completedTasks == 0L
+        return measuredTicks == 0L
             ? 0.0D
-            : totalExecutionNanos / (double) completedTasks / 1_000_000.0D;
+            : totalExecutionNanos / (double) measuredTicks / 1_000_000.0D;
     }
 }
