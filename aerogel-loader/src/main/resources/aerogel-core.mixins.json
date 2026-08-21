@@ -50,6 +50,7 @@
     "LevelChunkContextMixin",
     "LevelMixin",
     "LevelTicksMixin",
+    "DataLayerStorageMapMixin",
     "SectionStorageMixin",
     "PistonBaseBlockMixin",
     "EndermanTakeBlockGoalMixin",

@@ -7,12 +7,21 @@ import it.unimi.dsi.fastutil.longs.LongSortedSet;
 
 import java.util.Iterator;
 import java.util.NavigableSet;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.function.LongConsumer;
 
 /** Snapshot-iterated ordered section index with concurrent exact-key mutation. */
 public final class ConcurrentLongSortedSet extends LongAVLTreeSet {
-    private final ConcurrentSkipListSet<Long> values = new ConcurrentSkipListSet<>();
+    private final NavigableSet<Long> values;
+
+    public ConcurrentLongSortedSet() {
+        values = new ConcurrentSkipListSet<>();
+    }
+
+    private ConcurrentLongSortedSet(NavigableSet<Long> values) {
+        this.values = values;
+    }
 
     @Override public boolean add(long value) { return values.add(value); }
     @Override public boolean remove(long value) { return values.remove(value); }
@@ -23,32 +32,35 @@ public final class ConcurrentLongSortedSet extends LongAVLTreeSet {
 
     @Override
     public LongSortedSet subSet(long from, long to) {
-        return snapshot(values.subSet(from, true, to, false));
+        return new ConcurrentLongSortedSet(values.subSet(from, true, to, false));
     }
 
     @Override
     public LongBidirectionalIterator iterator() {
-        return iteratorOf(snapshotValues(values));
+        return iteratorOf(values.iterator());
     }
 
-    private static LongAVLTreeSet snapshot(NavigableSet<Long> source) {
-        LongAVLTreeSet copy = new LongAVLTreeSet();
-        source.forEach(copy::add);
-        return copy;
-    }
-
-    private static java.util.List<Long> snapshotValues(NavigableSet<Long> source) {
-        return java.util.List.copyOf(source);
-    }
-
-    private static LongBidirectionalIterator iteratorOf(java.util.List<Long> source) {
+    private static LongBidirectionalIterator iteratorOf(Iterator<Long> source) {
         return new LongBidirectionalIterator() {
+            private long[] visited = new long[0];
+            private int visitedSize;
             private int index;
-            @Override public boolean hasNext() { return index < source.size(); }
-            @Override public long nextLong() { return source.get(index++); }
+            @Override public boolean hasNext() {
+                return index < visitedSize || source.hasNext();
+            }
+            @Override public long nextLong() {
+                if (index < visitedSize) return visited[index++];
+                long value = source.next();
+                if (visitedSize == visited.length) {
+                    visited = Arrays.copyOf(visited, Math.max(1, visitedSize * 2));
+                }
+                visited[visitedSize++] = value;
+                index++;
+                return value;
+            }
             @Override public Long next() { return nextLong(); }
             @Override public boolean hasPrevious() { return index > 0; }
-            @Override public long previousLong() { return source.get(--index); }
+            @Override public long previousLong() { return visited[--index]; }
         };
     }
 }

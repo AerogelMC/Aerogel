@@ -127,9 +127,47 @@ final class ContextSchedulerTest {
 
             assertTrue(ticked.await(2, TimeUnit.SECONDS),
                 "all same-chunk entities must tick without waiting for the server commit pump");
+            context.submit(0, () -> { }).get(2, TimeUnit.SECONDS);
             assertEquals(0, committed.get());
             NativeTickCoordinator.pumpMainThread();
             assertEquals(entities.size(), committed.get());
+        }
+    }
+
+    @Test
+    void entityLaneSubmitsOneOwnedTaskForOneChunkTickBatch() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            List<Entity> entities = List.of(
+                new OwnedEntity(context), new OwnedEntity(context), new OwnedEntity(context));
+            CountDownLatch ticked = new CountDownLatch(entities.size());
+
+            context.entityLane().offer(entities, ignored -> ticked.countDown());
+
+            assertTrue(ticked.await(2, TimeUnit.SECONDS));
+            assertEquals(1L, context.snapshot().submittedTasks());
+        }
+    }
+
+    @Test
+    void failedEntityDoesNotPreventTheRestOfItsChunkBatchFromTicking() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            List<Entity> entities = List.of(
+                new OwnedEntity(context), new OwnedEntity(context), new OwnedEntity(context));
+            CountDownLatch attempted = new CountDownLatch(entities.size());
+            AtomicInteger index = new AtomicInteger();
+
+            context.entityLane().offer(entities, ignored -> {
+                attempted.countDown();
+                if (index.getAndIncrement() == 0) throw new IllegalStateException("expected");
+            });
+
+            assertTrue(attempted.await(2, TimeUnit.SECONDS));
+            context.submit(0, () -> { }).get(2, TimeUnit.SECONDS);
+            assertEquals(1L, context.snapshot().failedTasks());
         }
     }
 

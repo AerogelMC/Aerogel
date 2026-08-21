@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.ConcurrentVillageDistanceIndex;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.world.entity.ai.village.poi.PoiManager;
@@ -21,6 +22,10 @@ import java.util.function.Predicate;
 /** Makes POI selection linearizable without a global main-thread owner. */
 @Mixin(targets = "net.minecraft.world.entity.ai.village.poi.PoiManager")
 abstract class PoiManagerMixin {
+    @org.spongepowered.asm.mixin.Unique
+    private final ConcurrentVillageDistanceIndex aerogel$villageCenters =
+        new ConcurrentVillageDistanceIndex();
+
     @Shadow public abstract Stream<net.minecraft.world.entity.ai.village.poi.PoiRecord>
         getInRange(Predicate<Holder<PoiType>> type, BlockPos position, int radius,
             PoiManager.Occupancy occupancy);
@@ -59,29 +64,31 @@ abstract class PoiManagerMixin {
         }
     }
 
+    @Inject(method = "setDirty", at = @At("RETURN"))
+    private void aerogel$publishChangedVillageCenter(
+        long sectionKey, org.spongepowered.asm.mixin.injection.callback.CallbackInfo callback
+    ) {
+        aerogel$publishVillageCenter(sectionKey);
+    }
+
+    @Inject(method = "onSectionLoad", at = @At("RETURN"))
+    private void aerogel$publishLoadedVillageCenter(
+        long sectionKey, org.spongepowered.asm.mixin.injection.callback.CallbackInfo callback
+    ) {
+        aerogel$publishVillageCenter(sectionKey);
+    }
+
     @Inject(method = "sectionsToVillage", at = @At("HEAD"), cancellable = true)
     private void aerogel$computeExactPublishedVillageDistance(
         net.minecraft.core.SectionPos origin,
         CallbackInfoReturnable<Integer> callback
     ) {
         if (!NativeTickCoordinator.isNativeWorker()) return;
-        long originKey = origin.asLong();
-        for (int distance = 0; distance <= PoiManager.MAX_VILLAGE_DISTANCE; distance++) {
-            for (int x = -distance; x <= distance; x++) {
-                for (int y = -distance; y <= distance; y++) {
-                    for (int z = -distance; z <= distance; z++) {
-                        if (Math.max(Math.max(Math.abs(x), Math.abs(y)), Math.abs(z))
-                            != distance) continue;
-                        long sectionKey = net.minecraft.core.SectionPos.offset(
-                            originKey, x, y, z);
-                        if (aerogel$isVillageCenter(sectionKey)) {
-                            callback.setReturnValue(distance);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-        callback.setReturnValue(PoiManager.MAX_VILLAGE_DISTANCE + 1);
+        callback.setReturnValue(aerogel$villageCenters.distance(
+            origin.asLong(), PoiManager.MAX_VILLAGE_DISTANCE));
+    }
+
+    private void aerogel$publishVillageCenter(long sectionKey) {
+        aerogel$villageCenters.publish(sectionKey, aerogel$isVillageCenter(sectionKey));
     }
 }

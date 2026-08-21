@@ -467,9 +467,24 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     /** Exact chunk faces touched by the entity's current and projected swept box. */
     static long[] entityTickScope(ChunkContextImpl owner, Entity entity) {
         LongOpenHashSet keys = new LongOpenHashSet();
+        addEntityTickScope(keys, owner, entity);
+        return keys.toLongArray();
+    }
+
+    /** Exact union of all swept entity footprints in one owner-chunk tick batch. */
+    static long[] entityTickScope(ChunkContextImpl owner, Iterable<Entity> entities) {
+        LongOpenHashSet keys = new LongOpenHashSet();
+        keys.add(owner.key());
+        for (Entity entity : entities) addEntityTickScope(keys, owner, entity);
+        return keys.toLongArray();
+    }
+
+    private static void addEntityTickScope(
+        LongOpenHashSet keys, ChunkContextImpl owner, Entity entity
+    ) {
         keys.add(owner.key());
         AABB box = entity.getBoundingBox();
-        if (box == null) return keys.toLongArray();
+        if (box == null) return;
         Vec3 movement = entity.getDeltaMovement();
         double moveX = movement == null || !Double.isFinite(movement.x) ? 0.0D : movement.x;
         double moveZ = movement == null || !Double.isFinite(movement.z) ? 0.0D : movement.z;
@@ -478,7 +493,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         double maxX = Math.max(box.maxX, box.maxX + moveX);
         double maxZ = Math.max(box.maxZ, box.maxZ + moveZ);
         if (!Double.isFinite(minX) || !Double.isFinite(minZ)
-            || !Double.isFinite(maxX) || !Double.isFinite(maxZ)) return keys.toLongArray();
+            || !Double.isFinite(maxX) || !Double.isFinite(maxZ)) return;
 
         int minBlockX = (int) Math.floor(minX);
         int minBlockZ = (int) Math.floor(minZ);
@@ -497,7 +512,6 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         addScope(keys, new BlockPos(minBlockX, 0, maxBlockZ));
         addScope(keys, new BlockPos(maxBlockX, 0, minBlockZ));
         addScope(keys, new BlockPos(maxBlockX, 0, maxBlockZ));
-        return keys.toLongArray();
     }
 
     private static void addScope(LongOpenHashSet keys, BlockPos position) {

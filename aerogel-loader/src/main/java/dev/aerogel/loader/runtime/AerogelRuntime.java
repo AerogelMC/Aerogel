@@ -55,6 +55,11 @@ public final class AerogelRuntime {
         api().tick(server);
     }
 
+    public static void stopContextDispatch() {
+        AerogelApiRuntime current = apiRuntime;
+        if (current != null) current.contexts().close();
+    }
+
     public static void worldLoaded(ServerLevel level) {
         AerogelApiRuntime current = apiRuntime;
         if (current != null) current.contexts().worldLoaded(level);

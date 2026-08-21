@@ -22,8 +22,22 @@ public final class NativeTickCoordinator {
         }
         NativeFrame frame = new NativeFrame();
         NATIVE_WORK.set(frame);
+        Throwable failure = null;
         try {
-            for (T item : items) action.accept(item);
+            for (T item : items) {
+                try {
+                    action.accept(item);
+                } catch (Throwable error) {
+                    if (failure == null) {
+                        failure = error;
+                    } else {
+                        failure.addSuppressed(error);
+                    }
+                }
+            }
+            if (failure instanceof RuntimeException runtime) throw runtime;
+            if (failure instanceof Error error) throw error;
+            if (failure != null) throw new RuntimeException(failure);
         } finally {
             NATIVE_WORK.remove();
             Runnable completion = () -> {
