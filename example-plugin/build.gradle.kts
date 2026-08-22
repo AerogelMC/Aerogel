@@ -1,5 +1,5 @@
 plugins {
-    id("dev.aerogel.plugin") version "26.2-4"
+    id("dev.aerogel.plugin") version "26.2-5"
 }
 
 group = "dev.aerogel.example"

@@ -126,7 +126,7 @@ public abstract class SetupAerogelDevelopment extends DefaultTask {
     private JsonObject getJson(HttpClient client, URI uri) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofSeconds(30))
-            .header("User-Agent", "Aerogel-Gradle/26.2-4")
+            .header("User-Agent", "Aerogel-Gradle/26.2-5")
             .GET().build();
         HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {
@@ -143,7 +143,7 @@ public abstract class SetupAerogelDevelopment extends DefaultTask {
         throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofMinutes(5))
-            .header("User-Agent", "Aerogel-Gradle/26.2-4")
+            .header("User-Agent", "Aerogel-Gradle/26.2-5")
             .GET().build();
         HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() != 200) {

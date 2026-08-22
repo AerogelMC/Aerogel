@@ -18,17 +18,17 @@ pluginManagement {
 }
 ```
 
-Then apply `id("dev.aerogel.plugin") version "26.2-4"` normally. The `maven` branch is
+Then apply `id("dev.aerogel.plugin") version "26.2-5"` normally. The `maven` branch is
 updated automatically after changes reach `main` and retains previously published versions.
 
 ## Local repository package
 
-For offline development or a pinned local mirror, extract `aerogel-gradle-plugin-26.2-4.zip` and add that directory to `settings.gradle.kts`:
+For offline development or a pinned local mirror, extract `aerogel-gradle-plugin-26.2-5.zip` and add that directory to `settings.gradle.kts`:
 
 ```kotlin
 pluginManagement {
     repositories {
-        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-4") }
+        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-5") }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -41,7 +41,7 @@ The extracted directory is a Maven repository containing the plugin marker, impl
 
 ```kotlin
 plugins {
-    id("dev.aerogel.plugin") version "26.2-4"
+    id("dev.aerogel.plugin") version "26.2-5"
 }
 
 group = "com.example"
