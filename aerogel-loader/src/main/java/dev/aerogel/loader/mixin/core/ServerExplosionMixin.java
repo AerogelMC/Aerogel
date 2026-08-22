@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.util.List;
+import java.util.ArrayList;
 
 @Mixin(targets = "net.minecraft.world.level.ServerExplosion")
 abstract class ServerExplosionMixin {
@@ -39,9 +40,10 @@ abstract class ServerExplosionMixin {
     private void aerogel$explosionBlockChanges(
         ServerExplosion explosion, List<BlockPos> positions
     ) {
+        List<BlockPos> targets = aerogel$immutablePositionCopy(positions);
         Runnable changes = () -> aerogel$withExplosionContext(
-            () -> aerogel$interactWithBlocks(positions));
-        if (!AerogelRuntime.routeBlockEffects(level, positions, changes)) changes.run();
+            () -> aerogel$interactWithBlocks(targets));
+        if (!AerogelRuntime.routeBlockEffects(level, targets, changes)) changes.run();
     }
 
     @Redirect(
@@ -52,9 +54,16 @@ abstract class ServerExplosionMixin {
     private void aerogel$explosionFireChanges(
         ServerExplosion explosion, List<BlockPos> positions
     ) {
+        List<BlockPos> targets = aerogel$immutablePositionCopy(positions);
         Runnable changes = () -> aerogel$withExplosionContext(
-            () -> aerogel$createFire(positions));
-        if (!AerogelRuntime.routeBlockEffects(level, positions, changes)) changes.run();
+            () -> aerogel$createFire(targets));
+        if (!AerogelRuntime.routeBlockEffects(level, targets, changes)) changes.run();
+    }
+
+    private static List<BlockPos> aerogel$immutablePositionCopy(List<BlockPos> positions) {
+        List<BlockPos> copy = new ArrayList<>(positions.size());
+        for (BlockPos position : positions) copy.add(position.immutable());
+        return copy;
     }
 
     private void aerogel$withExplosionContext(Runnable action) {

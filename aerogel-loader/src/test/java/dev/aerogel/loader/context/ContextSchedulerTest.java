@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.block.entity.TickingBlockEntity;
@@ -131,6 +132,37 @@ final class ContextSchedulerTest {
             assertEquals(0, committed.get());
             NativeTickCoordinator.pumpMainThread();
             assertEquals(entities.size(), committed.get());
+        }
+    }
+
+    @Test
+    void nativeAttachmentsCoalesceOneBatchPerOwnedTransaction() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            List<Entity> entities = List.of(
+                new OwnedEntity(context), new OwnedEntity(context), new OwnedEntity(context));
+            Object key = new Object();
+            AtomicInteger creations = new AtomicInteger();
+            AtomicReference<List<Integer>> observed = new AtomicReference<>();
+            CountDownLatch ticked = new CountDownLatch(entities.size());
+
+            context.entityLane().offer(entities, ignored -> {
+                List<Integer> attachment = NativeTickCoordinator.nativeAttachment(
+                    key, () -> {
+                        creations.incrementAndGet();
+                        List<Integer> created = new ArrayList<>();
+                        observed.set(created);
+                        return created;
+                    });
+                attachment.add(attachment.size());
+                ticked.countDown();
+            });
+
+            assertTrue(ticked.await(2, TimeUnit.SECONDS));
+            context.submit(0, () -> { }).get(2, TimeUnit.SECONDS);
+            assertEquals(1, creations.get());
+            assertEquals(List.of(0, 1, 2), observed.get());
         }
     }
 

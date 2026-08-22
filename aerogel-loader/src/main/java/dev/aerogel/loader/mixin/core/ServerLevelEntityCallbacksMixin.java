@@ -1,6 +1,8 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.runtime.AerogelRuntime;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -37,6 +39,18 @@ abstract class ServerLevelEntityCallbacksMixin {
     @Inject(method = "onTickingEnd", at = @At("HEAD"), cancellable = true)
     private void aerogel$deferTickingEnd(Entity entity, CallbackInfo callback) {
         defer("onTickingEnd", entity, callback);
+    }
+
+    @Inject(method = "onTickingStart", at = @At("RETURN"))
+    private void aerogel$registerTickingEntity(Entity entity, CallbackInfo callback) {
+        if (entity.level() instanceof ServerLevel level) {
+            AerogelRuntime.registerTickingEntity(level, entity);
+        }
+    }
+
+    @Inject(method = "onTickingEnd", at = @At("RETURN"))
+    private void aerogel$unregisterTickingEntity(Entity entity, CallbackInfo callback) {
+        AerogelRuntime.unregisterTickingEntity(entity);
     }
 
     @Inject(method = "onTrackingStart", at = @At("HEAD"), cancellable = true)

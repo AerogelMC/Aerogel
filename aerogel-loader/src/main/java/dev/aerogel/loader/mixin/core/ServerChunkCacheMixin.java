@@ -28,6 +28,8 @@ import java.util.function.Consumer;
 import java.util.List;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.NaturalSpawner;
+import net.minecraft.world.level.LocalMobCapCalculator;
+import net.minecraft.world.entity.Entity;
 
 @Mixin(targets = "net.minecraft.server.level.ServerChunkCache")
 abstract class ServerChunkCacheMixin {
@@ -115,6 +117,24 @@ abstract class ServerChunkCacheMixin {
 
     @Redirect(
         method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;J)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/NaturalSpawner;"
+            + "createState(ILjava/lang/Iterable;"
+            + "Lnet/minecraft/world/level/NaturalSpawner$ChunkGetter;"
+            + "Lnet/minecraft/world/level/LocalMobCapCalculator;)"
+            + "Lnet/minecraft/world/level/NaturalSpawner$SpawnState;")
+    )
+    private NaturalSpawner.SpawnState aerogel$prepareNaturalSpawnState(
+        int spawnableChunks,
+        Iterable<Entity> entities,
+        NaturalSpawner.ChunkGetter chunkGetter,
+        LocalMobCapCalculator localCaps
+    ) {
+        return AerogelRuntime.prepareNaturalSpawnState(
+            spawnableChunks, entities, chunkGetter, localCaps);
+    }
+
+    @Redirect(
+        method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;J)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ChunkMap;"
             + "forEachBlockTickingChunk(Ljava/util/function/Consumer;)V")
     )
@@ -134,8 +154,10 @@ abstract class ServerChunkCacheMixin {
         ServerChunkCache cache, LevelChunk chunk, long inhabitedTimeDelta,
         List<MobCategory> categories, NaturalSpawner.SpawnState spawnState
     ) {
-        AerogelRuntime.tickSpawningChunk(level, chunk, () ->
-            aerogel$invokeTickSpawningChunk(
-                chunk, inhabitedTimeDelta, categories, spawnState));
+        AerogelRuntime.withPreparedNaturalSpawnState(
+            spawnState, categories, (prepared, exactCategories) ->
+                AerogelRuntime.tickSpawningChunk(level, chunk, () ->
+                    aerogel$invokeTickSpawningChunk(
+                        chunk, inhabitedTimeDelta, exactCategories, prepared)));
     }
 }

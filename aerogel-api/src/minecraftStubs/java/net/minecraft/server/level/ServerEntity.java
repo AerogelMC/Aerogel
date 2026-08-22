@@ -12,6 +12,7 @@ public class ServerEntity {
                         Synchronizer synchronizer) { }
 
     public void addPairing(ServerPlayer player) { }
+    public void sendChanges() { }
 
     public void sendPairingData(ServerPlayer player,
                                 Consumer<Packet<ClientGamePacketListener>> packetConsumer) { }

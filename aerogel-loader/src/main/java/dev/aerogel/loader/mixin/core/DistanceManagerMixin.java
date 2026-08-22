@@ -17,4 +17,16 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
         ((SimulationChunkTrackerBridge) (Object) simulationChunkTracker)
             .aerogel$forEachEntityTickingChunk(consumer);
     }
+
+    @Override
+    public boolean aerogel$isPublishedEntityTickingChunk(long chunkKey) {
+        return ((SimulationChunkTrackerBridge) (Object) simulationChunkTracker)
+            .aerogel$isEntityTickingChunk(chunkKey);
+    }
+
+    @Override
+    public void aerogel$blockTickingListener(LongConsumer listener) {
+        ((SimulationChunkTrackerBridge) (Object) simulationChunkTracker)
+            .aerogel$blockTickingListener(listener);
+    }
 }

@@ -21,15 +21,26 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiConsumer;
+import dev.aerogel.loader.internal.PreparedSpawnStateBridge;
 
 @Mixin(targets = "net.minecraft.world.level.NaturalSpawner$SpawnState")
-abstract class NaturalSpawnerSpawnStateMixin {
+abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge {
     @Shadow @Final private Object2IntOpenHashMap<MobCategory> mobCategoryCounts;
 
     @Unique
     private ThreadLocal<CheckedSpawn> aerogel$lastChecked;
     @Unique
     private AtomicIntegerArray aerogel$categoryCounts;
+    @Unique
+    private volatile CompletableFuture<NaturalSpawner.SpawnState> aerogel$preparedState;
+    @Unique
+    private volatile NaturalSpawner.SpawnState aerogel$preparedDelegate;
+    @Unique
+    private volatile CompletableFuture<List<MobCategory>> aerogel$preparedCategories;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$captureInitialCounts(
@@ -121,11 +132,65 @@ abstract class NaturalSpawnerSpawnStateMixin {
     private void aerogel$concurrentCountSnapshot(
         CallbackInfoReturnable<Object2IntMap<MobCategory>> callback
     ) {
+        NaturalSpawner.SpawnState prepared = aerogel$preparedDelegate;
+        if (prepared != null) {
+            callback.setReturnValue(prepared.getMobCategoryCounts());
+            return;
+        }
         Object2IntOpenHashMap<MobCategory> snapshot = new Object2IntOpenHashMap<>();
         for (MobCategory category : MobCategory.values()) {
             snapshot.put(category, aerogel$categoryCounts.get(category.ordinal()));
         }
         callback.setReturnValue(Object2IntMaps.unmodifiable(snapshot));
+    }
+
+    @Override
+    public void aerogel$preparedState(
+        CompletableFuture<NaturalSpawner.SpawnState> state
+    ) {
+        aerogel$preparedState = state;
+        state.thenAccept(prepared -> aerogel$preparedDelegate = prepared);
+    }
+
+    @Override
+    public void aerogel$whenPrepared(
+        List<MobCategory> gatedCategories,
+        BiConsumer<NaturalSpawner.SpawnState, List<MobCategory>> action
+    ) {
+        CompletableFuture<NaturalSpawner.SpawnState> state = aerogel$preparedState;
+        if (state == null) {
+            action.accept((NaturalSpawner.SpawnState) (Object) this, gatedCategories);
+            return;
+        }
+        CompletableFuture<List<MobCategory>> categories = aerogel$preparedCategories;
+        if (categories == null) {
+            synchronized (this) {
+                categories = aerogel$preparedCategories;
+                if (categories == null) {
+                    List<MobCategory> gate = List.copyOf(gatedCategories);
+                    categories = state.thenApply(prepared -> {
+                        EnumSet<MobCategory> globallyAllowed = EnumSet.noneOf(MobCategory.class);
+                        globallyAllowed.addAll(NaturalSpawner.getFilteredSpawningCategories(
+                            prepared, true, true));
+                        return gate.stream().filter(globallyAllowed::contains).toList();
+                    });
+                    aerogel$preparedCategories = categories;
+                }
+            }
+        }
+        CompletableFuture<List<MobCategory>> exactCategories = categories;
+        state.thenCombine(exactCategories, (prepared, exact) -> {
+            action.accept(prepared, exact);
+            return null;
+        });
+    }
+
+    @Inject(method = "getSpawnableChunkCount", at = @At("HEAD"), cancellable = true)
+    private void aerogel$preparedSpawnableChunkCount(
+        CallbackInfoReturnable<Integer> callback
+    ) {
+        NaturalSpawner.SpawnState prepared = aerogel$preparedDelegate;
+        if (prepared != null) callback.setReturnValue(prepared.getSpawnableChunkCount());
     }
 
     @Unique

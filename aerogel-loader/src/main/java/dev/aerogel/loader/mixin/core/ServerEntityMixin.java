@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.internal.PlayerNameTagService;
+import dev.aerogel.loader.internal.ServerEntityBridge;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Final;
@@ -11,8 +12,13 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.server.level.ServerEntity")
-abstract class ServerEntityMixin {
+abstract class ServerEntityMixin implements ServerEntityBridge {
     @Shadow @Final private Entity entity;
+
+    @Override
+    public Entity aerogel$entity() {
+        return entity;
+    }
 
     @Inject(method = "addPairing(Lnet/minecraft/server/level/ServerPlayer;)V", at = @At("RETURN"))
     private void aerogel$syncPlayerNameTag(ServerPlayer viewer, CallbackInfo callbackInfo) {

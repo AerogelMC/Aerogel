@@ -1,7 +1,6 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.ContextualEntityCallback;
-import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.context.PaddedAtomicReference;
 import dev.aerogel.loader.internal.EntityContextOwnerBridge;
 import net.minecraft.world.entity.Entity;
@@ -10,8 +9,6 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.world.entity.Entity")
 abstract class EntityContextCallbackMixin implements EntityContextOwnerBridge {
@@ -33,18 +30,6 @@ abstract class EntityContextCallbackMixin implements EntityContextOwnerBridge {
         Object expected, Object updated
     ) {
         return aerogel$contextOwner.compareAndSet(expected, updated);
-    }
-
-    @Inject(
-        method = "remove(Lnet/minecraft/world/entity/Entity$RemovalReason;)V",
-        at = @At("HEAD"), cancellable = true
-    )
-    private void aerogel$routeRemoval(
-        Entity.RemovalReason reason, CallbackInfo callback
-    ) {
-        if (!NativeTickCoordinator.isNativeWorker()) return;
-        if (NativeTickCoordinator.deferGlobalCommit(
-            () -> ((Entity) (Object) this).remove(reason))) callback.cancel();
     }
 
     @ModifyVariable(

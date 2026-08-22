@@ -4,4 +4,5 @@ package net.minecraft.server.level;
 public final class ChunkLevel {
     private ChunkLevel() { }
     public static boolean isEntityTicking(int level) { return false; }
+    public static boolean isBlockTicking(int level) { return false; }
 }

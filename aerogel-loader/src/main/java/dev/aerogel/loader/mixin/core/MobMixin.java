@@ -4,6 +4,8 @@ import dev.aerogel.api.event.entity.EntityTargetEvent;
 import dev.aerogel.loader.event.EventHooks;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.server.level.ServerLevel;
+import dev.aerogel.loader.internal.NavigationIndexBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,6 +16,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "net.minecraft.world.entity.Mob")
 abstract class MobMixin {
     @Unique private boolean aerogel$targetOverride;
+
+    @Inject(method = "tick()V", at = @At("HEAD"))
+    private void aerogel$beginNavigationIndexUpdate(CallbackInfo callback) {
+        Mob mob = (Mob) (Object) this;
+        if (mob.level() instanceof ServerLevel level) {
+            ((NavigationIndexBridge) level).aerogel$beginNavigationUpdate(mob);
+        }
+    }
+
+    @Inject(method = "tick()V", at = @At("RETURN"))
+    private void aerogel$finishNavigationIndexUpdate(CallbackInfo callback) {
+        Mob mob = (Mob) (Object) this;
+        if (mob.level() instanceof ServerLevel level) {
+            ((NavigationIndexBridge) level).aerogel$finishNavigationUpdate(mob);
+        }
+    }
 
     @Inject(method = "setTarget(Lnet/minecraft/world/entity/LivingEntity;)V",
         at = @At("HEAD"), cancellable = true)

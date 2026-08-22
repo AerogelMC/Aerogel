@@ -11,6 +11,7 @@ public final class ContextNeighborRouting {
     public static CollectingNeighborUpdater current(
         Level level, CollectingNeighborUpdater fallback
     ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return fallback;
         ContextThreadState.AccessScope scope = ContextThreadState.current();
         if (scope == null || scope.primary().world().level() != level) return fallback;
         int maximumChainedUpdates =

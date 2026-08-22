@@ -4,6 +4,7 @@ import dev.aerogel.api.context.ChunkContext;
 import dev.aerogel.api.context.ContextService;
 import dev.aerogel.api.context.WorldContext;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ChunkResult;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -37,6 +38,12 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.function.Consumer;
 import dev.aerogel.loader.internal.EntityContextOwnerBridge;
+import dev.aerogel.loader.internal.ContextOwnedEntityTask;
+import dev.aerogel.loader.internal.TrackedEntityBridge;
+import dev.aerogel.loader.internal.DistanceManagerBridge;
+import dev.aerogel.loader.internal.PreparedSpawnStateBridge;
+import net.minecraft.world.level.LocalMobCapCalculator;
+import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -47,6 +54,16 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
 
     private final ConcurrentHashMap<ServerLevel, WorldContextImpl> worlds =
         new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entity, TrackedRegistration> trackedEntities =
+        new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ChunkContextImpl,
+        ConcurrentHashMap<Entity, TrackedRegistration>> trackedByContext =
+        new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Entity, TickingRegistration> tickingEntities =
+        new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ChunkContextImpl,
+        ConcurrentHashMap<Entity, TickingRegistration>> tickingByContext =
+        new ConcurrentHashMap<>();
     private final AtomicLong nextEpoch = new AtomicLong(1L);
     private final AtomicLong nextLease = new AtomicLong(1L);
     private final AtomicInteger workerIds = new AtomicInteger();
@@ -54,6 +71,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ThreadLocal.withInitial(EntityBuffers::new);
     private final ThreadLocal<BlockEntityBuffers> blockEntityBuffers =
         ThreadLocal.withInitial(BlockEntityBuffers::new);
+    private final ThreadLocal<OwnedTaskBuffers> ownedTaskBuffers =
+        ThreadLocal.withInitial(OwnedTaskBuffers::new);
     private final ThreadLocal<List<Runnable>> dispatchBatch = new ThreadLocal<>();
     private final int workerCount;
     private final ForkJoinPool workers;
@@ -186,11 +205,10 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 buffers.coordinatorEntities.add(entity);
                 continue;
             }
-            long key = context.key();
-            EntityBatch batch = buffers.byChunk.get(key);
+            EntityBatch batch = buffers.byContext.get(context);
             if (batch == null) {
                 batch = buffers.acquire(context);
-                buffers.byChunk.put(key, batch);
+                buffers.byContext.put(context, batch);
                 buffers.batches.add(batch);
             }
             batch.entities.add(entity);
@@ -204,6 +222,264 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         for (Entity entity : buffers.coordinatorEntities) action.accept(entity);
     }
 
+    /**
+     * Publishes the exact vanilla ticking-set membership into its owning Context.
+     * Membership is changed only from ServerLevel.EntityCallbacks, at the same point
+     * where vanilla changes EntityTickList, so this index does not invent a spatial
+     * range or change which entities are eligible to tick.
+     */
+    public void registerTickingEntity(ServerLevel level, Entity entity) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(entity, "entity");
+        if (closed) return;
+        ChunkContextImpl owner = resolveOwner(entity);
+        if (owner == null) return;
+        TickingRegistration registration = new TickingRegistration(entity, owner);
+        TickingRegistration previous = tickingEntities.put(entity, registration);
+        if (previous != null) removeTickingRegistration(previous);
+        tickingByContext.computeIfAbsent(owner, ignored -> new ConcurrentHashMap<>())
+            .put(entity, registration);
+    }
+
+    public void unregisterTickingEntity(Entity entity) {
+        if (entity == null) return;
+        TickingRegistration registration = tickingEntities.remove(entity);
+        if (registration != null) removeTickingRegistration(registration);
+    }
+
+    private void removeTickingRegistration(TickingRegistration registration) {
+        ConcurrentHashMap<Entity, TickingRegistration> entries =
+            tickingByContext.get(registration.owner);
+        if (entries == null) return;
+        entries.remove(registration.entity, registration);
+        if (entries.isEmpty()) tickingByContext.remove(registration.owner, entries);
+    }
+
+    /**
+     * Starts one preparation task per non-empty owner Context. Entity enumeration,
+     * owner migration, and swept collision-scope construction consequently happen on
+     * Context workers rather than in the server-thread tick. Every registration uses
+     * a monotonically claimed server tick, so a boundary transfer is neither duplicated
+     * nor skipped.
+     */
+    public void tickRegisteredEntities(
+        ServerLevel level, Consumer<Entity> action
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(action, "action");
+        if (closed || tickingByContext.isEmpty()) return;
+        worldImpl(level);
+        long serverTick = NativeTickCoordinator.currentServerTick();
+        for (var entry : tickingByContext.entrySet()) {
+            ChunkContextImpl context = entry.getKey();
+            ConcurrentHashMap<Entity, TickingRegistration> registrations = entry.getValue();
+            if (!context.active() || registrations.isEmpty()) continue;
+            submitTickingContext(context, registrations, action, serverTick);
+        }
+    }
+
+    private void submitTickingContext(
+        ChunkContextImpl context,
+        ConcurrentHashMap<Entity, TickingRegistration> registrations,
+        Consumer<Entity> action,
+        long serverTick
+    ) {
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = NativeTickCoordinator::taskRejected;
+        boolean accepted = context.submitNative(() -> NativeTickCoordinator.runNative(
+            List.of(registrations), ignored -> prepareTickingContext(
+                context, registrations, action, serverTick), () -> { }), rejected);
+        if (!accepted) NativeTickCoordinator.taskRejected();
+    }
+
+    private void prepareTickingContext(
+        ChunkContextImpl expected,
+        ConcurrentHashMap<Entity, TickingRegistration> registrations,
+        Consumer<Entity> action,
+        long serverTick
+    ) {
+        List<TickingRegistration> snapshot = List.copyOf(registrations.values());
+        List<Entity> local = new ArrayList<>(snapshot.size());
+        for (TickingRegistration registration : snapshot) {
+            if (tickingEntities.get(registration.entity) != registration
+                || registration.entity.isRemoved()) continue;
+            ChunkContextImpl current = resolveOwner(registration.entity);
+            if (current != expected) {
+                transferTickingRegistration(registration, expected, current);
+                if (current != null && registration.claim(serverTick)) {
+                    current.entityLane().offer(List.of(registration.entity), action);
+                }
+                continue;
+            }
+            if (registration.claim(serverTick)) local.add(registration.entity);
+        }
+        expected.entityLane().offer(local, action);
+    }
+
+    private void transferTickingRegistration(
+        TickingRegistration registration,
+        ChunkContextImpl expected,
+        ChunkContextImpl current
+    ) {
+        if (current == null || registration.owner != expected) return;
+        ConcurrentHashMap<Entity, TickingRegistration> previous =
+            tickingByContext.get(expected);
+        if (previous != null) {
+            previous.remove(registration.entity, registration);
+            if (previous.isEmpty()) tickingByContext.remove(expected, previous);
+        }
+        registration.owner = current;
+        tickingByContext.computeIfAbsent(current, ignored -> new ConcurrentHashMap<>())
+            .put(registration.entity, registration);
+    }
+
+    /**
+     * Routes owner-local follow-up work without rebuilding entity tick scopes.
+     *
+     * <p>The entity callback publishes its owner when section movement commits. That
+     * publication is the authoritative grouping key here. A stale or absent publication
+     * uses the normal spatial resolver, while execution rechecks the publication before
+     * touching the entity. Unlike a native entity tick, this work neither integrates
+     * movement nor reads collision state, so its exact mutable scope is the owner Context.
+     */
+    public void routeOwnedEntityBatch(
+        ServerLevel level, List<Entity> entities, Consumer<Entity> action
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(entities, "entities");
+        Objects.requireNonNull(action, "action");
+        if (entities.isEmpty()) return;
+        if (closed) {
+            for (Entity entity : entities) if (entity != null) action.accept(entity);
+            return;
+        }
+
+        WorldContextImpl world = worldImpl(level);
+        EntityBuffers buffers = entityBuffers.get();
+        buffers.prepare();
+        for (Entity entity : entities) {
+            if (entity == null) continue;
+            EntityContextOwnerBridge ownership = (EntityContextOwnerBridge) entity;
+            Object observed = ownership.aerogel$contextOwner();
+            ChunkContextImpl context = observed instanceof ChunkContextImpl owned
+                && owned.world() == world && owned.active()
+                ? owned
+                : resolveOwner(entity);
+            if (context == null) {
+                buffers.coordinatorEntities.add(entity);
+                continue;
+            }
+            EntityBatch batch = buffers.byContext.get(context);
+            if (batch == null) {
+                batch = buffers.acquire(context);
+                buffers.byContext.put(context, batch);
+                buffers.batches.add(batch);
+            }
+            batch.entities.add(entity);
+        }
+
+        dispatchBatched(() -> {
+            for (EntityBatch batch : buffers.batches) {
+                submitOwnedEntityBatch(level, batch.context, batch.entities, action);
+            }
+        });
+        for (Entity entity : buffers.coordinatorEntities) action.accept(entity);
+    }
+
+    private void submitOwnedEntityBatch(
+        ServerLevel level,
+        ChunkContextImpl context,
+        List<Entity> entities,
+        Consumer<Entity> action
+    ) {
+        List<Entity> immutableBatch = List.copyOf(entities);
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() ->
+                routeOwnedEntityBatch(level, immutableBatch, action));
+        };
+        boolean accepted = context.submitNative(() -> NativeTickCoordinator.runNative(
+            immutableBatch,
+            entity -> runPublishedOwnerAction(context, entity, action),
+            () -> { }), rejected);
+        if (!accepted) rejected.run();
+    }
+
+    private void runPublishedOwnerAction(
+        ChunkContextImpl expected, Entity entity, Consumer<Entity> action
+    ) {
+        Object observed = ((EntityContextOwnerBridge) entity).aerogel$contextOwner();
+        if (observed == expected) {
+            action.accept(entity);
+            return;
+        }
+        runRouted(expected, entity, () -> action.accept(entity));
+    }
+
+    public void routeOwnedEntityTasks(
+        ServerLevel level, List<? extends ContextOwnedEntityTask> tasks
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(tasks, "tasks");
+        if (tasks.isEmpty()) return;
+        if (closed) {
+            for (ContextOwnedEntityTask task : tasks) task.aerogel$run();
+            return;
+        }
+
+        WorldContextImpl world = worldImpl(level);
+        OwnedTaskBuffers buffers = ownedTaskBuffers.get();
+        buffers.prepare();
+        for (ContextOwnedEntityTask task : tasks) {
+            if (task == null || task.aerogel$entity() == null) continue;
+            Entity entity = task.aerogel$entity();
+            Object observed = ((EntityContextOwnerBridge) entity).aerogel$contextOwner();
+            ChunkContextImpl context = observed instanceof ChunkContextImpl owned
+                && owned.world() == world && owned.active()
+                ? owned
+                : resolveOwner(entity);
+            if (context == null) {
+                buffers.coordinatorTasks.add(task);
+                continue;
+            }
+            OwnedTaskBatch batch = buffers.byContext.get(context);
+            if (batch == null) {
+                batch = buffers.acquire(context);
+                buffers.byContext.put(context, batch);
+                buffers.batches.add(batch);
+            }
+            batch.tasks.add(task);
+        }
+
+        dispatchBatched(() -> {
+            for (OwnedTaskBatch batch : buffers.batches) {
+                submitOwnedEntityTasks(level, batch.context, batch.tasks);
+            }
+        });
+        for (ContextOwnedEntityTask task : buffers.coordinatorTasks) task.aerogel$run();
+    }
+
+    private void submitOwnedEntityTasks(
+        ServerLevel level,
+        ChunkContextImpl context,
+        List<ContextOwnedEntityTask> tasks
+    ) {
+        List<ContextOwnedEntityTask> immutableBatch = List.copyOf(tasks);
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() ->
+                routeOwnedEntityTasks(level, immutableBatch));
+        };
+        boolean accepted = context.submitNative(() -> NativeTickCoordinator.runNative(
+            immutableBatch,
+            task -> runPublishedOwnerAction(
+                context, task.aerogel$entity(), ignored -> task.aerogel$run()),
+            () -> { }), rejected);
+        if (!accepted) rejected.run();
+    }
+
     public void tickChunks(
         ServerLevel level, ChunkMap chunkMap, Consumer<LevelChunk> action
     ) {
@@ -215,6 +491,124 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ));
     }
 
+    public void registerTrackedEntity(
+        ServerLevel level, Entity entity, TrackedEntityBridge tracked
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(entity, "entity");
+        Objects.requireNonNull(tracked, "tracked");
+        ChunkContextImpl owner = resolveOwner(entity);
+        if (owner == null) return;
+        TrackedRegistration registration = new TrackedRegistration(entity, tracked, owner);
+        TrackedRegistration previous = trackedEntities.put(entity, registration);
+        if (previous != null) removeTrackedRegistration(previous);
+        trackedByContext.computeIfAbsent(owner, ignored -> new ConcurrentHashMap<>())
+            .put(entity, registration);
+    }
+
+    public void unregisterTrackedEntity(Entity entity) {
+        if (entity == null) return;
+        TrackedRegistration registration = trackedEntities.remove(entity);
+        if (registration != null) removeTrackedRegistration(registration);
+    }
+
+    private void removeTrackedRegistration(TrackedRegistration registration) {
+        ConcurrentHashMap<Entity, TrackedRegistration> entries =
+            trackedByContext.get(registration.owner);
+        if (entries == null) return;
+        entries.remove(registration.entity, registration);
+        if (entries.isEmpty()) trackedByContext.remove(registration.owner, entries);
+    }
+
+    public void tickTrackedEntities(
+        ServerLevel level,
+        List<ServerPlayer> players,
+        DistanceManagerBridge distanceManager
+    ) {
+        if (closed || trackedByContext.isEmpty()) return;
+        List<ServerPlayer> playerSnapshot = List.copyOf(players);
+        List<ServerPlayer> movedPlayers = new ArrayList<>();
+        for (ServerPlayer player : playerSnapshot) {
+            TrackedRegistration registration = trackedEntities.get(player);
+            if (registration != null && registration.tracked.aerogel$sectionChanged()) {
+                movedPlayers.add(player);
+            }
+        }
+        List<ServerPlayer> movedSnapshot = List.copyOf(movedPlayers);
+        long serverTick = NativeTickCoordinator.currentServerTick();
+        for (var entry : trackedByContext.entrySet()) {
+            ChunkContextImpl context = entry.getKey();
+            ConcurrentHashMap<Entity, TrackedRegistration> registrations = entry.getValue();
+            if (!context.active() || registrations.isEmpty()) continue;
+            submitTrackingContext(context, registrations, playerSnapshot,
+                movedSnapshot, distanceManager, serverTick);
+        }
+    }
+
+    private void submitTrackingContext(
+        ChunkContextImpl context,
+        ConcurrentHashMap<Entity, TrackedRegistration> registrations,
+        List<ServerPlayer> players,
+        List<ServerPlayer> movedPlayers,
+        DistanceManagerBridge distanceManager,
+        long serverTick
+    ) {
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = NativeTickCoordinator::taskRejected;
+        boolean accepted = context.submitNative(() -> {
+            List<TrackedRegistration> snapshot = List.copyOf(registrations.values());
+            NativeTickCoordinator.runNative(snapshot, registration ->
+                runTrackingRegistration(context, registration, players,
+                    movedPlayers, distanceManager, serverTick), () -> { });
+        }, rejected);
+        if (!accepted) NativeTickCoordinator.taskRejected();
+    }
+
+    private void runTrackingRegistration(
+        ChunkContextImpl expected,
+        TrackedRegistration registration,
+        List<ServerPlayer> players,
+        List<ServerPlayer> movedPlayers,
+        DistanceManagerBridge distanceManager,
+        long serverTick
+    ) {
+        if (trackedEntities.get(registration.entity) != registration
+            || registration.entity.isRemoved()) return;
+        ChunkContextImpl current = resolveOwner(registration.entity);
+        if (current != expected) {
+            transferTrackedRegistration(registration, expected, current);
+            if (current != null) {
+                ConcurrentHashMap<Entity, TrackedRegistration> registrations =
+                    trackedByContext.get(current);
+                if (registrations != null) submitTrackingContext(current, registrations,
+                    players, movedPlayers, distanceManager, serverTick);
+            }
+            return;
+        }
+        if (!registration.claim(serverTick)) return;
+        registration.tracked.aerogel$tickTracking(players, distanceManager);
+        if (!movedPlayers.isEmpty()) {
+            registration.tracked.aerogel$updatePlayers(movedPlayers);
+        }
+    }
+
+    private void transferTrackedRegistration(
+        TrackedRegistration registration,
+        ChunkContextImpl expected,
+        ChunkContextImpl current
+    ) {
+        if (current == null || registration.owner != expected) return;
+        ConcurrentHashMap<Entity, TrackedRegistration> previous =
+            trackedByContext.get(expected);
+        if (previous != null) {
+            previous.remove(registration.entity, registration);
+            if (previous.isEmpty()) trackedByContext.remove(expected, previous);
+        }
+        registration.owner = current;
+        trackedByContext.computeIfAbsent(current, ignored -> new ConcurrentHashMap<>())
+            .put(registration.entity, registration);
+    }
+
     public void tickSpawningChunk(
         ServerLevel level, LevelChunk chunk, Runnable action
     ) {
@@ -222,6 +616,52 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(chunk, "chunk");
         Objects.requireNonNull(action, "action");
         worldImpl(level).context(chunk).chunkLane().offer(chunk, ignored -> action.run());
+    }
+
+    /**
+     * Builds vanilla's exact global spawn state away from the server thread. Only
+     * natural-spawn work depends on the result; packet handling and unrelated Contexts
+     * continue independently while the entity iterable is counted.
+     */
+    public NaturalSpawner.SpawnState prepareNaturalSpawnState(
+        int spawnableChunks,
+        Iterable<Entity> entities,
+        NaturalSpawner.ChunkGetter chunkGetter,
+        LocalMobCapCalculator localCaps
+    ) {
+        Objects.requireNonNull(entities, "entities");
+        Objects.requireNonNull(chunkGetter, "chunkGetter");
+        Objects.requireNonNull(localCaps, "localCaps");
+        NaturalSpawner.SpawnState placeholder = NaturalSpawner.createState(
+            spawnableChunks, List.of(), chunkGetter, localCaps);
+        CompletableFuture<NaturalSpawner.SpawnState> prepared = new CompletableFuture<>();
+        ((PreparedSpawnStateBridge) placeholder).aerogel$preparedState(prepared);
+        dispatch(() -> {
+            try {
+                prepared.complete(NaturalSpawner.createState(
+                    spawnableChunks, entities, chunkGetter, localCaps));
+            } catch (Throwable error) {
+                prepared.completeExceptionally(error);
+                LOGGER.log(Level.SEVERE, "Could not prepare natural-spawn state", error);
+            }
+        });
+        return placeholder;
+    }
+
+    public void withPreparedNaturalSpawnState(
+        NaturalSpawner.SpawnState state,
+        List<net.minecraft.world.entity.MobCategory> gatedCategories,
+        java.util.function.BiConsumer<NaturalSpawner.SpawnState,
+            List<net.minecraft.world.entity.MobCategory>> action
+    ) {
+        Objects.requireNonNull(state, "state");
+        Objects.requireNonNull(gatedCategories, "gatedCategories");
+        Objects.requireNonNull(action, "action");
+        if (state instanceof PreparedSpawnStateBridge prepared) {
+            prepared.aerogel$whenPrepared(gatedCategories, action);
+        } else {
+            action.accept(state, gatedCategories);
+        }
     }
 
     public void tickBlockEntities(
@@ -626,6 +1066,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     void runRouted(ChunkContextImpl expected, Entity entity, Runnable action) {
+        if (closed || !expected.active()) return;
         ChunkContextImpl current = resolveOwner(entity);
         if (current == expected || current == null) {
             action.run();
@@ -635,6 +1076,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     private ChunkContextImpl resolveOwner(Entity entity) {
+        if (closed) return null;
         EntityContextOwnerBridge ownership = (EntityContextOwnerBridge) entity;
         Object observed = ownership.aerogel$contextOwner();
         if (!(entity.level() instanceof ServerLevel level)) {
@@ -659,6 +1101,50 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return chunk == null ? null : world.context(chunk);
     }
 
+    private static final class TrackedRegistration {
+        private final Entity entity;
+        private final TrackedEntityBridge tracked;
+        private final AtomicLong lastTick = new AtomicLong(Long.MIN_VALUE);
+        private volatile ChunkContextImpl owner;
+
+        private TrackedRegistration(
+            Entity entity, TrackedEntityBridge tracked, ChunkContextImpl owner
+        ) {
+            this.entity = entity;
+            this.tracked = tracked;
+            this.owner = owner;
+        }
+
+        private boolean claim(long tick) {
+            long observed = lastTick.get();
+            while (observed < tick) {
+                if (lastTick.compareAndSet(observed, tick)) return true;
+                observed = lastTick.get();
+            }
+            return false;
+        }
+    }
+
+    private static final class TickingRegistration {
+        private final Entity entity;
+        private final AtomicLong lastTick = new AtomicLong(Long.MIN_VALUE);
+        private volatile ChunkContextImpl owner;
+
+        private TickingRegistration(Entity entity, ChunkContextImpl owner) {
+            this.entity = entity;
+            this.owner = owner;
+        }
+
+        private boolean claim(long tick) {
+            long observed = lastTick.get();
+            while (observed < tick) {
+                if (lastTick.compareAndSet(observed, tick)) return true;
+                observed = lastTick.get();
+            }
+            return false;
+        }
+    }
+
     private static final class EntityBatch {
         private ChunkContextImpl context;
         private final List<Entity> entities = new ArrayList<>();
@@ -675,6 +1161,43 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
 
         private BlockEntityBatch(ChunkContextImpl context) {
             this.context = context;
+        }
+    }
+
+    private static final class OwnedTaskBatch {
+        private ChunkContextImpl context;
+        private final List<ContextOwnedEntityTask> tasks = new ArrayList<>();
+
+        private OwnedTaskBatch(ChunkContextImpl context) {
+            this.context = context;
+        }
+    }
+
+    private static final class OwnedTaskBuffers {
+        private final java.util.IdentityHashMap<ChunkContextImpl, OwnedTaskBatch> byContext =
+            new java.util.IdentityHashMap<>();
+        private final List<OwnedTaskBatch> batches = new ArrayList<>();
+        private final List<OwnedTaskBatch> recycled = new ArrayList<>();
+        private final List<ContextOwnedEntityTask> coordinatorTasks = new ArrayList<>();
+
+        private void prepare() {
+            coordinatorTasks.clear();
+            batches.clear();
+            for (OwnedTaskBatch batch : byContext.values()) {
+                batch.context = null;
+                batch.tasks.clear();
+                recycled.add(batch);
+            }
+            byContext.clear();
+        }
+
+        private OwnedTaskBatch acquire(ChunkContextImpl context) {
+            int last = recycled.size() - 1;
+            OwnedTaskBatch batch = last < 0
+                ? new OwnedTaskBatch(context)
+                : recycled.remove(last);
+            batch.context = context;
+            return batch;
         }
     }
 
@@ -705,8 +1228,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     private static final class EntityBuffers {
-        private final Long2ObjectOpenHashMap<EntityBatch> byChunk =
-            new Long2ObjectOpenHashMap<>();
+        private final java.util.IdentityHashMap<ChunkContextImpl, EntityBatch> byContext =
+            new java.util.IdentityHashMap<>();
         private final List<EntityBatch> batches = new ArrayList<>();
         private final List<EntityBatch> recycled = new ArrayList<>();
         private final List<Entity> coordinatorEntities = new ArrayList<>();
@@ -714,12 +1237,12 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         private void prepare() {
             coordinatorEntities.clear();
             batches.clear();
-            for (EntityBatch batch : byChunk.values()) {
+            for (EntityBatch batch : byContext.values()) {
                 batch.context = null;
                 batch.entities.clear();
                 recycled.add(batch);
             }
-            byChunk.clear();
+            byContext.clear();
         }
 
         private EntityBatch acquire(ChunkContextImpl context) {
@@ -742,6 +1265,10 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         closed = true;
         worlds.values().forEach(WorldContextImpl::close);
         worlds.clear();
+        trackedEntities.clear();
+        trackedByContext.clear();
+        tickingEntities.clear();
+        tickingByContext.clear();
         workers.shutdown();
         try {
             if (!workers.awaitTermination(Duration.ofSeconds(10).toMillis(), TimeUnit.MILLISECONDS)) {

@@ -34,6 +34,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.Objects;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Mixin(targets = "net.minecraft.world.level.Level")
 abstract class LevelMixin implements LevelNeighborUpdaterBridge {
@@ -136,6 +137,9 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
     @Unique
     private static final ThreadLocal<AerogelBlockStateOverride> AEROGEL$BLOCK_STATE_OVERRIDE =
         ThreadLocal.withInitial(AerogelBlockStateOverride::new);
+    @Unique
+    private static final AtomicInteger AEROGEL$PENDING_BLOCK_STATE_OVERRIDES =
+        new AtomicInteger();
 
     @Inject(
         method = "setBlock(Lnet/minecraft/core/BlockPos;"
@@ -160,7 +164,9 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
             throw new IllegalStateException(
                 "Block mutation escaped its exact owning Context at " + position);
         }
-        if (aerogel$consumeBlockStateOverride(position, state, flags, recursionLeft)) return;
+        if (AEROGEL$PENDING_BLOCK_STATE_OVERRIDES.get() != 0
+            && aerogel$consumeBlockStateOverride(
+                position, state, flags, recursionLeft)) return;
         if (!EventHooks.hasListeners(BlockStateChangeEvent.class)) return;
         BlockState previousState = getBlockState(position);
         if (Objects.equals(previousState, state)) return;
@@ -180,6 +186,7 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
             override.state = event.state();
             override.flags = event.flags();
             override.recursion = event.recursionLeft();
+            AEROGEL$PENDING_BLOCK_STATE_OVERRIDES.incrementAndGet();
             try {
                 callbackInfo.setReturnValue(setBlock(
                     position, event.state(), event.flags(), event.recursionLeft()));
@@ -208,9 +215,11 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
     @Unique
     private void aerogel$clearBlockStateOverride() {
         AerogelBlockStateOverride override = AEROGEL$BLOCK_STATE_OVERRIDE.get();
+        if (!override.pending) return;
         override.pending = false;
         override.position = null;
         override.state = null;
+        AEROGEL$PENDING_BLOCK_STATE_OVERRIDES.decrementAndGet();
     }
 
 }

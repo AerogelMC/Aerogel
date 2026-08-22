@@ -13,6 +13,12 @@ import java.util.List;
 import java.util.function.Consumer;
 import dev.aerogel.api.context.ContextSnapshot;
 import net.minecraft.server.level.ServerPlayer;
+import dev.aerogel.loader.internal.ContextOwnedEntityTask;
+import dev.aerogel.loader.internal.TrackedEntityBridge;
+import dev.aerogel.loader.internal.DistanceManagerBridge;
+import net.minecraft.world.level.LocalMobCapCalculator;
+import net.minecraft.world.level.NaturalSpawner;
+import net.minecraft.world.entity.MobCategory;
 
 public final class AerogelRuntime {
     private static volatile PluginManager pluginManager;
@@ -94,6 +100,50 @@ public final class AerogelRuntime {
         api().contexts().tickEntities(level, entities, action);
     }
 
+    public static void registerTickingEntity(ServerLevel level, Entity entity) {
+        api().contexts().registerTickingEntity(level, entity);
+    }
+
+    public static void unregisterTickingEntity(Entity entity) {
+        api().contexts().unregisterTickingEntity(entity);
+    }
+
+    public static void tickRegisteredEntities(
+        ServerLevel level, Consumer<Entity> action
+    ) {
+        api().contexts().tickRegisteredEntities(level, action);
+    }
+
+    public static void routeOwnedEntityBatch(
+        ServerLevel level, List<Entity> entities, Consumer<Entity> action
+    ) {
+        api().contexts().routeOwnedEntityBatch(level, entities, action);
+    }
+
+    public static void routeOwnedEntityTasks(
+        ServerLevel level, List<? extends ContextOwnedEntityTask> tasks
+    ) {
+        api().contexts().routeOwnedEntityTasks(level, tasks);
+    }
+
+    public static void registerTrackedEntity(
+        ServerLevel level, Entity entity, TrackedEntityBridge tracked
+    ) {
+        api().contexts().registerTrackedEntity(level, entity, tracked);
+    }
+
+    public static void unregisterTrackedEntity(Entity entity) {
+        api().contexts().unregisterTrackedEntity(entity);
+    }
+
+    public static void tickTrackedEntities(
+        ServerLevel level,
+        List<ServerPlayer> players,
+        DistanceManagerBridge distanceManager
+    ) {
+        api().contexts().tickTrackedEntities(level, players, distanceManager);
+    }
+
     public static void tickChunks(
         ServerLevel level, ChunkMap chunkMap,
         Consumer<net.minecraft.world.level.chunk.LevelChunk> action
@@ -105,6 +155,26 @@ public final class AerogelRuntime {
         ServerLevel level, LevelChunk chunk, Runnable action
     ) {
         api().contexts().tickSpawningChunk(level, chunk, action);
+    }
+
+    public static NaturalSpawner.SpawnState prepareNaturalSpawnState(
+        int spawnableChunks,
+        Iterable<Entity> entities,
+        NaturalSpawner.ChunkGetter chunkGetter,
+        LocalMobCapCalculator localCaps
+    ) {
+        return api().contexts().prepareNaturalSpawnState(
+            spawnableChunks, entities, chunkGetter, localCaps);
+    }
+
+    public static void withPreparedNaturalSpawnState(
+        NaturalSpawner.SpawnState state,
+        List<MobCategory> gatedCategories,
+        java.util.function.BiConsumer<NaturalSpawner.SpawnState,
+            List<MobCategory>> action
+    ) {
+        api().contexts().withPreparedNaturalSpawnState(
+            state, gatedCategories, action);
     }
 
     public static void tickBlockEntities(

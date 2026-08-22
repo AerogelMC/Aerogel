@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.function.Predicate;
+import net.minecraft.world.ticks.LevelTicks;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class ServerLevel extends Level {
@@ -114,6 +115,8 @@ public class ServerLevel extends Level {
     public void blockEvent(BlockPos position, Block block, int type, int data) { }
     public void tickBlock(BlockPos position, Block block) { }
     public void tickFluid(BlockPos position, Fluid fluid) { }
+    public LevelTicks<Block> getBlockTicks() { return null; }
+    public LevelTicks<Fluid> getFluidTicks() { return null; }
     public void updatePOIOnBlockStateChange(
         BlockPos position, BlockState oldState, BlockState newState) { }
     public void gameEvent(Holder<GameEvent> event, Vec3 position, GameEvent.Context context) { }

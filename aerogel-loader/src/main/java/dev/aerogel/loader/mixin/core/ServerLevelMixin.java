@@ -23,6 +23,11 @@ import dev.aerogel.loader.context.ContextRandomRouting;
 import dev.aerogel.loader.context.ContextNeighborRouting;
 import dev.aerogel.loader.context.LevelNeighborUpdaterBridge;
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.ConcurrentNavigationSet;
+import dev.aerogel.loader.internal.NavigationIndexBridge;
+import dev.aerogel.loader.internal.EntityLoadStatusBridge;
+import dev.aerogel.loader.internal.LevelTicksBridge;
+import dev.aerogel.loader.internal.DistanceManagerBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mutable;
@@ -47,6 +52,8 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.util.random.WeightedList;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.level.ExplosionDamageCalculator;
 import net.minecraft.world.level.Level;
@@ -54,28 +61,55 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.entity.PersistentEntitySectionManager;
+import net.minecraft.world.ticks.LevelTicks;
 import net.minecraft.world.level.saveddata.WeatherData;
 import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.Shapes;
 
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
-abstract class ServerLevelMixin {
+abstract class ServerLevelMixin implements NavigationIndexBridge {
     @Shadow @Final @Mutable private List<ServerPlayer> players;
+    @Shadow @Final @Mutable private Set<Mob> navigatingMobs;
+    @Shadow @Final private LevelTicks<Block> blockTicks;
+    @Shadow @Final private LevelTicks<Fluid> fluidTicks;
+    @Shadow @Final private PersistentEntitySectionManager<?> entityManager;
+    @Shadow public abstract net.minecraft.server.level.ServerChunkCache getChunkSource();
     @Unique private boolean aerogel$explosionOverride;
-    @Unique private final List<Entity> aerogel$entityTickSnapshot = new ArrayList<>();
+    @Unique private static final ThreadLocal<AerogelNavigationInvalidations>
+        AEROGEL$NAVIGATION_INVALIDATIONS = new ThreadLocal<>();
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$publishPlayerIndexConcurrently(CallbackInfo callback) {
         players = new CopyOnWriteArrayList<>(players);
+        Set<Mob> concurrentNavigations = new ConcurrentNavigationSet();
+        concurrentNavigations.addAll(navigatingMobs);
+        navigatingMobs = concurrentNavigations;
+        ((EntityLoadStatusBridge) (Object) entityManager)
+            .aerogel$loadStatusListener(this::aerogel$scheduledTickEligibilityChanged);
+        ((DistanceManagerBridge) getChunkSource().chunkMap.getDistanceManager())
+            .aerogel$blockTickingListener(this::aerogel$scheduledTickEligibilityChanged);
+    }
+
+    @Unique
+    private void aerogel$scheduledTickEligibilityChanged(long chunkKey) {
+        ((LevelTicksBridge) (Object) blockTicks).aerogel$eligibilityChanged(chunkKey);
+        ((LevelTicksBridge) (Object) fluidTicks).aerogel$eligibilityChanged(chunkKey);
     }
 
     @Inject(method = "sendBlockUpdated(Lnet/minecraft/core/BlockPos;"
@@ -87,10 +121,117 @@ abstract class ServerLevelMixin {
         CallbackInfo callback
     ) {
         if (!NativeTickCoordinator.isNativeWorker()) return;
-        BlockPos immutablePosition = position.immutable();
-        if (NativeTickCoordinator.deferGlobalCommit(() ->
-            ((ServerLevel) (Object) this).sendBlockUpdated(
-                immutablePosition, previousState, state, flags))) callback.cancel();
+        AerogelBlockUpdateBatch batch = NativeTickCoordinator.nativeAttachment(
+            this, () -> {
+                AerogelBlockUpdateBatch created = new AerogelBlockUpdateBatch(
+                    (ServerLevel) (Object) this, navigatingMobs);
+                NativeTickCoordinator.deferGlobalCommit(created::commit);
+                NativeTickCoordinator.deferNativeCompletion(created::dispatchNavigations);
+                return created;
+            });
+        if (batch != null) {
+            batch.add(position.immutable(), previousState, state, flags);
+            callback.cancel();
+        }
+    }
+
+    @Redirect(
+        method = "sendBlockUpdated(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;"
+            + "Lnet/minecraft/world/level/block/state/BlockState;I)V",
+        at = @At(value = "INVOKE", target = "Ljava/util/Set;iterator()Ljava/util/Iterator;")
+    )
+    private Iterator<Mob> aerogel$routeNavigationInvalidation(
+        Set<Mob> mobs, BlockPos position, BlockState previousState,
+        BlockState state, int flags
+    ) {
+        AerogelNavigationInvalidations invalidations =
+            AEROGEL$NAVIGATION_INVALIDATIONS.get();
+        if (invalidations != null) return Collections.emptyIterator();
+        if (mobs instanceof ConcurrentNavigationSet indexed) {
+            return indexed.candidates(position);
+        }
+        return mobs.iterator();
+    }
+
+    @Override
+    public void aerogel$beginNavigationUpdate(Mob mob) {
+        if (navigatingMobs instanceof ConcurrentNavigationSet indexed) {
+            indexed.beginUpdate(mob);
+        }
+    }
+
+    @Override
+    public void aerogel$finishNavigationUpdate(Mob mob) {
+        if (navigatingMobs instanceof ConcurrentNavigationSet indexed) {
+            indexed.finishUpdate(mob);
+        }
+    }
+
+    @Unique
+    private record AerogelBlockUpdate(
+        BlockPos position, BlockState previousState, BlockState state, int flags
+    ) { }
+
+    @Unique
+    private static final class AerogelBlockUpdateBatch {
+        private final ServerLevel level;
+        private final Set<Mob> navigatingMobs;
+        private final List<AerogelBlockUpdate> updates = new ArrayList<>();
+        private final List<BlockPos> collisionChanges = new ArrayList<>();
+
+        private AerogelBlockUpdateBatch(ServerLevel level, Set<Mob> navigatingMobs) {
+            this.level = level;
+            this.navigatingMobs = navigatingMobs;
+        }
+
+        private void add(
+            BlockPos position, BlockState previousState, BlockState state, int flags
+        ) {
+            updates.add(new AerogelBlockUpdate(position, previousState, state, flags));
+            if (Shapes.joinIsNotEmpty(
+                previousState.getCollisionShape(level, position),
+                state.getCollisionShape(level, position), BooleanOp.NOT_SAME)) {
+                collisionChanges.add(position);
+            }
+        }
+
+        private void commit() {
+            AerogelNavigationInvalidations invalidations =
+                new AerogelNavigationInvalidations();
+            AEROGEL$NAVIGATION_INVALIDATIONS.set(invalidations);
+            try {
+                for (AerogelBlockUpdate update : updates) {
+                    level.sendBlockUpdated(update.position(), update.previousState(),
+                        update.state(), update.flags());
+                }
+            } finally {
+                AEROGEL$NAVIGATION_INVALIDATIONS.remove();
+            }
+        }
+
+        private void dispatchNavigations() {
+            if (navigatingMobs.isEmpty() || collisionChanges.isEmpty()) return;
+            List<BlockPos> changedPositions = List.copyOf(collisionChanges);
+            Collection<? extends Mob> candidates =
+                navigatingMobs instanceof ConcurrentNavigationSet indexed
+                    ? indexed.candidates(changedPositions)
+                    : new ArrayList<>(navigatingMobs);
+            List<Entity> affected = new ArrayList<>(candidates);
+            AerogelRuntime.routeOwnedEntityBatch(level, affected, entity -> {
+                PathNavigation navigation = ((Mob) entity).getNavigation();
+                for (BlockPos position : changedPositions) {
+                    if (navigation.shouldRecomputePath(position)) {
+                        navigation.recomputePath();
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    @Unique
+    private static final class AerogelNavigationInvalidations {
     }
 
     @Inject(method = "blockEvent(Lnet/minecraft/core/BlockPos;"
@@ -535,9 +676,6 @@ abstract class ServerLevelMixin {
         net.minecraft.world.level.entity.EntityTickList list,
         java.util.function.Consumer<Entity> action
     ) {
-        aerogel$entityTickSnapshot.clear();
-        list.forEach(aerogel$entityTickSnapshot::add);
-        AerogelRuntime.tickEntities(
-            (ServerLevel) (Object) this, aerogel$entityTickSnapshot, action);
+        AerogelRuntime.tickRegisteredEntities((ServerLevel) (Object) this, action);
     }
 }

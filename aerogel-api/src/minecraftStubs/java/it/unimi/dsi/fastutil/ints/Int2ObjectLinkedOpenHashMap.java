@@ -13,6 +13,12 @@ public class Int2ObjectLinkedOpenHashMap<V> implements Int2ObjectMap<V> {
     @Override public V put(int key, V value) { return values.put(key, value); }
     @Override public V remove(int key) { return values.remove(key); }
     @Override public boolean containsKey(int key) { return values.containsKey(key); }
+    @Override public V computeIfAbsent(
+        int key, java.util.function.IntFunction<? extends V> function
+    ) { return values.computeIfAbsent(key, function::apply); }
+    @Override public V computeIfAbsent(
+        int key, Int2ObjectFunction<? extends V> function
+    ) { return values.computeIfAbsent(key, ignored -> function.get(key)); }
     @Override public ObjectCollection<V> values() {
         return new ObjectArrayList<>(values.values());
     }

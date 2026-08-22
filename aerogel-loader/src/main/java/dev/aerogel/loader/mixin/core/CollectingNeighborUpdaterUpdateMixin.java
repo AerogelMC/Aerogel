@@ -32,12 +32,17 @@ abstract class CollectingNeighborUpdaterUpdateMixin {
         Level level, BlockState state, BlockPos position, Block sourceBlock,
         Orientation orientation, boolean moved
     ) {
+        if (!NativeTickCoordinator.isNativeWorker()
+            || !(level instanceof ServerLevel serverLevel)
+            || AerogelRuntime.isBlockMutationThread(serverLevel, position)) {
+            NeighborUpdater.executeUpdate(
+                level, state, position, sourceBlock, orientation, moved);
+            return;
+        }
         Runnable update = () -> NeighborUpdater.executeUpdate(
             level, state, position, sourceBlock, orientation, moved);
-        if (!(level instanceof ServerLevel serverLevel)
-            || !NativeTickCoordinator.isNativeWorker()
-            || AerogelRuntime.isBlockMutationThread(serverLevel, position)
-            || !AerogelRuntime.routeBlockTask(serverLevel, position.immutable(), update)) {
+        if (!AerogelRuntime.routeBlockTask(
+            serverLevel, position.immutable(), update)) {
             update.run();
         }
     }

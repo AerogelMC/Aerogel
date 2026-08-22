@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.ConcurrentLong2ObjectMap;
+import dev.aerogel.loader.context.PublishedLong2ObjectMap;
 import dev.aerogel.loader.internal.EntitySectionStorageBridge;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import org.spongepowered.asm.mixin.Final;
@@ -15,9 +16,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.world.level.entity.EntitySectionStorage;
+import dev.aerogel.loader.internal.EntityLoadStatusBridge;
+import it.unimi.dsi.fastutil.longs.LongConsumer;
 
 @Mixin(targets = "net.minecraft.world.level.entity.PersistentEntitySectionManager")
-abstract class PersistentEntitySectionManagerMixin {
+abstract class PersistentEntitySectionManagerMixin implements EntityLoadStatusBridge {
     @Shadow @Final @Mutable private Set<UUID> knownUuids;
     @Shadow @Final @Mutable private Long2ObjectMap<Object> chunkVisibility;
     @Shadow @Final @Mutable private Long2ObjectMap<Object> chunkLoadStatuses;
@@ -35,8 +38,13 @@ abstract class PersistentEntitySectionManagerMixin {
             .aerogel$visibilitySource(visibility);
 
         Object fresh = chunkLoadStatuses.get(Long.MIN_VALUE);
-        ConcurrentLong2ObjectMap<Object> loads = new ConcurrentLong2ObjectMap<>();
+        PublishedLong2ObjectMap<Object> loads = new PublishedLong2ObjectMap<>();
         loads.defaultReturnValue(fresh);
         chunkLoadStatuses = loads;
+    }
+
+    @Override
+    public void aerogel$loadStatusListener(LongConsumer listener) {
+        ((PublishedLong2ObjectMap<Object>) chunkLoadStatuses).changeListener(listener);
     }
 }

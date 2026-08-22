@@ -6,6 +6,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.entity.EntityInLevelCallback;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,6 +36,24 @@ final class ContextualEntityCallbackTest {
         callback.onMove();
 
         assertEquals(1, moves.get());
+    }
+
+    @Test
+    void nativeMovePublishesInsideTheOwningContext() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl owner = world.context(2, 3);
+            TestEntity entity = new TestEntity(owner, new ChunkPos(2, 3));
+            AtomicInteger moves = new AtomicInteger();
+            ContextualEntityCallback callback = new ContextualEntityCallback(
+                entity, delegate(moves));
+
+            owner.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(entity), ignored -> callback.onMove(), () -> { })).get();
+
+            assertEquals(1, moves.get());
+            assertEquals(owner, entity.owner);
+        }
     }
 
     @Test

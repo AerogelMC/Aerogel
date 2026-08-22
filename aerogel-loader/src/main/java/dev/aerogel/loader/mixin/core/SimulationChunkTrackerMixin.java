@@ -5,6 +5,7 @@ import dev.aerogel.loader.internal.SimulationChunkTrackerBridge;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
 import net.minecraft.server.level.ChunkLevel;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -14,13 +15,18 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Mixin(targets = "net.minecraft.server.level.SimulationChunkTracker")
 abstract class SimulationChunkTrackerMixin implements SimulationChunkTrackerBridge {
+    @Shadow protected abstract int getLevel(long key);
     @Unique private final ConcurrentHashMap<Long, Boolean> aerogel$entityTicking =
         new ConcurrentHashMap<>();
     @Unique private final PaddedAtomicLong aerogel$publicationVersion =
         new PaddedAtomicLong();
+    @Unique private volatile LongConsumer aerogel$blockTickingListener = ignored -> { };
 
     @Inject(method = "setLevel(JI)V", at = @At("HEAD"))
     private void aerogel$publishLevel(long key, int level, CallbackInfo callback) {
+        if (ChunkLevel.isBlockTicking(getLevel(key)) != ChunkLevel.isBlockTicking(level)) {
+            aerogel$blockTickingListener.accept(key);
+        }
         aerogel$publicationVersion.incrementAndGet();
         if (ChunkLevel.isEntityTicking(level)) {
             aerogel$entityTicking.put(key, Boolean.TRUE);
@@ -47,5 +53,15 @@ abstract class SimulationChunkTrackerMixin implements SimulationChunkTrackerBrid
             }
         }
         for (Long key : snapshot) consumer.accept(key.longValue());
+    }
+
+    @Override
+    public boolean aerogel$isEntityTickingChunk(long chunkKey) {
+        return aerogel$entityTicking.containsKey(chunkKey);
+    }
+
+    @Override
+    public void aerogel$blockTickingListener(LongConsumer listener) {
+        aerogel$blockTickingListener = java.util.Objects.requireNonNull(listener, "listener");
     }
 }

@@ -27,13 +27,19 @@ abstract class CollectingNeighborUpdaterShapeMixin {
         LevelAccessor level, Direction direction, BlockPos position,
         BlockPos neighborPosition, BlockState neighborState, int flags, int recursionLeft
     ) {
+        if (!NativeTickCoordinator.isNativeWorker()
+            || !(level instanceof ServerLevel serverLevel)
+            || AerogelRuntime.isBlockMutationThread(serverLevel, position)) {
+            NeighborUpdater.executeShapeUpdate(
+                level, direction, position, neighborPosition,
+                neighborState, flags, recursionLeft);
+            return;
+        }
         Runnable update = () -> NeighborUpdater.executeShapeUpdate(
             level, direction, position, neighborPosition,
             neighborState, flags, recursionLeft);
-        if (!(level instanceof ServerLevel serverLevel)
-            || !NativeTickCoordinator.isNativeWorker()
-            || AerogelRuntime.isBlockMutationThread(serverLevel, position)
-            || !AerogelRuntime.routeBlockTask(serverLevel, position.immutable(), update)) {
+        if (!AerogelRuntime.routeBlockTask(
+            serverLevel, position.immutable(), update)) {
             update.run();
         }
     }

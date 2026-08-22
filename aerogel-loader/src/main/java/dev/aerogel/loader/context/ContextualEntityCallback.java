@@ -7,7 +7,7 @@ import dev.aerogel.loader.internal.EntityContextOwnerBridge;
 
 import java.util.Objects;
 
-/** Commits global entity-section changes at the native context barrier. */
+/** Publishes the entity-section index in its owning Context. */
 public final class ContextualEntityCallback implements EntityInLevelCallback {
     private final EntityInLevelCallback delegate;
     private final Entity entity;
@@ -21,6 +21,18 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
     public void onMove() {
         EntityContextOwnerBridge ownership = (EntityContextOwnerBridge) entity;
         Object expectedOwner = ownership.aerogel$contextOwner();
+        if (NativeTickCoordinator.isNativeWorker()) {
+            try {
+                if (!entity.isRemoved()) delegate.onMove();
+            } finally {
+                if (!stillOwnsPosition(expectedOwner, entity.chunkPosition())) {
+                    Runnable release = () -> ownership.aerogel$compareAndSetContextOwner(
+                        expectedOwner, null);
+                    if (!NativeTickCoordinator.deferNativeCompletion(release)) release.run();
+                }
+            }
+            return;
+        }
         Runnable commit = () -> {
             try {
                 if (!entity.isRemoved()) delegate.onMove();
@@ -30,19 +42,16 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
                 }
             }
         };
-        if (!NativeTickCoordinator.deferGlobalCommit(commit)) commit.run();
+        commit.run();
     }
 
     @Override
     public void onRemove(Entity.RemovalReason reason) {
-        Runnable commit = () -> {
-            try {
-                delegate.onRemove(reason);
-            } finally {
-                ((EntityContextOwnerBridge) entity).aerogel$contextOwner(null);
-            }
-        };
-        if (!NativeTickCoordinator.deferGlobalCommit(commit)) commit.run();
+        try {
+            delegate.onRemove(reason);
+        } finally {
+            ((EntityContextOwnerBridge) entity).aerogel$contextOwner(null);
+        }
     }
 
     private static void releaseAfterOwnedWork(

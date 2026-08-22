@@ -6,6 +6,8 @@ import it.unimi.dsi.fastutil.objects.ObjectCollection;
 
 import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.IntFunction;
+import it.unimi.dsi.fastutil.ints.Int2ObjectFunction;
 
 /** Concurrent primitive-key publication map for the visible entity index. */
 public final class ConcurrentInt2ObjectMap<V> extends Int2ObjectLinkedOpenHashMap<V> {
@@ -15,6 +17,14 @@ public final class ConcurrentInt2ObjectMap<V> extends Int2ObjectLinkedOpenHashMa
     @Override public V put(int key, V value) { return values.put(key, value); }
     @Override public V remove(int key) { return values.remove(key); }
     @Override public boolean containsKey(int key) { return values.containsKey(key); }
+    @Override public V computeIfAbsent(int key, IntFunction<? extends V> function) {
+        return values.computeIfAbsent(key, function::apply);
+    }
+    @Override public V computeIfAbsent(
+        int key, Int2ObjectFunction<? extends V> function
+    ) {
+        return values.computeIfAbsent(key, ignored -> function.get(key));
+    }
     @Override public ObjectCollection<V> values() {
         return new ObjectArrayList<>(values.values());
     }

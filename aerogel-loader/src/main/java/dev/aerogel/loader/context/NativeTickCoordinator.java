@@ -1,10 +1,14 @@
 package dev.aerogel.loader.context;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /** Coordinates the server-thread commit boundary around native context work. */
 public final class NativeTickCoordinator {
@@ -39,7 +43,11 @@ public final class NativeTickCoordinator {
             if (failure instanceof Error error) throw error;
             if (failure != null) throw new RuntimeException(failure);
         } finally {
-            NATIVE_WORK.remove();
+            try {
+                for (Runnable completion : frame.nativeCompletions) completion.run();
+            } finally {
+                NATIVE_WORK.remove();
+            }
             Runnable completion = () -> {
                 try {
                     committed.run();
@@ -59,7 +67,12 @@ public final class NativeTickCoordinator {
     }
 
     public static boolean isNativeWorker() {
-        return NATIVE_WORK.get() != null;
+        // Native frames are entered only by ContextServiceImpl's ForkJoin pool.
+        // The type guard keeps ordinary server-thread block operations completely
+        // off the ThreadLocal path while the frame check still rejects unrelated
+        // ForkJoin pools exactly.
+        return Thread.currentThread() instanceof ForkJoinWorkerThread
+            && NATIVE_WORK.get() != null;
     }
 
     public static void beginServerTick() {
@@ -75,6 +88,30 @@ public final class NativeTickCoordinator {
         if (frame == null) return false;
         frame.commits.add(commit);
         return true;
+    }
+
+    /** Adds owner-local work to the end of the current native transaction. */
+    public static boolean deferNativeCompletion(Runnable completion) {
+        NativeFrame frame = NATIVE_WORK.get();
+        if (frame == null) return false;
+        frame.nativeCompletions.add(completion);
+        return true;
+    }
+
+    /**
+     * Returns one attachment per identity key for the current native transaction.
+     * Callers use this to coalesce immutable commit data without introducing a
+     * process-wide queue or a cross-Context lock.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> T nativeAttachment(Object key, Supplier<? extends T> factory) {
+        NativeFrame frame = NATIVE_WORK.get();
+        if (frame == null) return null;
+        Object existing = frame.attachments.get(key);
+        if (existing != null) return (T) existing;
+        T created = factory.get();
+        frame.attachments.put(key, created);
+        return created;
     }
 
     /** Enqueues an asynchronous fallback at the server-thread commit boundary. */
@@ -114,5 +151,7 @@ public final class NativeTickCoordinator {
 
     private static final class NativeFrame {
         private final List<Runnable> commits = new ArrayList<>();
+        private final List<Runnable> nativeCompletions = new ArrayList<>();
+        private final Map<Object, Object> attachments = new IdentityHashMap<>();
     }
 }

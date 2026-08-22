@@ -36,7 +36,7 @@ abstract class MinecraftServerTickMixin {
 
     @Inject(method = "stopServer", at = @At("HEAD"))
     private void aerogel$drainContextsBeforeStop(CallbackInfo callbackInfo) {
-        AerogelRuntime.stopContextDispatch();
         NativeTickCoordinator.drainForShutdown();
+        AerogelRuntime.stopContextDispatch();
     }
 }
