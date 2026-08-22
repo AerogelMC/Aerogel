@@ -1,0 +1,145 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "dev.aerogel",
+    "module": "aerogel-mixin-dsl",
+    "version": "26.2-7",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.3.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 25,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib"
+        }
+      ],
+      "dependencyConstraints": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "aerogel-mixin-dsl-26.2-7.jar",
+          "url": "aerogel-mixin-dsl-26.2-7.jar",
+          "size": 94500,
+          "sha512": "9d775042cc1a2f578b9ef00b8c4cca8e8b2957ce05a8778fa507c435597c414ac6fba8b990942966b3223c08582936bdecf0ca69b11bcb3ce0e1b2286b859257",
+          "sha256": "21e9088e7fbc58bb44fa0ebf92ac73ad43f89d9fac6aa7b5602a9d1e7bdcf9ea",
+          "sha1": "9ad903bb3321f07288a0f7db4b4ee1d008b022f9",
+          "md5": "2245faa94502699ccc15a1885eccf80d"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.jvm.version": 25,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-scripting-common"
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-scripting-jvm"
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib"
+        }
+      ],
+      "dependencyConstraints": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-scripting-common",
+          "version": {
+            "requires": "2.4.10"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-scripting-jvm",
+          "version": {
+            "requires": "2.4.10"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.10"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "aerogel-mixin-dsl-26.2-7.jar",
+          "url": "aerogel-mixin-dsl-26.2-7.jar",
+          "size": 94500,
+          "sha512": "9d775042cc1a2f578b9ef00b8c4cca8e8b2957ce05a8778fa507c435597c414ac6fba8b990942966b3223c08582936bdecf0ca69b11bcb3ce0e1b2286b859257",
+          "sha256": "21e9088e7fbc58bb44fa0ebf92ac73ad43f89d9fac6aa7b5602a9d1e7bdcf9ea",
+          "sha1": "9ad903bb3321f07288a0f7db4b4ee1d008b022f9",
+          "md5": "2245faa94502699ccc15a1885eccf80d"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerogel-mixin-dsl-26.2-7-sources.jar",
+          "url": "aerogel-mixin-dsl-26.2-7-sources.jar",
+          "size": 10708,
+          "sha512": "ff1b8f295c061a740dd00ffc748f014cce4bd2d636fef0974d78f101c8c687adb0cbcf89adfb1f199c734b54a4afe838f0ccda1d8eb47c3fc11dff16b9be9895",
+          "sha256": "156d67f37815d5b4b7f488f81df717e358ec8485707c5005f5f734dfdbca57fd",
+          "sha1": "aba0750ceec80e63346b635f04a636e14350cc10",
+          "md5": "faf306e18f3abbea8606e1d238a5dac9"
+        },
+        {
+          "name": "aerogel-mixin-dsl-26.2-7-sources.jar",
+          "url": "aerogel-mixin-dsl-26.2-7-sources.jar",
+          "size": 10708,
+          "sha512": "ff1b8f295c061a740dd00ffc748f014cce4bd2d636fef0974d78f101c8c687adb0cbcf89adfb1f199c734b54a4afe838f0ccda1d8eb47c3fc11dff16b9be9895",
+          "sha256": "156d67f37815d5b4b7f488f81df717e358ec8485707c5005f5f734dfdbca57fd",
+          "sha1": "aba0750ceec80e63346b635f04a636e14350cc10",
+          "md5": "faf306e18f3abbea8606e1d238a5dac9"
+        }
+      ]
+    }
+  ]
+}
