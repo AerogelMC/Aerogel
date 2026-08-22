@@ -26,6 +26,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
@@ -58,6 +59,14 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ChunkContextImpl,
         ConcurrentHashMap<Entity, TrackedRegistration>> trackedByContext =
+        new ConcurrentHashMap<>();
+    /**
+     * Viewers that have already participated in a tracking pass, partitioned by
+     * dimension. A player is added only after ChunkMap has published its initial
+     * chunk-tracking view, so the first distributed visibility pass observes the
+     * same view that vanilla uses for TrackedEntity.updatePlayer.
+     */
+    private final ConcurrentHashMap<ServerLevel, Set<ServerPlayer>> trackingViewers =
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Entity, TickingRegistration> tickingEntities =
         new ConcurrentHashMap<>();
@@ -530,10 +539,15 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     ) {
         if (closed || trackedByContext.isEmpty()) return;
         List<ServerPlayer> playerSnapshot = List.copyOf(players);
+        Set<ServerPlayer> knownViewers = trackingViewers.computeIfAbsent(
+            level, ignored -> ConcurrentHashMap.newKeySet());
+        knownViewers.retainAll(playerSnapshot);
         List<ServerPlayer> movedPlayers = new ArrayList<>();
         for (ServerPlayer player : playerSnapshot) {
+            boolean newViewer = knownViewers.add(player);
             TrackedRegistration registration = trackedEntities.get(player);
-            if (registration != null && registration.tracked.aerogel$sectionChanged()) {
+            if (newViewer || registration != null
+                && registration.tracked.aerogel$sectionChanged()) {
                 movedPlayers.add(player);
             }
         }
@@ -542,6 +556,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         dispatch(() -> dispatchBatched(() -> {
             for (var entry : trackedByContext.entrySet()) {
                 ChunkContextImpl context = entry.getKey();
+                if (context.world().level() != level) continue;
                 ConcurrentHashMap<Entity, TrackedRegistration> registrations =
                     entry.getValue();
                 if (!context.active() || registrations.isEmpty()) continue;
@@ -613,6 +628,39 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         registration.owner = current;
         trackedByContext.computeIfAbsent(current, ignored -> new ConcurrentHashMap<>())
             .put(registration.entity, registration);
+    }
+
+    /**
+     * Publishes the entities owned by a chunk only after that chunk's packet has
+     * entered the viewer's connection. This preserves vanilla's chunk-before-entity
+     * packet order while keeping the work local to the owning Context.
+     */
+    public void playerChunkSent(
+        ServerLevel level, LevelChunk chunk, ServerPlayer viewer
+    ) {
+        if (closed || viewer.isRemoved() || viewer.level() != level) return;
+        WorldContextImpl world = worlds.get(level);
+        if (world == null) return;
+        ChunkPos position = chunk.getPos();
+        ChunkContextImpl context = world.existingContext(position.x(), position.z());
+        if (context == null) return;
+        Runnable publish = () -> {
+            ConcurrentHashMap<Entity, TrackedRegistration> registrations =
+                trackedByContext.get(context);
+            if (registrations == null || registrations.isEmpty()) return;
+            for (TrackedRegistration registration : registrations.values()) {
+                if (trackedEntities.get(registration.entity) == registration
+                    && !registration.entity.isRemoved()
+                    && registration.owner == context) {
+                    registration.tracked.aerogel$updatePlayer(viewer);
+                }
+            }
+        };
+        if (context.current()) {
+            publish.run();
+        } else {
+            context.submitNative(publish, () -> { });
+        }
     }
 
     public void tickSpawningChunk(
@@ -1273,6 +1321,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         worlds.clear();
         trackedEntities.clear();
         trackedByContext.clear();
+        trackingViewers.clear();
         tickingEntities.clear();
         tickingByContext.clear();
         workers.shutdown();

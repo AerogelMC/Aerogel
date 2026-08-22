@@ -204,6 +204,7 @@ abstract class PlayerChunkSenderMixin {
             Runnable send = () -> {
                 try {
                     aerogel$sendPrepared(connection, level, chunk, packet);
+                    AerogelRuntime.playerChunkSent(level, chunk, connection.player);
                     sentChunks.incrementAndGet();
                 } catch (Throwable error) {
                     NativeTickCoordinator.submitGlobalCommit(

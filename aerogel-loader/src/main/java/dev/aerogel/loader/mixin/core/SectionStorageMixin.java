@@ -9,11 +9,11 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -34,19 +34,19 @@ abstract class SectionStorageMixin<R> {
         storage = new ConcurrentLong2ObjectMap<>();
     }
 
-    @Inject(method = "getOrLoad(J)Ljava/util/Optional;",
-        at = @At("HEAD"), cancellable = true)
-    private void aerogel$loadSectionWithoutGlobalOwner(
-        long sectionKey, CallbackInfoReturnable<Optional<R>> callback
-    ) {
+    /**
+     * @author Aerogel
+     * @reason Preserve vanilla semantics without allocating a cancellable Mixin
+     * callback on every villager POI lookup.
+     */
+    @Overwrite
+    protected Optional<R> getOrLoad(long sectionKey) {
         if (outsideStoredRange(sectionKey)) {
-            callback.setReturnValue(Optional.empty());
-            return;
+            return Optional.empty();
         }
         Optional<R> loaded = get(sectionKey);
         if (loaded != null) {
-            callback.setReturnValue(loaded);
-            return;
+            return loaded;
         }
 
         ChunkPos chunk = SectionPos.of(sectionKey).chunk();
@@ -71,6 +71,6 @@ abstract class SectionStorageMixin<R> {
         if (loaded == null) {
             throw new IllegalStateException("POI section load completed without publication");
         }
-        callback.setReturnValue(loaded);
+        return loaded;
     }
 }

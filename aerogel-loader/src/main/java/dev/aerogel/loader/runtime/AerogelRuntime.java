@@ -144,6 +144,12 @@ public final class AerogelRuntime {
         api().contexts().tickTrackedEntities(level, players, distanceManager);
     }
 
+    public static void playerChunkSent(
+        ServerLevel level, LevelChunk chunk, ServerPlayer viewer
+    ) {
+        api().contexts().playerChunkSent(level, chunk, viewer);
+    }
+
     public static void tickChunks(
         ServerLevel level, ChunkMap chunkMap,
         Consumer<net.minecraft.world.level.chunk.LevelChunk> action

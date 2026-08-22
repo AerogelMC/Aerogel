@@ -25,12 +25,20 @@ public final class ServerProcessLauncher {
     public int launch(LaunchOptions options) throws IOException, InterruptedException {
         verifyRuntime(options);
         new PluginDiscovery().discover(options.gameDirectory().resolve("plugins"), options.minecraftVersion());
+        List<String> inheritedJvmArguments = RuntimeSnapshot.inheritedJvmArguments();
+        GarbageCollectorSelector.Selection garbageCollector = GarbageCollectorSelector.select(
+            javaExecutable(), inheritedJvmArguments, options.jvmArguments());
+        if (!garbageCollector.explicit()) {
+            System.out.println("[Aerogel] Default garbage collector: "
+                + garbageCollector.displayName());
+        }
 
         Path session = options.gameDirectory().resolve(".aerogel").resolve("restart")
             .resolve(UUID.randomUUID().toString()).toAbsolutePath().normalize();
         Files.createDirectories(session);
         int generation = 0;
-        Process current = start(options, session, generation);
+        Process current = start(options, session, generation, inheritedJvmArguments,
+            garbageCollector);
 
         while (true) {
             Path request = session.resolve("request-" + generation + ".properties");
@@ -44,7 +52,8 @@ public final class ServerProcessLauncher {
             int nextGeneration = generation + 1;
             Process next;
             try {
-                next = start(options, session, nextGeneration);
+                next = start(options, session, nextGeneration, inheritedJvmArguments,
+                    garbageCollector);
             } catch (IOException exception) {
                 Files.writeString(session.resolve("failed-" + generation), exception.toString(),
                     StandardCharsets.UTF_8);
@@ -80,8 +89,14 @@ public final class ServerProcessLauncher {
         }
     }
 
-    private Process start(LaunchOptions options, Path restartSession, int generation) throws IOException {
-        List<String> command = command(options);
+    private Process start(
+        LaunchOptions options,
+        Path restartSession,
+        int generation,
+        List<String> inheritedJvmArguments,
+        GarbageCollectorSelector.Selection garbageCollector
+    ) throws IOException {
+        List<String> command = command(options, inheritedJvmArguments, garbageCollector);
         int classPathIndex = command.indexOf("-cp");
         command.add(classPathIndex, "-Daerogel.restartSession=" + restartSession);
         command.add(classPathIndex + 1, "-Daerogel.restartGeneration=" + generation);
@@ -91,10 +106,15 @@ public final class ServerProcessLauncher {
             .start();
     }
 
-    private List<String> command(LaunchOptions options) {
+    private List<String> command(
+        LaunchOptions options,
+        List<String> inheritedJvmArguments,
+        GarbageCollectorSelector.Selection garbageCollector
+    ) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable().toString());
-        command.addAll(RuntimeSnapshot.inheritedJvmArguments());
+        command.addAll(inheritedJvmArguments);
+        command.addAll(garbageCollector.arguments());
         if (options.jvmArguments().stream().noneMatch(argument -> argument.startsWith("--enable-native-access"))) {
             command.add("--enable-native-access=ALL-UNNAMED");
         }
