@@ -87,6 +87,7 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.world.ticks.LevelTicks",
         "net.minecraft.world.level.chunk.storage.SectionStorage",
         "net.minecraft.world.level.ServerExplosion",
+        "net.minecraft.world.level.TicketStorage",
         "net.minecraft.world.level.block.entity.BlockEntity",
         "net.minecraft.world.level.storage.loot.LootTable",
         "net.minecraft.world.level.block.piston.PistonBaseBlock"
@@ -218,11 +219,80 @@ final class RealServerMixinCompatibilityTest {
 
                 Class.forName(
                     "dev.aerogel.loader.internal.AerogelPersistentSavedData", true, loader);
+                verifyTicketActivityIndex(loader);
                 verifyDirectMinecraftLinkage(loader);
 
             } finally {
                 current.setContextClassLoader(previous);
             }
+        }
+    }
+
+    private static void verifyTicketActivityIndex(ClassLoader loader) throws Exception {
+        Class.forName("net.minecraft.SharedConstants", true, loader)
+            .getMethod("tryDetectVersion").invoke(null);
+        Class.forName("net.minecraft.server.Bootstrap", true, loader)
+            .getMethod("bootStrap").invoke(null);
+        Class<?> storageType = Class.forName(
+            "net.minecraft.world.level.TicketStorage", true, loader);
+        Class<?> ticketType = Class.forName(
+            "net.minecraft.server.level.Ticket", true, loader);
+        Class<?> typeType = Class.forName(
+            "net.minecraft.server.level.TicketType", true, loader);
+        Object storage = storageType.getConstructor().newInstance();
+        Method shouldKeepActive = storageType.getMethod("shouldKeepDimensionActive");
+        if ((boolean) shouldKeepActive.invoke(storage)) {
+            throw new AssertionError("Empty TicketStorage is dimension-active");
+        }
+
+        Method typeKeepsActive = typeType.getMethod("shouldKeepDimensionActive");
+        Object activeType = null;
+        for (java.lang.reflect.Field field : typeType.getFields()) {
+            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                && field.getType() == typeType) {
+                Object candidate = field.get(null);
+                if ((boolean) typeKeepsActive.invoke(candidate)) {
+                    activeType = candidate;
+                    break;
+                }
+            }
+        }
+        if (activeType == null) {
+            throw new AssertionError("No dimension-active vanilla ticket type found");
+        }
+
+        Constructor<?> ticketConstructor = ticketType.getConstructor(typeType, int.class);
+        Method add = storageType.getMethod("addTicket", long.class, ticketType);
+        Method remove = storageType.getMethod("removeTicket", long.class, ticketType);
+        Object first = ticketConstructor.newInstance(activeType, 31);
+        if (!(boolean) add.invoke(storage, 42L, first)
+            || !(boolean) shouldKeepActive.invoke(storage)) {
+            throw new AssertionError("Added active ticket was not indexed");
+        }
+        Object equivalent = ticketConstructor.newInstance(activeType, 31);
+        if ((boolean) add.invoke(storage, 42L, equivalent)) {
+            throw new AssertionError("Equivalent ticket was unexpectedly duplicated");
+        }
+        if (!(boolean) remove.invoke(storage, 42L, equivalent)
+            || (boolean) shouldKeepActive.invoke(storage)) {
+            throw new AssertionError("Removed active ticket remained indexed");
+        }
+
+        Object predicateTicket = ticketConstructor.newInstance(activeType, 32);
+        if (!(boolean) add.invoke(storage, 43L, predicateTicket)) {
+            throw new AssertionError("Predicate-removal ticket was not added");
+        }
+        Class<?> predicateType = Class.forName(
+            "net.minecraft.world.level.TicketStorage$TicketPredicate", true, loader);
+        Object predicate = java.lang.reflect.Proxy.newProxyInstance(
+            loader, new Class<?>[] { predicateType },
+            (proxy, method, arguments) -> "test".equals(method.getName()));
+        Class<?> mapType = Class.forName(
+            "it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap", true, loader);
+        storageType.getMethod("removeTicketIf", predicateType, mapType)
+            .invoke(storage, predicate, null);
+        if ((boolean) shouldKeepActive.invoke(storage)) {
+            throw new AssertionError("Predicate-removed active ticket remained indexed");
         }
     }
 

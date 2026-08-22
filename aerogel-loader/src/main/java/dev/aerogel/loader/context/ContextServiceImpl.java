@@ -270,12 +270,15 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         if (closed || tickingByContext.isEmpty()) return;
         worldImpl(level);
         long serverTick = NativeTickCoordinator.currentServerTick();
-        for (var entry : tickingByContext.entrySet()) {
-            ChunkContextImpl context = entry.getKey();
-            ConcurrentHashMap<Entity, TickingRegistration> registrations = entry.getValue();
-            if (!context.active() || registrations.isEmpty()) continue;
-            submitTickingContext(context, registrations, action, serverTick);
-        }
+        dispatch(() -> dispatchBatched(() -> {
+            for (var entry : tickingByContext.entrySet()) {
+                ChunkContextImpl context = entry.getKey();
+                ConcurrentHashMap<Entity, TickingRegistration> registrations =
+                    entry.getValue();
+                if (!context.active() || registrations.isEmpty()) continue;
+                submitTickingContext(context, registrations, action, serverTick);
+            }
+        }));
     }
 
     private void submitTickingContext(
@@ -536,13 +539,16 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         }
         List<ServerPlayer> movedSnapshot = List.copyOf(movedPlayers);
         long serverTick = NativeTickCoordinator.currentServerTick();
-        for (var entry : trackedByContext.entrySet()) {
-            ChunkContextImpl context = entry.getKey();
-            ConcurrentHashMap<Entity, TrackedRegistration> registrations = entry.getValue();
-            if (!context.active() || registrations.isEmpty()) continue;
-            submitTrackingContext(context, registrations, playerSnapshot,
-                movedSnapshot, distanceManager, serverTick);
-        }
+        dispatch(() -> dispatchBatched(() -> {
+            for (var entry : trackedByContext.entrySet()) {
+                ChunkContextImpl context = entry.getKey();
+                ConcurrentHashMap<Entity, TrackedRegistration> registrations =
+                    entry.getValue();
+                if (!context.active() || registrations.isEmpty()) continue;
+                submitTrackingContext(context, registrations, playerSnapshot,
+                    movedSnapshot, distanceManager, serverTick);
+            }
+        }));
     }
 
     private void submitTrackingContext(
