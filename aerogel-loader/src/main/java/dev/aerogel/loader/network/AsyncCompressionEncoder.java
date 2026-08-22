@@ -18,21 +18,30 @@ import java.util.zip.Deflater;
  * concurrently.
  */
 public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
-    private final Executor workers;
+    private final CompressionScheduler workers;
     private final CompressionEngine engine;
     private final Deflater deflater = new Deflater();
-    private final ArrayDeque<PendingOperation> pending = new ArrayDeque<>();
+    private final ArrayDeque<PendingSegment> pending = new ArrayDeque<>();
+    private final ArrayDeque<PacketPriority> encodedPriorities = new ArrayDeque<>();
     private int threshold;
     private boolean compressing;
     private boolean terminated;
     private boolean deflaterEnded;
+    private long nextWriteSequence;
+    private long flushedThroughSequence = -1L;
 
     public AsyncCompressionEncoder(int threshold) {
-        this(threshold, CompressionWorkers.executor(), DirectPacketCompressor::encode);
+        this(threshold, CompressionWorkers::execute, DirectPacketCompressor::encode);
     }
 
     AsyncCompressionEncoder(
         int threshold, Executor workers, CompressionEngine engine
+    ) {
+        this(threshold, (priority, task) -> workers.execute(task), engine);
+    }
+
+    private AsyncCompressionEncoder(
+        int threshold, CompressionScheduler workers, CompressionEngine engine
     ) {
         this.threshold = threshold;
         this.workers = Objects.requireNonNull(workers, "workers");
@@ -41,6 +50,11 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
 
     public void setThreshold(int threshold) {
         this.threshold = threshold;
+    }
+
+    /** Called synchronously by PacketEncoder for the ByteBuf it is about to emit. */
+    public void markNextWrite(PacketPriority priority) {
+        encodedPriorities.addLast(Objects.requireNonNull(priority, "priority"));
     }
 
     @Override
@@ -52,26 +66,56 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
             promise.tryFailure(new ClosedChannelException());
             return;
         }
-        if (compressing) {
-            pending.addLast(new PendingWrite(message, promise));
+        PacketPriority priority = message instanceof ByteBuf
+            ? encodedPriorities.pollFirst() : null;
+        if (!compressing && pending.isEmpty()
+            && writeImmediate(context, message, promise)) return;
+        PendingWrite write = new PendingWrite(
+            message, promise,
+            priority == null ? PacketPriority.INTERACTIVE : priority,
+            nextWriteSequence++);
+        if (compressing || !pending.isEmpty()) {
+            enqueue(write);
+            if (!compressing) drain(context);
             return;
         }
-        writeNow(context, message, promise);
+        writeNow(context, write);
+    }
+
+    /** Avoids a queue-node allocation for the common unqueued small packet. */
+    private boolean writeImmediate(
+        ChannelHandlerContext context, Object message, ChannelPromise promise
+    ) {
+        if (!(message instanceof ByteBuf input)) {
+            context.write(message, promise);
+            return true;
+        }
+        if (input.readableBytes() >= threshold) return false;
+
+        ByteBuf output = context.alloc().ioBuffer(input.readableBytes() + 1);
+        try {
+            DirectPacketCompressor.encode(deflater, threshold, input, output);
+            context.write(output, promise);
+            output = null;
+        } catch (Throwable error) {
+            promise.tryFailure(error);
+        } finally {
+            ReferenceCountUtil.release(input);
+            ReferenceCountUtil.release(output);
+        }
+        return true;
     }
 
     @Override
     public void flush(ChannelHandlerContext context) {
-        if (compressing) {
-            pending.addLast(PendingFlush.INSTANCE);
-        } else {
-            context.flush();
-        }
+        flushedThroughSequence = nextWriteSequence - 1L;
+        context.flush();
     }
 
     @Override
     public void close(ChannelHandlerContext context, ChannelPromise promise) {
         if (compressing) {
-            pending.addLast(new PendingClose(promise));
+            enqueueBarrier(new PendingClose(promise));
         } else {
             context.close(promise);
         }
@@ -80,7 +124,7 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
     @Override
     public void disconnect(ChannelHandlerContext context, ChannelPromise promise) {
         if (compressing) {
-            pending.addLast(new PendingDisconnect(promise));
+            enqueueBarrier(new PendingDisconnect(promise));
         } else {
             context.disconnect(promise);
         }
@@ -89,7 +133,7 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
     @Override
     public void deregister(ChannelHandlerContext context, ChannelPromise promise) {
         if (compressing) {
-            pending.addLast(new PendingDeregister(promise));
+            enqueueBarrier(new PendingDeregister(promise));
         } else {
             context.deregister(promise);
         }
@@ -107,14 +151,17 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
     }
 
     private void writeNow(
-        ChannelHandlerContext context, Object message, ChannelPromise promise
+        ChannelHandlerContext context, PendingWrite write
     ) {
+        Object message = write.message;
+        ChannelPromise promise = write.promise;
         if (!(message instanceof ByteBuf input)) {
             context.write(message, promise);
+            finishWrite(context, write);
             return;
         }
         if (input.readableBytes() >= threshold) {
-            startCompression(context, input, promise, threshold);
+            startCompression(context, write, input, threshold);
             return;
         }
 
@@ -128,31 +175,31 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         } finally {
             ReferenceCountUtil.release(input);
             ReferenceCountUtil.release(output);
+            finishWrite(context, write);
         }
     }
 
     private void startCompression(
         ChannelHandlerContext context,
-        ByteBuf input,
-        ChannelPromise promise,
+        PendingWrite write, ByteBuf input,
         int packetThreshold
     ) {
         compressing = true;
         try {
-            workers.execute(() ->
-                compress(context, input, promise, packetThreshold));
+            workers.execute(write.priority, () ->
+                compress(context, write, input, packetThreshold));
         } catch (Throwable error) {
             compressing = false;
             ReferenceCountUtil.release(input);
-            promise.tryFailure(error);
+            write.promise.tryFailure(error);
+            finishWrite(context, write);
             drain(context);
         }
     }
 
     private void compress(
         ChannelHandlerContext context,
-        ByteBuf input,
-        ChannelPromise promise,
+        PendingWrite write, ByteBuf input,
         int packetThreshold
     ) {
         ByteBuf output = context.alloc().ioBuffer();
@@ -169,10 +216,11 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         Throwable resultFailure = failure;
         try {
             context.executor().execute(() ->
-                complete(context, promise, result, resultFailure));
+                complete(context, write, result, resultFailure));
         } catch (Throwable error) {
             ReferenceCountUtil.release(result);
-            promise.tryFailure(resultFailure == null ? error : resultFailure);
+            write.promise.tryFailure(
+                resultFailure == null ? error : resultFailure);
             compressing = false;
             endDeflater();
         }
@@ -180,10 +228,11 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
 
     private void complete(
         ChannelHandlerContext context,
-        ChannelPromise promise,
+        PendingWrite write,
         ByteBuf output,
         Throwable failure
     ) {
+        ChannelPromise promise = write.promise;
         try {
             if (terminated) {
                 promise.tryFailure(failure == null
@@ -199,6 +248,7 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         } finally {
             ReferenceCountUtil.release(output);
             compressing = false;
+            finishWrite(context, write);
             if (terminated) {
                 endDeflater();
             } else {
@@ -209,17 +259,62 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
 
     private void drain(ChannelHandlerContext context) {
         while (!compressing) {
-            PendingOperation operation = pending.pollFirst();
+            PendingOperation operation = pollNextOperation();
             if (operation == null) return;
             operation.run(this, context);
         }
     }
 
+    private PendingOperation pollNextOperation() {
+        while (true) {
+            PendingSegment segment = pending.peekFirst();
+            if (segment == null) return null;
+            PendingWrite write = segment.interactive.pollFirst();
+            if (write != null) return write;
+            write = segment.bulk.pollFirst();
+            if (write != null) return write;
+            PendingOperation barrier = segment.barrier;
+            pending.removeFirst();
+            if (barrier != null) return barrier;
+        }
+    }
+
+    private void enqueue(PendingWrite write) {
+        PendingSegment segment = tailSegment();
+        if (write.priority == PacketPriority.BARRIER) {
+            segment.barrier = write;
+            pending.addLast(new PendingSegment());
+        } else if (write.priority == PacketPriority.BULK) {
+            segment.bulk.addLast(write);
+        } else {
+            segment.interactive.addLast(write);
+        }
+    }
+
+    private void enqueueBarrier(PendingOperation barrier) {
+        PendingSegment segment = tailSegment();
+        segment.barrier = barrier;
+        pending.addLast(new PendingSegment());
+    }
+
+    private PendingSegment tailSegment() {
+        PendingSegment segment = pending.peekLast();
+        if (segment != null) return segment;
+        segment = new PendingSegment();
+        pending.addLast(segment);
+        return segment;
+    }
+
+    private void finishWrite(ChannelHandlerContext context, PendingWrite write) {
+        if (write.sequence <= flushedThroughSequence) context.flush();
+    }
+
     private void terminate(Throwable failure) {
         if (terminated) return;
         terminated = true;
-        PendingOperation operation;
-        while ((operation = pending.pollFirst()) != null) operation.fail(failure);
+        encodedPriorities.clear();
+        PendingSegment segment;
+        while ((segment = pending.pollFirst()) != null) segment.fail(failure);
         if (!compressing) endDeflater();
     }
 
@@ -236,6 +331,11 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         );
     }
 
+    @FunctionalInterface
+    private interface CompressionScheduler {
+        void execute(PacketPriority priority, Runnable task);
+    }
+
     private interface PendingOperation {
         void run(AsyncCompressionEncoder encoder, ChannelHandlerContext context);
 
@@ -243,14 +343,27 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         }
     }
 
-    private record PendingWrite(
-        Object message, ChannelPromise promise
-    ) implements PendingOperation {
+    private static final class PendingWrite implements PendingOperation {
+        private final Object message;
+        private final ChannelPromise promise;
+        private final PacketPriority priority;
+        private final long sequence;
+
+        private PendingWrite(
+            Object message, ChannelPromise promise, PacketPriority priority,
+            long sequence
+        ) {
+            this.message = message;
+            this.promise = promise;
+            this.priority = priority;
+            this.sequence = sequence;
+        }
+
         @Override
         public void run(
             AsyncCompressionEncoder encoder, ChannelHandlerContext context
         ) {
-            encoder.writeNow(context, message, promise);
+            encoder.writeNow(context, this);
         }
 
         @Override
@@ -260,14 +373,16 @@ public final class AsyncCompressionEncoder extends ChannelDuplexHandler {
         }
     }
 
-    private enum PendingFlush implements PendingOperation {
-        INSTANCE;
+    private static final class PendingSegment {
+        private final ArrayDeque<PendingWrite> interactive = new ArrayDeque<>();
+        private final ArrayDeque<PendingWrite> bulk = new ArrayDeque<>();
+        private PendingOperation barrier;
 
-        @Override
-        public void run(
-            AsyncCompressionEncoder encoder, ChannelHandlerContext context
-        ) {
-            context.flush();
+        private void fail(Throwable failure) {
+            PendingWrite write;
+            while ((write = interactive.pollFirst()) != null) write.fail(failure);
+            while ((write = bulk.pollFirst()) != null) write.fail(failure);
+            if (barrier != null) barrier.fail(failure);
         }
     }
 

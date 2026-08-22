@@ -24,6 +24,101 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AsyncCompressionEncoderTest {
     @Test
+    void interactivePacketPassesQueuedChunkPacketsWithoutReorderingChunks()
+        throws Exception {
+        ExecutorService workers = Executors.newSingleThreadExecutor();
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        List<Integer> encodedOrder = Collections.synchronizedList(new ArrayList<>());
+        AsyncCompressionEncoder.CompressionEngine engine =
+            (deflater, threshold, input, output) -> {
+                int marker = input.getUnsignedByte(input.readerIndex());
+                encodedOrder.add(marker);
+                if (marker == 1) {
+                    firstStarted.countDown();
+                    await(releaseFirst);
+                }
+                DirectPacketCompressor.encode(deflater, threshold, input, output);
+            };
+        AsyncCompressionEncoder encoder =
+            new AsyncCompressionEncoder(0, workers, engine);
+        EmbeddedChannel channel = new EmbeddedChannel(encoder);
+        try {
+            encoder.markNextWrite(PacketPriority.BULK);
+            ChannelFuture firstChunk = channel.write(
+                Unpooled.directBuffer().writeByte(1));
+            assertTrue(firstStarted.await(5, TimeUnit.SECONDS));
+
+            encoder.markNextWrite(PacketPriority.BULK);
+            ChannelFuture secondChunk = channel.write(
+                Unpooled.directBuffer().writeByte(2));
+            encoder.markNextWrite(PacketPriority.INTERACTIVE);
+            ChannelFuture chat = channel.writeAndFlush(
+                Unpooled.directBuffer().writeByte(3));
+
+            releaseFirst.countDown();
+            pumpUntil(channel, () -> firstChunk.isDone()
+                && secondChunk.isDone() && chat.isDone());
+
+            assertEquals(List.of(1, 3, 2), encodedOrder);
+            assertArrayEquals(new byte[] { 1 }, decode(channel.readOutbound()));
+            assertArrayEquals(new byte[] { 3 }, decode(channel.readOutbound()));
+            assertArrayEquals(new byte[] { 2 }, decode(channel.readOutbound()));
+        } finally {
+            releaseFirst.countDown();
+            channel.finishAndReleaseAll();
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
+    void protocolBarrierPreventsLaterInteractivePacketFromCrossing()
+        throws Exception {
+        ExecutorService workers = Executors.newSingleThreadExecutor();
+        CountDownLatch firstStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        List<Integer> encodedOrder = Collections.synchronizedList(new ArrayList<>());
+        AsyncCompressionEncoder.CompressionEngine engine =
+            (deflater, threshold, input, output) -> {
+                int marker = input.getUnsignedByte(input.readerIndex());
+                encodedOrder.add(marker);
+                if (marker == 1) {
+                    firstStarted.countDown();
+                    await(releaseFirst);
+                }
+                DirectPacketCompressor.encode(deflater, threshold, input, output);
+            };
+        AsyncCompressionEncoder encoder =
+            new AsyncCompressionEncoder(0, workers, engine);
+        EmbeddedChannel channel = new EmbeddedChannel(encoder);
+        try {
+            encoder.markNextWrite(PacketPriority.BULK);
+            ChannelFuture first = channel.write(
+                Unpooled.directBuffer().writeByte(1));
+            assertTrue(firstStarted.await(5, TimeUnit.SECONDS));
+            encoder.markNextWrite(PacketPriority.BULK);
+            ChannelFuture chunk = channel.write(
+                Unpooled.directBuffer().writeByte(2));
+            encoder.markNextWrite(PacketPriority.BARRIER);
+            ChannelFuture transition = channel.write(
+                Unpooled.directBuffer().writeByte(4));
+            encoder.markNextWrite(PacketPriority.INTERACTIVE);
+            ChannelFuture afterTransition = channel.writeAndFlush(
+                Unpooled.directBuffer().writeByte(3));
+
+            releaseFirst.countDown();
+            pumpUntil(channel, () -> first.isDone() && chunk.isDone()
+                && transition.isDone() && afterTransition.isDone());
+
+            assertEquals(List.of(1, 2, 4, 3), encodedOrder);
+        } finally {
+            releaseFirst.countDown();
+            channel.finishAndReleaseAll();
+            workers.shutdownNow();
+        }
+    }
+
+    @Test
     void preservesPacketAndFlushOrderWithinOneConnection() throws Exception {
         ExecutorService workers = Executors.newFixedThreadPool(2);
         CountDownLatch firstStarted = new CountDownLatch(1);

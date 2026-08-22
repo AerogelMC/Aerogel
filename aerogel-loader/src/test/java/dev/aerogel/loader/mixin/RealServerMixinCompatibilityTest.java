@@ -30,6 +30,7 @@ final class RealServerMixinCompatibilityTest {
         "com.mojang.brigadier.tree.CommandNode",
         "net.minecraft.commands.Commands",
         "net.minecraft.network.Connection",
+        "net.minecraft.network.PacketEncoder",
         "net.minecraft.network.PacketProcessor",
         "net.minecraft.network.PacketProcessor$ListenerAndPacket",
         "net.minecraft.network.protocol.PacketUtils",

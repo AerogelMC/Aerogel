@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.network.OutboundPacketPriority;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.network.protocol.Packet;
@@ -233,8 +234,11 @@ abstract class PlayerChunkSenderMixin {
         ) {
             Runnable send = () -> {
                 try {
-                    aerogel$sendPrepared(connection, level, chunk, packet);
-                    AerogelRuntime.playerChunkSent(level, chunk, connection.player);
+                    OutboundPacketPriority.runBulk(() -> {
+                        aerogel$sendPrepared(connection, level, chunk, packet);
+                        AerogelRuntime.playerChunkSent(
+                            level, chunk, connection.player);
+                    });
                     sentChunks.incrementAndGet();
                 } catch (Throwable error) {
                     NativeTickCoordinator.submitGlobalCommit(

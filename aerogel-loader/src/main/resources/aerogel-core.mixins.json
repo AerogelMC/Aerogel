@@ -16,6 +16,7 @@
     "CommandsExecutionMixin",
     "CommandNodeMixin",
     "ConnectionMixin",
+    "PacketEncoderMixin",
     "PacketProcessorMixin",
     "PacketProcessorEntryMixin",
     "PacketUtilsMixin",

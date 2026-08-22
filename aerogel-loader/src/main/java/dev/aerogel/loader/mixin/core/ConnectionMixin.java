@@ -3,6 +3,7 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.restart.RestartCoordinator;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.network.AsyncCompressionEncoder;
+import dev.aerogel.loader.network.OutboundPacketPriority;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelPipeline;
 import net.minecraft.network.CompressionDecoder;
@@ -13,6 +14,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.network.PacketListener;
@@ -92,5 +94,17 @@ abstract class ConnectionMixin {
         if (RestartCoordinator.suppressOutgoing(this, packet)) {
             callbackInfo.cancel();
         }
+    }
+
+    @ModifyArg(
+        method = "sendPacket",
+        at = @At(
+            value = "INVOKE",
+            target = "Lio/netty/channel/EventLoop;execute(Ljava/lang/Runnable;)V"
+        ),
+        index = 0
+    )
+    private Runnable aerogel$carryPacketPriority(Runnable action) {
+        return OutboundPacketPriority.carry(action);
     }
 }
