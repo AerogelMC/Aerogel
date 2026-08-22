@@ -1,6 +1,6 @@
 # Developing Aerogel plugins
 
-> **Target:** Aerogel `26.2-3`, Minecraft Java Edition `26.2+`, Java `25`
+> **Target:** Aerogel `26.2-4`, Minecraft Java Edition `26.2+`, Java `25`
 > **Language:** English · [한국어](DEVELOPMENT.ko.md)
 
 This guide covers the complete plugin-development workflow: project setup, metadata, lifecycle, vanilla access, events, commands, user interfaces, translations, reload behavior, Mixins, packaging, and common failure modes.
@@ -57,7 +57,7 @@ Avoid a Mixin when an event already represents the action. An event documents wh
 
 - JDK 25
 - Gradle 8-compatible project
-- Aerogel Gradle plugin `26.2-3`
+- Aerogel Gradle plugin `26.2-4`
 - Minecraft Java Edition server `26.2` or a later version supported by the installed Aerogel build
 - IntelliJ IDEA or another Java IDE with Gradle support
 
@@ -85,13 +85,13 @@ Do not manually add `aerogel.plugin.json` when using the Gradle plugin. It is ge
 
 ### 2. Configure the Aerogel plugin repository
 
-Until the Gradle plugin is published to a public plugin repository, extract `aerogel-gradle-plugin-26.2-3.zip` and point `pluginManagement` at the extracted Maven repository:
+Until the Gradle plugin is published to a public plugin repository, extract `aerogel-gradle-plugin-26.2-4.zip` and point `pluginManagement` at the extracted Maven repository:
 
 ```kotlin
 // settings.gradle.kts
 pluginManagement {
     repositories {
-        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-3") }
+        maven { url = uri("path/to/extracted/aerogel-gradle-plugin-26.2-4") }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -107,7 +107,7 @@ Use forward slashes or a properly escaped path on Windows.
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("dev.aerogel.plugin") version "26.2-3"
+    id("dev.aerogel.plugin") version "26.2-4"
 }
 
 group = "com.example"
@@ -1056,7 +1056,7 @@ Copy only the plugin JAR into the server's `plugins` directory:
 
 ```text
 server/
-├─ Aerogel-26.2-3.jar
+├─ Aerogel-26.2-4.jar
 └─ plugins/
    └─ my-plugin-1.0.0.jar
 ```

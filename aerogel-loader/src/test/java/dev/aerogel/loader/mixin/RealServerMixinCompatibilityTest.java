@@ -229,6 +229,22 @@ final class RealServerMixinCompatibilityTest {
     }
 
     private static void verifyTicketActivityIndex(ClassLoader loader) throws Exception {
+        java.io.PrintStream originalOut = System.out;
+        java.io.PrintStream originalErr = System.err;
+        try {
+            verifyTicketActivityIndexAfterBootstrap(loader);
+        } finally {
+            // Minecraft's bootstrap replaces the process-wide streams. This test
+            // loads it through an isolated server class loader, so leaving those
+            // wrappers installed would leak that loader into unrelated tests.
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
+    }
+
+    private static void verifyTicketActivityIndexAfterBootstrap(
+        ClassLoader loader
+    ) throws Exception {
         Class.forName("net.minecraft.SharedConstants", true, loader)
             .getMethod("tryDetectVersion").invoke(null);
         Class.forName("net.minecraft.server.Bootstrap", true, loader)
