@@ -79,11 +79,11 @@ Minecraft jar selected
 ## Installation
 
 1. Install **JDK 25**.
-2. Copy `Aerogel-26.2-5.jar` to a fresh server directory.
+2. Copy `Aerogel-26.2-6.jar` to a fresh server directory.
 3. Start once:
 
 ```bash
-java -Xms2G -Xmx4G -jar Aerogel-26.2-5.jar nogui
+java -Xms2G -Xmx4G -jar Aerogel-26.2-6.jar nogui
 ```
 
 4. On first run, `eula.txt` is generated. Accept EULA if you agree.
@@ -105,8 +105,8 @@ On Windows:
 ```
 
 Artifacts:
-- `aerogel-loader/build/libs/Aerogel-26.2-5.jar`
-- `aerogel-loader/build/libs/Aerogel-26.2-5-all.jar` (standalone, depending on selected task)
+- `aerogel-loader/build/libs/Aerogel-26.2-6.jar`
+- `aerogel-loader/build/libs/Aerogel-26.2-6-all.jar` (standalone, depending on selected task)
 
 ## Configuration
 
@@ -115,6 +115,12 @@ Runtime and plugin options are controlled from:
 - server arguments in the launch command
 - `aerogel` config files written under the server runtime directory
 - plugin-provided configuration via the API
+
+Outbound zlib work uses one ordered lane per connection and runs across a
+dedicated worker pool. Its default worker count is the JVM's available processor
+count. Override it with
+`--jvm-arg=-Daerogel.network.compression.workers=<positive-count>` when CPU
+allocation is managed externally.
 
 ## Development
 

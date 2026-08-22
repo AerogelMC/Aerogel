@@ -2,6 +2,7 @@ package dev.aerogel.loader.runtime;
 
 import dev.aerogel.loader.plugin.PluginManager;
 import dev.aerogel.loader.api.AerogelApiRuntime;
+import dev.aerogel.loader.network.CompressionWorkers;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -64,6 +65,10 @@ public final class AerogelRuntime {
     public static void stopContextDispatch() {
         AerogelApiRuntime current = apiRuntime;
         if (current != null) current.contexts().close();
+    }
+
+    public static void stopCompressionWorkers() {
+        CompressionWorkers.shutdown();
     }
 
     public static void worldLoaded(ServerLevel level) {

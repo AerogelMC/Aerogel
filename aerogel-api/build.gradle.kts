@@ -4,9 +4,16 @@ plugins {
 }
 
 val minecraftStubs by sourceSets.creating
+val nettyVersion: String by project
 
 dependencies {
     compileOnly(minecraftStubs.output)
+    add(minecraftStubs.compileOnlyConfigurationName,
+        "io.netty:netty-buffer:$nettyVersion")
+    add(minecraftStubs.compileOnlyConfigurationName,
+        "io.netty:netty-codec-base:$nettyVersion")
+    add(minecraftStubs.compileOnlyConfigurationName,
+        "io.netty:netty-transport:$nettyVersion")
 }
 
 tasks.compileJava {

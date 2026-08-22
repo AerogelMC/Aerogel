@@ -8,6 +8,7 @@ val minecraftVersion: String by project
 val asmVersion: String by project
 val gsonVersion: String by project
 val jlineVersion: String by project
+val nettyVersion: String by project
 val junitVersion: String by project
 val aerogelApiProject = project(":aerogel-api")
 val apiMinecraftStubs = aerogelApiProject.extensions
@@ -25,9 +26,17 @@ dependencies {
     implementation("org.ow2.asm:asm-util:$asmVersion")
     implementation("com.google.code.gson:gson:$gsonVersion")
     implementation("org.jline:jline:$jlineVersion")
+    compileOnly("io.netty:netty-buffer:$nettyVersion")
+    compileOnly("io.netty:netty-codec-base:$nettyVersion")
+    compileOnly("io.netty:netty-common:$nettyVersion")
+    compileOnly("io.netty:netty-transport:$nettyVersion")
     compileOnly("org.slf4j:slf4j-api:2.0.17")
     testImplementation(platform("org.junit:junit-bom:$junitVersion"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    testImplementation("io.netty:netty-buffer:$nettyVersion")
+    testImplementation("io.netty:netty-codec-base:$nettyVersion")
+    testImplementation("io.netty:netty-common:$nettyVersion")
+    testImplementation("io.netty:netty-transport:$nettyVersion")
     testRuntimeOnly("org.slf4j:slf4j-api:2.0.17")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

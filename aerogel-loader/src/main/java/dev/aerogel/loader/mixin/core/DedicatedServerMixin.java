@@ -50,6 +50,7 @@ abstract class DedicatedServerMixin {
             EventHooks.post(new ServerStoppedEvent(EventHooks.cast(this)));
         }
         AerogelRuntime.pluginManager().shutdown();
+        AerogelRuntime.stopCompressionWorkers();
         RestartCoordinator.serverStopped();
     }
 }
