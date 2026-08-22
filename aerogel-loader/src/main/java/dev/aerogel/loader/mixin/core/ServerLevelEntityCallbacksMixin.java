@@ -13,6 +13,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Keeps secondary global indexes asynchronous while the chunk-owned entity is published. */
 @Mixin(targets = "net.minecraft.server.level.ServerLevel$EntityCallbacks")
 abstract class ServerLevelEntityCallbacksMixin {
+    @org.spongepowered.asm.mixin.Unique
+    private static final ThreadLocal<Boolean> AEROGEL$REPLAYING_TICKING_CALLBACK =
+        ThreadLocal.withInitial(() -> false);
+
     @Shadow public abstract void onCreated(Entity entity);
     @Shadow public abstract void onDestroyed(Entity entity);
     @Shadow public abstract void onTickingStart(Entity entity);
@@ -33,16 +37,29 @@ abstract class ServerLevelEntityCallbacksMixin {
 
     @Inject(method = "onTickingStart", at = @At("HEAD"), cancellable = true)
     private void aerogel$deferTickingStart(Entity entity, CallbackInfo callback) {
+        if (NativeTickCoordinator.isNativeWorker()
+            && entity.level() instanceof ServerLevel level) {
+            // Publish Context scheduling eligibility in the same owner transaction.
+            // The vanilla EntityTickList mutation remains a server-thread commit.
+            AerogelRuntime.registerTickingEntity(level, entity);
+        }
         defer("onTickingStart", entity, callback);
     }
 
     @Inject(method = "onTickingEnd", at = @At("HEAD"), cancellable = true)
     private void aerogel$deferTickingEnd(Entity entity, CallbackInfo callback) {
+        if (NativeTickCoordinator.isNativeWorker()) {
+            // Prevent already queued later logical ticks from running after this
+            // exact vanilla ticking-membership generation has ended.
+            AerogelRuntime.unregisterTickingEntity(entity);
+        }
         defer("onTickingEnd", entity, callback);
     }
 
     @Inject(method = "onTickingStart", at = @At("RETURN"))
     private void aerogel$registerTickingEntity(Entity entity, CallbackInfo callback) {
+        if (NativeTickCoordinator.isNativeWorker()
+            || AEROGEL$REPLAYING_TICKING_CALLBACK.get()) return;
         if (entity.level() instanceof ServerLevel level) {
             AerogelRuntime.registerTickingEntity(level, entity);
         }
@@ -50,6 +67,8 @@ abstract class ServerLevelEntityCallbacksMixin {
 
     @Inject(method = "onTickingEnd", at = @At("RETURN"))
     private void aerogel$unregisterTickingEntity(Entity entity, CallbackInfo callback) {
+        if (NativeTickCoordinator.isNativeWorker()
+            || AEROGEL$REPLAYING_TICKING_CALLBACK.get()) return;
         AerogelRuntime.unregisterTickingEntity(entity);
     }
 
@@ -76,15 +95,23 @@ abstract class ServerLevelEntityCallbacksMixin {
     }
 
     private void invoke(String method, Entity entity) {
-        switch (method) {
-            case "onCreated" -> onCreated(entity);
-            case "onDestroyed" -> onDestroyed(entity);
-            case "onTickingStart" -> onTickingStart(entity);
-            case "onTickingEnd" -> onTickingEnd(entity);
-            case "onTrackingStart" -> onTrackingStart(entity);
-            case "onTrackingEnd" -> onTrackingEnd(entity);
-            case "onSectionChange" -> onSectionChange(entity);
-            default -> throw new IllegalArgumentException("Unknown entity callback " + method);
+        boolean tickingCallback = method.equals("onTickingStart")
+            || method.equals("onTickingEnd");
+        if (tickingCallback) AEROGEL$REPLAYING_TICKING_CALLBACK.set(true);
+        try {
+            switch (method) {
+                case "onCreated" -> onCreated(entity);
+                case "onDestroyed" -> onDestroyed(entity);
+                case "onTickingStart" -> onTickingStart(entity);
+                case "onTickingEnd" -> onTickingEnd(entity);
+                case "onTrackingStart" -> onTrackingStart(entity);
+                case "onTrackingEnd" -> onTrackingEnd(entity);
+                case "onSectionChange" -> onSectionChange(entity);
+                default -> throw new IllegalArgumentException(
+                    "Unknown entity callback " + method);
+            }
+        } finally {
+            if (tickingCallback) AEROGEL$REPLAYING_TICKING_CALLBACK.remove();
         }
     }
 }

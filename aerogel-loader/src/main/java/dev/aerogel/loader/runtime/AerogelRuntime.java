@@ -181,19 +181,25 @@ public final class AerogelRuntime {
     }
 
     public static void tickSpawningChunk(
-        ServerLevel level, LevelChunk chunk, Runnable action
+        ServerLevel level, LevelChunk chunk,
+        NaturalSpawner.SpawnState state, Runnable action
     ) {
-        api().contexts().tickSpawningChunk(level, chunk, action);
+        api().contexts().tickSpawningChunk(level, chunk, state, action);
     }
 
     public static NaturalSpawner.SpawnState prepareNaturalSpawnState(
+        ServerLevel level,
         int spawnableChunks,
         Iterable<Entity> entities,
         NaturalSpawner.ChunkGetter chunkGetter,
         LocalMobCapCalculator localCaps
     ) {
         return api().contexts().prepareNaturalSpawnState(
-            spawnableChunks, entities, chunkGetter, localCaps);
+            level, spawnableChunks, entities, chunkGetter, localCaps);
+    }
+
+    public static void sealNaturalSpawnWave(NaturalSpawner.SpawnState state) {
+        api().contexts().sealNaturalSpawnWave(state);
     }
 
     public static void withPreparedNaturalSpawnState(

@@ -11,11 +11,14 @@ import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 
 final class WorldContextImpl implements WorldContext, AutoCloseable {
     private final ContextServiceImpl scheduler;
     private final ServerLevel level;
     private final ConcurrentHashMap<Long, ChunkContextImpl> contexts = new ConcurrentHashMap<>();
+    private final PaddedAtomicReference<CompletableFuture<Void>> naturalSpawnTail =
+        new PaddedAtomicReference<>(CompletableFuture.completedFuture(null));
     private volatile boolean closed;
     private final PositionalRandomFactory chunkRandoms;
 
@@ -90,6 +93,12 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
 
     ServerLevel level() {
         return level;
+    }
+
+    NaturalSpawnWave beginNaturalSpawnWave() {
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        CompletableFuture<Void> predecessor = naturalSpawnTail.getAndSet(completion);
+        return new NaturalSpawnWave(predecessor, completion);
     }
 
     RandomSource randomFor(long chunkKey) {

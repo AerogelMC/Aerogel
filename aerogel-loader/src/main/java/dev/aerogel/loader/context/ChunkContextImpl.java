@@ -132,8 +132,7 @@ final class ChunkContextImpl implements ChunkContext {
         }
         submitted.increment();
         queued.incrementAndGet();
-        mailbox.add(new ContextTask(epoch, scopeKeys, task, completion, null));
-        schedule();
+        enqueueActive(mailbox, new ContextTask(epoch, scopeKeys, task, completion, null));
     }
 
     boolean submitNative(Runnable task, Runnable rejection) {
@@ -142,8 +141,7 @@ final class ChunkContextImpl implements ChunkContext {
         if (!active()) return false;
         submitted.increment();
         queued.incrementAndGet();
-        mailbox.add(new ContextTask(epoch, selfScope, task, null, rejection));
-        schedule();
+        enqueueActive(mailbox, new ContextTask(epoch, selfScope, task, null, rejection));
         return true;
     }
 
@@ -153,8 +151,8 @@ final class ChunkContextImpl implements ChunkContext {
         if (!active()) return false;
         submitted.increment();
         queued.incrementAndGet();
-        snapshotMailbox.add(new ContextTask(epoch, selfScope, task, null, rejection));
-        schedule();
+        enqueueActive(snapshotMailbox,
+            new ContextTask(epoch, selfScope, task, null, rejection));
         return true;
     }
 
@@ -166,9 +164,29 @@ final class ChunkContextImpl implements ChunkContext {
         }
         submitted.increment();
         queued.incrementAndGet();
-        mailbox.add(new ContextTask(epoch, normalizeScope(scopeKeys), task, null, rejection));
-        schedule();
+        enqueueActive(mailbox, new ContextTask(
+            epoch, normalizeScope(scopeKeys), task, null, rejection));
         return true;
+    }
+
+    /**
+     * Completes the lock-free hand-off between submission and deactivation.
+     *
+     * A submitter may observe ACTIVE immediately before deactivate drains the
+     * mailbox. Rechecking after publication lets that submitter reclaim and reject
+     * its own task when the deactivator missed it. If removal fails, either the
+     * deactivator or the sole Context consumer already owns the task.
+     */
+    private void enqueueActive(
+        ConcurrentLinkedQueue<ContextTask> target, ContextTask contextTask
+    ) {
+        target.add(contextTask);
+        if (!active() && target.remove(contextTask)) {
+            queued.decrementAndGet();
+            rejectStale(contextTask);
+            return;
+        }
+        schedule();
     }
 
     private long[] neighborhoodKeys(int radius) {

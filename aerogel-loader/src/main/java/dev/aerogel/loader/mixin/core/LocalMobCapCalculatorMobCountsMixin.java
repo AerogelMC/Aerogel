@@ -1,5 +1,6 @@
 package dev.aerogel.loader.mixin.core;
 
+import dev.aerogel.loader.context.LocalMobCapReservation;
 import net.minecraft.world.entity.MobCategory;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -22,7 +23,9 @@ abstract class LocalMobCapCalculatorMobCountsMixin {
 
     @Inject(method = "add", at = @At("HEAD"), cancellable = true)
     private void aerogel$atomicAdd(MobCategory category, CallbackInfo callback) {
-        aerogel$counts.incrementAndGet(category.ordinal());
+        if (!LocalMobCapReservation.captureIncrement(aerogel$counts, category)) {
+            aerogel$counts.incrementAndGet(category.ordinal());
+        }
         callback.cancel();
     }
 

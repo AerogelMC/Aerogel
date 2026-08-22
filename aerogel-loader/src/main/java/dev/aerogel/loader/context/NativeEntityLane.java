@@ -39,7 +39,7 @@ final class NativeEntityLane {
         };
         Consumer<Entity> ownedAction = entity -> context.runEntity(entity, request.action);
         long[] scope = ContextServiceImpl.entityTickScope(context, request.entities);
-        if (!context.submitNative(scope, () -> NativeTickCoordinator.runNative(
+        if (!context.submitNative(scope, () -> NativeTickCoordinator.runNativeAfterGlobalCommit(
             request.entities, ownedAction, this::scheduleNext), rejected)) {
             rejected.run();
         }

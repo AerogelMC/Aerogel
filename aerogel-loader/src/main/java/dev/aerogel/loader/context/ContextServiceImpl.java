@@ -45,6 +45,7 @@ import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
 import dev.aerogel.loader.internal.DistanceManagerBridge;
 import dev.aerogel.loader.internal.PreparedSpawnStateBridge;
+import dev.aerogel.loader.internal.LocalMobCapSnapshotBridge;
 import net.minecraft.world.level.LocalMobCapCalculator;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.phys.AABB;
@@ -408,6 +409,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     ) {
         List<TickingRegistration> snapshot = List.copyOf(registrations.values());
         List<Entity> local = new ArrayList<>(snapshot.size());
+        java.util.IdentityHashMap<Entity, TickingRegistration> claims =
+            new java.util.IdentityHashMap<>(snapshot.size());
         for (TickingRegistration registration : snapshot) {
             if (tickingEntities.get(registration.entity) != registration
                 || registration.entity.isRemoved()) continue;
@@ -415,13 +418,37 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             if (current != expected) {
                 transferTickingRegistration(registration, expected, current);
                 if (current != null && registration.claim(serverTick)) {
-                    current.entityLane().offer(List.of(registration.entity), action);
+                    current.entityLane().offer(List.of(registration.entity), entity ->
+                        runClaimedEntityTick(registration, entity, action));
                 }
                 continue;
             }
-            if (registration.claim(serverTick)) local.add(registration.entity);
+            if (registration.claim(serverTick)) {
+                local.add(registration.entity);
+                claims.put(registration.entity, registration);
+            }
         }
-        expected.entityLane().offer(local, action);
+        if (local.isEmpty()) return;
+        expected.entityLane().offer(local, entity -> {
+            TickingRegistration registration = claims.get(entity);
+            if (registration != null) runClaimedEntityTick(registration, entity, action);
+        });
+    }
+
+    /**
+     * A queued logical tick is valid only while the exact vanilla ticking-membership
+     * generation that claimed it is still published. An earlier entity tick can move
+     * the entity into a non-ticking section before this queued continuation executes;
+     * vanilla would never enumerate the entity for the later tick in that state.
+     */
+    private void runClaimedEntityTick(
+        TickingRegistration registration,
+        Entity entity,
+        Consumer<Entity> action
+    ) {
+        if (!entity.isRemoved() && tickingEntities.get(entity) == registration) {
+            action.accept(entity);
+        }
     }
 
     private void transferTickingRegistration(
@@ -760,12 +787,21 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     public void tickSpawningChunk(
-        ServerLevel level, LevelChunk chunk, Runnable action
+        ServerLevel level, LevelChunk chunk,
+        NaturalSpawner.SpawnState state, Runnable action
     ) {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(chunk, "chunk");
+        Objects.requireNonNull(state, "state");
         Objects.requireNonNull(action, "action");
-        worldImpl(level).context(chunk).chunkLane().offer(chunk, ignored -> action.run());
+        NaturalSpawnWave wave = state instanceof PreparedSpawnStateBridge prepared
+            ? prepared.aerogel$spawnWave() : null;
+        if (wave != null && !wave.register()) {
+            throw new IllegalStateException("Natural-spawn wave closed before chunk work");
+        }
+        Runnable complete = wave == null ? () -> { } : wave::taskComplete;
+        worldImpl(level).context(chunk).chunkLane().offer(
+            chunk, ignored -> action.run(), complete);
     }
 
     /**
@@ -774,28 +810,46 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
      * continue independently while the entity iterable is counted.
      */
     public NaturalSpawner.SpawnState prepareNaturalSpawnState(
+        ServerLevel level,
         int spawnableChunks,
         Iterable<Entity> entities,
         NaturalSpawner.ChunkGetter chunkGetter,
         LocalMobCapCalculator localCaps
     ) {
+        Objects.requireNonNull(level, "level");
         Objects.requireNonNull(entities, "entities");
         Objects.requireNonNull(chunkGetter, "chunkGetter");
         Objects.requireNonNull(localCaps, "localCaps");
+        ((LocalMobCapSnapshotBridge) localCaps).aerogel$snapshotPlayers(
+            List.copyOf(level.players()));
         NaturalSpawner.SpawnState placeholder = NaturalSpawner.createState(
             spawnableChunks, List.of(), chunkGetter, localCaps);
         CompletableFuture<NaturalSpawner.SpawnState> prepared = new CompletableFuture<>();
-        ((PreparedSpawnStateBridge) placeholder).aerogel$preparedState(prepared);
-        dispatch(() -> {
+        NaturalSpawnWave wave = worldImpl(level).beginNaturalSpawnWave();
+        ((PreparedSpawnStateBridge) placeholder).aerogel$preparedState(prepared, wave);
+        wave.afterPredecessor(() -> dispatch(() -> {
             try {
+                // ConcurrentInt2ObjectMap exposes a stable snapshot from values().
+                // Acquire it only after the preceding wave (including its global
+                // entity-index publications) has completed; retaining the iterable
+                // supplied by the server tick would count an arbitrarily stale world.
                 prepared.complete(NaturalSpawner.createState(
-                    spawnableChunks, entities, chunkGetter, localCaps));
+                    spawnableChunks, level.getAllEntities(), chunkGetter, localCaps));
             } catch (Throwable error) {
                 prepared.completeExceptionally(error);
                 LOGGER.log(Level.SEVERE, "Could not prepare natural-spawn state", error);
+            } finally {
+                wave.preparationComplete();
             }
-        });
+        }));
         return placeholder;
+    }
+
+    public void sealNaturalSpawnWave(NaturalSpawner.SpawnState state) {
+        if (state instanceof PreparedSpawnStateBridge prepared) {
+            NaturalSpawnWave wave = prepared.aerogel$spawnWave();
+            if (wave != null) wave.seal();
+        }
     }
 
     public void withPreparedNaturalSpawnState(

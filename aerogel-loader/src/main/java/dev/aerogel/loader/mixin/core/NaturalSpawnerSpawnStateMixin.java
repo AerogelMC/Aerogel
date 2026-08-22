@@ -6,6 +6,7 @@ import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.PotentialCalculator;
 import net.minecraft.world.level.LocalMobCapCalculator;
 import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.entity.MobCategory;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntMaps;
@@ -26,10 +27,14 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import dev.aerogel.loader.internal.PreparedSpawnStateBridge;
+import dev.aerogel.loader.context.NaturalSpawnWave;
+import dev.aerogel.loader.context.NaturalSpawnReservation;
 
 @Mixin(targets = "net.minecraft.world.level.NaturalSpawner$SpawnState")
 abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge {
+    @Shadow @Final private int spawnableChunkCount;
     @Shadow @Final private Object2IntOpenHashMap<MobCategory> mobCategoryCounts;
+    @Shadow @Final private LocalMobCapCalculator localMobCapCalculator;
 
     @Unique
     private ThreadLocal<CheckedSpawn> aerogel$lastChecked;
@@ -41,6 +46,8 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
     private volatile NaturalSpawner.SpawnState aerogel$preparedDelegate;
     @Unique
     private volatile CompletableFuture<List<MobCategory>> aerogel$preparedCategories;
+    @Unique
+    private volatile NaturalSpawnWave aerogel$spawnWave;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$captureInitialCounts(
@@ -64,6 +71,23 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         CheckedSpawn checked = aerogel$lastChecked.get();
         checked.position = position;
         checked.type = type;
+    }
+
+    /** Linearizes vanilla's global and per-player cap check with its later add. */
+    @Inject(method = "canSpawn", at = @At("RETURN"), cancellable = true)
+    private void aerogel$reserveMobCap(
+        EntityType<?> type, BlockPos position, ChunkAccess chunk,
+        CallbackInfoReturnable<Boolean> callback
+    ) {
+        if (!callback.getReturnValueZ()) return;
+        MobCategory category = type.getCategory();
+        int globalLimit = category.getMaxInstancesPerChunk() * spawnableChunkCount
+            / NaturalSpawnerAccessor.aerogel$magicNumber();
+        if (!NaturalSpawnReservation.acquire(
+            aerogel$categoryCounts, category, globalLimit,
+            localMobCapCalculator, ChunkPos.containing(position))) {
+            callback.setReturnValue(false);
+        }
     }
 
     @Redirect(method = "canSpawn", at = @At(value = "FIELD",
@@ -116,7 +140,23 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
     private int aerogel$atomicCategoryAdd(
         Object2IntOpenHashMap<MobCategory> counts, Object category, int increment
     ) {
+        if (increment == 1 && NaturalSpawnReservation.commitGlobal(
+            aerogel$categoryCounts, (MobCategory) category)) {
+            return NaturalSpawnReservation.reservedPreviousCount();
+        }
         return aerogel$categoryCounts.getAndAdd(((MobCategory) category).ordinal(), increment);
+    }
+
+    @Redirect(method = "afterSpawn", at = @At(value = "INVOKE",
+        target = "Lnet/minecraft/world/level/LocalMobCapCalculator;"
+            + "addMob(Lnet/minecraft/world/level/ChunkPos;"
+            + "Lnet/minecraft/world/entity/MobCategory;)V"))
+    private void aerogel$commitLocalCategoryAdd(
+        LocalMobCapCalculator calculator, ChunkPos chunk, MobCategory category
+    ) {
+        if (!NaturalSpawnReservation.commitLocal(calculator, chunk, category)) {
+            calculator.addMob(chunk, category);
+        }
     }
 
     @Redirect(method = "canSpawnForCategoryGlobal", at = @At(value = "INVOKE",
@@ -146,10 +186,16 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
 
     @Override
     public void aerogel$preparedState(
-        CompletableFuture<NaturalSpawner.SpawnState> state
+        CompletableFuture<NaturalSpawner.SpawnState> state, NaturalSpawnWave wave
     ) {
         aerogel$preparedState = state;
+        aerogel$spawnWave = wave;
         state.thenAccept(prepared -> aerogel$preparedDelegate = prepared);
+    }
+
+    @Override
+    public NaturalSpawnWave aerogel$spawnWave() {
+        return aerogel$spawnWave;
     }
 
     @Override
@@ -161,6 +207,10 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         if (state == null) {
             action.accept((NaturalSpawner.SpawnState) (Object) this, gatedCategories);
             return;
+        }
+        NaturalSpawnWave wave = aerogel$spawnWave;
+        if (wave != null && !wave.register()) {
+            throw new IllegalStateException("Natural-spawn wave closed before preparation");
         }
         CompletableFuture<List<MobCategory>> categories = aerogel$preparedCategories;
         if (categories == null) {
@@ -182,6 +232,8 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         state.thenCombine(exactCategories, (prepared, exact) -> {
             action.accept(prepared, exact);
             return null;
+        }).whenComplete((ignored, failure) -> {
+            if (wave != null) wave.taskComplete();
         });
     }
 

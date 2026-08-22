@@ -21,6 +21,26 @@ public final class NativeTickCoordinator {
     private NativeTickCoordinator() { }
 
     static <T> void runNative(List<T> items, Consumer<T> action, Runnable committed) {
+        runNative(items, action, committed, false);
+    }
+
+    /**
+     * Runs an owner transaction whose next lane entry depends on publication of any
+     * server-owned indexes changed by this entry. Contexts that did not produce a
+     * global publication, and every unrelated Context, remain fully independent.
+     */
+    static <T> void runNativeAfterGlobalCommit(
+        List<T> items, Consumer<T> action, Runnable committed
+    ) {
+        runNative(items, action, committed, true);
+    }
+
+    private static <T> void runNative(
+        List<T> items,
+        Consumer<T> action,
+        Runnable committed,
+        boolean commitBeforeContinuation
+    ) {
         if (NATIVE_WORK.get() != null) {
             throw new IllegalStateException("Nested native context work");
         }
@@ -56,12 +76,23 @@ public final class NativeTickCoordinator {
                 }
             };
             if (frame.commits.isEmpty()) {
+                for (Runnable published : frame.afterGlobalCommits) published.run();
                 completion.run();
             } else {
                 GLOBAL_COMMITS.add(() -> {
-                    for (Runnable commit : frame.commits) commit.run();
+                    try {
+                        for (Runnable commit : frame.commits) commit.run();
+                    } finally {
+                        try {
+                            for (Runnable published : frame.afterGlobalCommits) {
+                                published.run();
+                            }
+                        } finally {
+                            if (commitBeforeContinuation) completion.run();
+                        }
+                    }
                 });
-                completion.run();
+                if (!commitBeforeContinuation) completion.run();
             }
         }
     }
@@ -87,6 +118,14 @@ public final class NativeTickCoordinator {
         NativeFrame frame = NATIVE_WORK.get();
         if (frame == null) return false;
         frame.commits.add(commit);
+        return true;
+    }
+
+    /** Runs after every global publication produced by the current native task. */
+    static boolean afterGlobalCommit(Runnable completion) {
+        NativeFrame frame = NATIVE_WORK.get();
+        if (frame == null) return false;
+        frame.afterGlobalCommits.add(completion);
         return true;
     }
 
@@ -151,6 +190,7 @@ public final class NativeTickCoordinator {
 
     private static final class NativeFrame {
         private final List<Runnable> commits = new ArrayList<>();
+        private final List<Runnable> afterGlobalCommits = new ArrayList<>();
         private final List<Runnable> nativeCompletions = new ArrayList<>();
         private final Map<Object, Object> attachments = new IdentityHashMap<>();
     }

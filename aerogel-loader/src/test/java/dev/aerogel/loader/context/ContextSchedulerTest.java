@@ -8,6 +8,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -111,7 +113,7 @@ final class ContextSchedulerTest {
     }
 
     @Test
-    void entityLaneProgressDoesNotWaitForGlobalIndexCommits() throws Exception {
+    void entityBatchFinishesBeforeItsGlobalIndexCommit() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
             ChunkContextImpl context = world.context(0, 0);
@@ -132,6 +134,35 @@ final class ContextSchedulerTest {
             assertEquals(0, committed.get());
             NativeTickCoordinator.pumpMainThread();
             assertEquals(entities.size(), committed.get());
+        }
+    }
+
+    @Test
+    void nextEntityBatchWaitsForPreviousGlobalIndexCommit() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            NativeEntityLane lane = context.entityLane();
+            Entity first = new OwnedEntity(context);
+            Entity second = new OwnedEntity(context);
+            CountDownLatch firstTicked = new CountDownLatch(1);
+            CountDownLatch secondTicked = new CountDownLatch(1);
+            AtomicBoolean published = new AtomicBoolean();
+
+            lane.offer(List.of(first), ignored -> {
+                NativeTickCoordinator.deferGlobalCommit(() -> published.set(true));
+                firstTicked.countDown();
+            });
+            lane.offer(List.of(second), ignored -> {
+                assertTrue(published.get(),
+                    "the preceding owner transaction must be published first");
+                secondTicked.countDown();
+            });
+
+            assertTrue(firstTicked.await(2, TimeUnit.SECONDS));
+            assertFalse(secondTicked.await(50, TimeUnit.MILLISECONDS));
+            NativeTickCoordinator.pumpMainThread();
+            assertTrue(secondTicked.await(2, TimeUnit.SECONDS));
         }
     }
 
@@ -538,6 +569,47 @@ final class ContextSchedulerTest {
             assertThrows(Exception.class, () -> stale.get(1, TimeUnit.SECONDS));
             assertEquals("CLOSED", context.snapshot().lifecycle());
             assertEquals(1L, context.snapshot().staleTasks());
+        }
+    }
+
+    @Test
+    void concurrentDeactivationSettlesEveryNativeSubmission() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(4);
+             ExecutorService submitters = Executors.newFixedThreadPool(4)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            int submissionsPerThread = 2_000;
+            int total = 4 * submissionsPerThread;
+            CountDownLatch start = new CountDownLatch(1);
+            CountDownLatch submitted = new CountDownLatch(4);
+            CountDownLatch settled = new CountDownLatch(total);
+            AtomicInteger attemptsStarted = new AtomicInteger();
+
+            for (int thread = 0; thread < 4; thread++) {
+                submitters.execute(() -> {
+                    await(start);
+                    for (int index = 0; index < submissionsPerThread; index++) {
+                        attemptsStarted.incrementAndGet();
+                        Runnable completion = settled::countDown;
+                        if (!context.submitNative(completion, completion)) {
+                            completion.run();
+                        }
+                    }
+                    submitted.countDown();
+                });
+            }
+
+            start.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (attemptsStarted.get() < 1_000 && System.nanoTime() < deadline) {
+                Thread.onSpinWait();
+            }
+            assertTrue(attemptsStarted.get() >= 1_000);
+            context.deactivate();
+            assertTrue(submitted.await(2, TimeUnit.SECONDS));
+            assertTrue(settled.await(2, TimeUnit.SECONDS),
+                "deactivation must not strand a task after its ACTIVE check");
+            assertEquals(0, context.snapshot().queuedTasks());
         }
     }
 

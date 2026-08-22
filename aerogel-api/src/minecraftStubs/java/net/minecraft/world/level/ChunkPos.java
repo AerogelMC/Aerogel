@@ -14,6 +14,10 @@ public record ChunkPos(int x, int z) {
         return pack(position.getX() >> 4, position.getZ() >> 4);
     }
 
+    public static ChunkPos containing(BlockPos position) {
+        return new ChunkPos(position.getX() >> 4, position.getZ() >> 4);
+    }
+
     public static int getX(long packed) {
         return (int) packed;
     }

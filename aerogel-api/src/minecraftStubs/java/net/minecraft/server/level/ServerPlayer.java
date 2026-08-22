@@ -35,6 +35,7 @@ public class ServerPlayer extends Player {
     public ServerGamePacketListenerImpl connection;
     public AbstractContainerMenu containerMenu;
     @Override public ServerLevel level() { return null; }
+    public boolean isSpectator() { return false; }
     public net.minecraft.world.level.GameType gameMode() { return null; }
     public Component getDisplayName() { return null; }
     public void setDisplayName(Component displayName) { }

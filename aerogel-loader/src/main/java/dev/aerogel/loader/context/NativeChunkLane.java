@@ -17,7 +17,11 @@ final class NativeChunkLane {
     }
 
     void offer(LevelChunk chunk, Consumer<LevelChunk> action) {
-        pending.add(new Request(chunk, action));
+        offer(chunk, action, () -> { });
+    }
+
+    void offer(LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion) {
+        pending.add(new Request(chunk, action, completion));
         if (active.compareAndSet(false, true)) scheduleNext();
     }
 
@@ -32,14 +36,27 @@ final class NativeChunkLane {
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
-            pending.clear();
+            request.completion.run();
             active.set(false);
+            Request dropped;
+            while ((dropped = pending.poll()) != null) dropped.completion.run();
         };
         if (!context.submitNative(() -> NativeTickCoordinator.runNative(
-            List.of(request.chunk), request.action, this::scheduleNext), rejected)) {
+            List.of(request.chunk), chunk -> {
+                try {
+                    request.action.accept(chunk);
+                } finally {
+                    NaturalSpawnReservation.releaseCurrent();
+                    if (!NativeTickCoordinator.afterGlobalCommit(request.completion)) {
+                        request.completion.run();
+                    }
+                }
+            }, this::scheduleNext), rejected)) {
             rejected.run();
         }
     }
 
-    private record Request(LevelChunk chunk, Consumer<LevelChunk> action) { }
+    private record Request(
+        LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion
+    ) { }
 }
