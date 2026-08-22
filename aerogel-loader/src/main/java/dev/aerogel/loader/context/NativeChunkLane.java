@@ -17,11 +17,37 @@ final class NativeChunkLane {
     }
 
     void offer(LevelChunk chunk, Consumer<LevelChunk> action) {
-        offer(chunk, action, () -> { });
+        offer(chunk, action, () -> { }, null);
+    }
+
+    void offer(
+        LevelChunk chunk, Consumer<LevelChunk> action, NativeTickToken token
+    ) {
+        offer(chunk, action, () -> { }, token);
     }
 
     void offer(LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion) {
-        pending.add(new Request(chunk, action, completion));
+        offer(chunk, action, completion, null);
+    }
+
+    void offer(
+        LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion,
+        NativeTickToken token
+    ) {
+        if (token == null) {
+            enqueue(chunk, action, completion, null);
+            return;
+        }
+        context.offerTickTask(token,
+            tickState -> enqueue(chunk, action, completion, tickState),
+            completion);
+    }
+
+    private void enqueue(
+        LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion,
+        ChunkContextImpl.TickState tickState
+    ) {
+        pending.add(new Request(chunk, action, completion, tickState));
         if (active.compareAndSet(false, true)) scheduleNext();
     }
 
@@ -36,10 +62,10 @@ final class NativeChunkLane {
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
-            request.completion.run();
+            complete(request);
             active.set(false);
             Request dropped;
-            while ((dropped = pending.poll()) != null) dropped.completion.run();
+            while ((dropped = pending.poll()) != null) complete(dropped);
         };
         if (!context.submitNative(() -> NativeTickCoordinator.runNative(
             List.of(request.chunk), chunk -> {
@@ -47,8 +73,9 @@ final class NativeChunkLane {
                     request.action.accept(chunk);
                 } finally {
                     NaturalSpawnReservation.releaseCurrent();
-                    if (!NativeTickCoordinator.afterGlobalCommit(request.completion)) {
-                        request.completion.run();
+                    Runnable completion = () -> complete(request);
+                    if (!NativeTickCoordinator.afterGlobalCommit(completion)) {
+                        completion.run();
                     }
                 }
             }, this::scheduleNext), rejected)) {
@@ -56,7 +83,16 @@ final class NativeChunkLane {
         }
     }
 
+    private void complete(Request request) {
+        try {
+            request.completion.run();
+        } finally {
+            context.completeTickTask(request.tickState);
+        }
+    }
+
     private record Request(
-        LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion
+        LevelChunk chunk, Consumer<LevelChunk> action, Runnable completion,
+        ChunkContextImpl.TickState tickState
     ) { }
 }

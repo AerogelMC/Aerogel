@@ -31,6 +31,7 @@ abstract class MinecraftServerTickMixin {
         if (EventHooks.hasListeners(ServerTickEndEvent.class)) {
             EventHooks.post(new ServerTickEndEvent(EventHooks.cast(this)));
         }
+        NativeTickCoordinator.endServerTick();
         NativeTickCoordinator.pumpMainThread();
     }
 

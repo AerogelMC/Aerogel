@@ -17,7 +17,28 @@ final class NativeBlockEntityLane {
     }
 
     void offer(List<TickingBlockEntity> blockEntities, Consumer<TickingBlockEntity> action) {
-        pending.add(new Request(List.copyOf(blockEntities), action));
+        offer(blockEntities, action, null);
+    }
+
+    void offer(
+        List<TickingBlockEntity> blockEntities,
+        Consumer<TickingBlockEntity> action,
+        NativeTickToken token
+    ) {
+        if (token == null) {
+            enqueue(blockEntities, action, null);
+            return;
+        }
+        context.offerTickTask(token,
+            tickState -> enqueue(blockEntities, action, tickState), () -> { });
+    }
+
+    private void enqueue(
+        List<TickingBlockEntity> blockEntities,
+        Consumer<TickingBlockEntity> action,
+        ChunkContextImpl.TickState tickState
+    ) {
+        pending.add(new Request(List.copyOf(blockEntities), action, tickState));
         if (active.compareAndSet(false, true)) scheduleNext();
     }
 
@@ -32,17 +53,25 @@ final class NativeBlockEntityLane {
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
-            pending.clear();
+            context.completeTickTask(request.tickState);
+            Request dropped;
+            while ((dropped = pending.poll()) != null) {
+                context.completeTickTask(dropped.tickState);
+            }
             active.set(false);
         };
         if (!context.submitNative(() -> NativeTickCoordinator.runNative(
-            request.blockEntities, request.action, this::scheduleNext), rejected)) {
+            request.blockEntities, request.action, () -> {
+                context.completeTickTask(request.tickState);
+                scheduleNext();
+            }), rejected)) {
             rejected.run();
         }
     }
 
     private record Request(
         List<TickingBlockEntity> blockEntities,
-        Consumer<TickingBlockEntity> action
+        Consumer<TickingBlockEntity> action,
+        ChunkContextImpl.TickState tickState
     ) { }
 }

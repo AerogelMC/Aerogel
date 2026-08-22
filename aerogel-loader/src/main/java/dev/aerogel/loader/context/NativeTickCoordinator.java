@@ -17,6 +17,8 @@ public final class NativeTickCoordinator {
         new ConcurrentLinkedQueue<>();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
     private static final PaddedAtomicLong SERVER_TICK = new PaddedAtomicLong();
+    private static final PaddedAtomicReference<NativeTickToken> CURRENT_TICK =
+        new PaddedAtomicReference<>();
 
     private NativeTickCoordinator() { }
 
@@ -107,11 +109,23 @@ public final class NativeTickCoordinator {
     }
 
     public static void beginServerTick() {
-        SERVER_TICK.incrementAndGet();
+        long serverTick = SERVER_TICK.incrementAndGet();
+        NativeTickToken token = new NativeTickToken(serverTick);
+        NativeTickToken previous = CURRENT_TICK.getAndSet(token);
+        if (previous != null) previous.seal();
+    }
+
+    public static void endServerTick() {
+        NativeTickToken token = CURRENT_TICK.getAndSet(null);
+        if (token != null) token.seal();
     }
 
     static long currentServerTick() {
         return SERVER_TICK.get();
+    }
+
+    static NativeTickToken currentTickToken() {
+        return CURRENT_TICK.get();
     }
 
     public static boolean deferGlobalCommit(Runnable commit) {

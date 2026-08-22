@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -47,6 +48,10 @@ final class ChunkContextImpl implements ChunkContext {
         new PaddedAtomicReference<>();
     private final PaddedAtomicReference<Lifecycle> lifecycle =
         new PaddedAtomicReference<>(Lifecycle.ACTIVE);
+    private final PaddedAtomicReference<TickWindow> tickWindow =
+        new PaddedAtomicReference<>(TickWindow.EMPTY);
+    private final PaddedLongAccumulator settledTick =
+        new PaddedLongAccumulator(Long::max, 0L);
     private final PaddedLongAdder submitted = new PaddedLongAdder();
     private final PaddedLongAdder completed = new PaddedLongAdder();
     private final PaddedLongAdder failed = new PaddedLongAdder();
@@ -265,6 +270,7 @@ final class ChunkContextImpl implements ChunkContext {
             ownership.compareAndSet(self, null);
             wakeWaiters();
             scheduled.set(false);
+            tryFinishActiveTick();
             if (hasTasks() && !closed()) schedule();
         }
     }
@@ -351,7 +357,13 @@ final class ChunkContextImpl implements ChunkContext {
 
     private void runOwned(ContextTask task, LongOpenHashSet ownedKeys) {
         long started = System.nanoTime();
-        long serverTick = NativeTickCoordinator.currentServerTick();
+        TickState activeTick = tickWindow.get().active;
+        // A local tick may keep running while the server clock advances through
+        // several producer pulses. Attribute all of its work to the token that was
+        // actually promoted for this Context, not to the pulse observed by a worker.
+        long measuredTick = activeTick == null
+            ? NativeTickCoordinator.currentServerTick()
+            : activeTick.token.serverTick();
         ContextThreadState.enter(new ContextThreadState.AccessScope(this, ownedKeys));
         try {
             task.action().run();
@@ -366,7 +378,91 @@ final class ChunkContextImpl implements ChunkContext {
             ContextThreadState.leave();
             long elapsed = System.nanoTime() - started;
             totalExecutionNanos.add(elapsed);
-            recordTickExecution(serverTick, elapsed);
+            recordTickExecution(measuredTick, elapsed);
+        }
+    }
+
+    /**
+     * Keeps exactly one active local tick and one latest pending request. A newer
+     * request replaces an unstarted pending request, so overload changes local tick
+     * cadence instead of allocating an unbounded queue of future ticks.
+     */
+    void offerTickTask(
+        NativeTickToken token,
+        Consumer<TickState> admitted,
+        Runnable superseded
+    ) {
+        Objects.requireNonNull(token, "token");
+        TickAction action = new TickAction(admitted, superseded);
+        long requestedTick = token.serverTick();
+        while (active()) {
+            TickWindow observed = tickWindow.get();
+            TickState activeState = observed.active;
+            if (activeState != null && activeState.token == token) {
+                activeState.add(action);
+                return;
+            }
+            TickState pendingState = observed.pending;
+            if (pendingState != null && pendingState.token == token) {
+                pendingState.add(action);
+                return;
+            }
+            long newest = settledTick.get();
+            if (activeState != null) newest = Math.max(newest, activeState.token.serverTick());
+            if (pendingState != null) newest = Math.max(newest, pendingState.token.serverTick());
+            if (requestedTick <= newest) {
+                action.supersede();
+                return;
+            }
+
+            TickState created = new TickState(this, token,
+                activeState == null ? TickLifecycle.ACTIVE : TickLifecycle.PENDING);
+            TickWindow updated = activeState == null
+                ? new TickWindow(created, null)
+                : new TickWindow(activeState, created);
+            if (!tickWindow.compareAndSet(observed, updated)) continue;
+            token.register(this, created);
+            if (pendingState != null) pendingState.cancel();
+            created.add(action);
+            return;
+        }
+        action.supersede();
+    }
+
+    void completeTickTask(TickState state) {
+        if (state == null) return;
+        int remaining = state.tasks.decrementAndGet();
+        if (remaining < 0) {
+            throw new IllegalStateException("Native tick task completed twice");
+        }
+        tryFinishTick(state);
+    }
+
+    void closeTickInput(TickState state) {
+        state.inputClosed.set(true);
+        tryFinishTick(state);
+    }
+
+    private void tryFinishActiveTick() {
+        TickState state = tickWindow.get().active;
+        if (state != null) tryFinishTick(state);
+    }
+
+    private void tryFinishTick(TickState state) {
+        if (state.lifecycle.get() != TickLifecycle.ACTIVE || !state.inputClosed.get()
+            || state.tasks.get() != 0 || ownership.get() != null
+            || scheduled.get() || hasTasks()) return;
+        while (true) {
+            TickWindow observed = tickWindow.get();
+            if (observed.active != state) return;
+            TickState next = observed.pending;
+            TickWindow updated = next == null
+                ? TickWindow.EMPTY : new TickWindow(next, null);
+            if (!tickWindow.compareAndSet(observed, updated)) continue;
+            state.lifecycle.set(TickLifecycle.CLOSED);
+            settledTick.accumulate(state.token.serverTick());
+            if (next != null) next.activate();
+            return;
         }
     }
 
@@ -479,6 +575,9 @@ final class ChunkContextImpl implements ChunkContext {
             rejectStale(task);
         }
         lifecycle.set(Lifecycle.CLOSED);
+        TickWindow ticks = tickWindow.getAndSet(TickWindow.EMPTY);
+        if (ticks.active != null) ticks.active.cancel();
+        if (ticks.pending != null) ticks.pending.cancel();
         wakeWaiters();
     }
 
@@ -508,6 +607,97 @@ final class ChunkContextImpl implements ChunkContext {
     boolean reservedFor(ChunkContextImpl primary) {
         NeighborhoodLease current = reservation.get();
         return current != null && current.primary() == primary;
+    }
+
+    static final class TickState {
+        private final ChunkContextImpl context;
+        private final NativeTickToken token;
+        private final PaddedAtomicInteger tasks = new PaddedAtomicInteger();
+        private final PaddedAtomicBoolean inputClosed = new PaddedAtomicBoolean();
+        private final PaddedAtomicReference<TickLifecycle> lifecycle;
+        private final ConcurrentLinkedQueue<TickAction> actions =
+            new ConcurrentLinkedQueue<>();
+        private final PaddedAtomicBoolean drainingActions = new PaddedAtomicBoolean();
+
+        private TickState(
+            ChunkContextImpl context, NativeTickToken token, TickLifecycle lifecycle
+        ) {
+            this.context = context;
+            this.token = token;
+            this.lifecycle = new PaddedAtomicReference<>(lifecycle);
+        }
+
+        private void add(TickAction action) {
+            actions.add(action);
+            drainActions();
+        }
+
+        private void activate() {
+            if (!lifecycle.compareAndSet(TickLifecycle.PENDING, TickLifecycle.ACTIVE)) {
+                return;
+            }
+            drainActions();
+            context.tryFinishTick(this);
+        }
+
+        private void cancel() {
+            TickLifecycle current = lifecycle.get();
+            while (current != TickLifecycle.CANCELLED
+                && current != TickLifecycle.CLOSED) {
+                if (lifecycle.compareAndSet(current, TickLifecycle.CANCELLED)) break;
+                current = lifecycle.get();
+            }
+            drainActions();
+        }
+
+        private void drainActions() {
+            TickLifecycle current = lifecycle.get();
+            if (current == TickLifecycle.PENDING
+                || !drainingActions.compareAndSet(false, true)) return;
+            try {
+                TickAction action;
+                while ((action = actions.poll()) != null) {
+                    current = lifecycle.get();
+                    if (current == TickLifecycle.ACTIVE) {
+                        tasks.incrementAndGet();
+                        try {
+                            action.admit(this);
+                        } catch (Throwable error) {
+                            context.completeTickTask(this);
+                            throw error;
+                        }
+                    } else {
+                        action.supersede();
+                    }
+                }
+            } finally {
+                drainingActions.set(false);
+                if (!actions.isEmpty()) drainActions();
+            }
+        }
+    }
+
+    private record TickAction(
+        Consumer<TickState> admitted, Runnable superseded
+    ) {
+        private TickAction {
+            Objects.requireNonNull(admitted, "admitted");
+            Objects.requireNonNull(superseded, "superseded");
+        }
+
+        private void admit(TickState state) { admitted.accept(state); }
+        private void supersede() { superseded.run(); }
+    }
+
+    private record TickWindow(TickState active, TickState pending) {
+        private static final TickWindow EMPTY = new TickWindow(null, null);
+    }
+
+    private enum TickLifecycle {
+        PENDING,
+        ACTIVE,
+        CANCELLED,
+        CLOSED
     }
 
     private enum Lifecycle {

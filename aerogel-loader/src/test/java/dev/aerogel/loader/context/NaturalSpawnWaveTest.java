@@ -7,6 +7,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class NaturalSpawnWaveTest {
@@ -26,6 +27,33 @@ final class NaturalSpawnWaveTest {
 
             first.taskComplete();
             assertTrue(secondStarted.await(1, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void overloadKeepsOnlyLatestUnstartedWave() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            NaturalSpawnWave first = world.beginNaturalSpawnWave();
+            assertTrue(first.register());
+            NaturalSpawnWave replaced = world.beginNaturalSpawnWave();
+            NaturalSpawnWave latest = world.beginNaturalSpawnWave();
+            java.util.concurrent.atomic.AtomicInteger started =
+                new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicInteger cancelled =
+                new java.util.concurrent.atomic.AtomicInteger();
+            replaced.whenActive(started::incrementAndGet, cancelled::incrementAndGet);
+            latest.whenActive(started::incrementAndGet, cancelled::incrementAndGet);
+
+            assertEquals(0, started.get());
+            assertEquals(1, cancelled.get());
+            first.preparationComplete();
+            first.seal();
+            first.taskComplete();
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            while (started.get() == 0 && System.nanoTime() < deadline) Thread.onSpinWait();
+            assertEquals(1, started.get());
         }
     }
 

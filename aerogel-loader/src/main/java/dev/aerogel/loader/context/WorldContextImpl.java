@@ -17,14 +17,22 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     private final ContextServiceImpl scheduler;
     private final ServerLevel level;
     private final ConcurrentHashMap<Long, ChunkContextImpl> contexts = new ConcurrentHashMap<>();
-    private final PaddedAtomicReference<CompletableFuture<Void>> naturalSpawnTail =
-        new PaddedAtomicReference<>(CompletableFuture.completedFuture(null));
+    private final PaddedAtomicReference<NaturalSpawnWindow> naturalSpawnWindow =
+        new PaddedAtomicReference<>(NaturalSpawnWindow.EMPTY);
+    private final LatestTickTaskLane entityTickProducer;
+    private final LatestTickTaskLane trackingTickProducer;
+    private final LatestTickTaskLane chunkTickProducer;
+    private final LatestTickTaskLane blockEntityTickProducer;
     private volatile boolean closed;
     private final PositionalRandomFactory chunkRandoms;
 
     WorldContextImpl(ContextServiceImpl scheduler, ServerLevel level) {
         this.scheduler = scheduler;
         this.level = level;
+        this.entityTickProducer = new LatestTickTaskLane(scheduler);
+        this.trackingTickProducer = new LatestTickTaskLane(scheduler);
+        this.chunkTickProducer = new LatestTickTaskLane(scheduler);
+        this.blockEntityTickProducer = new LatestTickTaskLane(scheduler);
         this.chunkRandoms = level == null ? null : RandomSource.create(level.getSeed())
             .forkPositional()
             .fromHashOf(level.dimension().identifier())
@@ -95,10 +103,43 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
         return level;
     }
 
-    NaturalSpawnWave beginNaturalSpawnWave() {
+    LatestTickTaskLane entityTickProducer() { return entityTickProducer; }
+    LatestTickTaskLane trackingTickProducer() { return trackingTickProducer; }
+    LatestTickTaskLane chunkTickProducer() { return chunkTickProducer; }
+    LatestTickTaskLane blockEntityTickProducer() { return blockEntityTickProducer; }
+
+    NaturalSpawnWave beginNaturalSpawnWave(NativeTickToken tickToken) {
         CompletableFuture<Void> completion = new CompletableFuture<>();
-        CompletableFuture<Void> predecessor = naturalSpawnTail.getAndSet(completion);
-        return new NaturalSpawnWave(predecessor, completion);
+        NaturalSpawnWave created = new NaturalSpawnWave(this, completion, tickToken);
+        while (!closed) {
+            NaturalSpawnWindow observed = naturalSpawnWindow.get();
+            NaturalSpawnWindow updated = observed.active == null
+                ? new NaturalSpawnWindow(created, null)
+                : new NaturalSpawnWindow(observed.active, created);
+            if (!naturalSpawnWindow.compareAndSet(observed, updated)) continue;
+            if (observed.pending != null) observed.pending.cancel();
+            if (observed.active == null) created.activate();
+            return created;
+        }
+        created.cancel();
+        return created;
+    }
+
+    NaturalSpawnWave beginNaturalSpawnWave() {
+        return beginNaturalSpawnWave(null);
+    }
+
+    void naturalSpawnWaveComplete(NaturalSpawnWave completed) {
+        while (true) {
+            NaturalSpawnWindow observed = naturalSpawnWindow.get();
+            if (observed.active != completed) return;
+            NaturalSpawnWave next = observed.pending;
+            NaturalSpawnWindow updated = next == null
+                ? NaturalSpawnWindow.EMPTY : new NaturalSpawnWindow(next, null);
+            if (!naturalSpawnWindow.compareAndSet(observed, updated)) continue;
+            if (next != null) next.activate();
+            return;
+        }
     }
 
     RandomSource randomFor(long chunkKey) {
@@ -113,7 +154,18 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     public void close() {
         if (closed) return;
         closed = true;
+        entityTickProducer.close();
+        trackingTickProducer.close();
+        chunkTickProducer.close();
+        blockEntityTickProducer.close();
+        NaturalSpawnWindow waves = naturalSpawnWindow.getAndSet(NaturalSpawnWindow.EMPTY);
+        if (waves.active != null) waves.active.cancel();
+        if (waves.pending != null) waves.pending.cancel();
         contexts.values().forEach(ChunkContextImpl::deactivate);
         contexts.clear();
+    }
+
+    private record NaturalSpawnWindow(NaturalSpawnWave active, NaturalSpawnWave pending) {
+        private static final NaturalSpawnWindow EMPTY = new NaturalSpawnWindow(null, null);
     }
 }

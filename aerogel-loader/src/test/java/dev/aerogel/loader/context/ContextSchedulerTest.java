@@ -113,6 +113,47 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void overloadedContextKeepsOnlyTheLatestUnstartedTick() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            CountDownLatch latestFinished = new CountDownLatch(1);
+            AtomicInteger executed = new AtomicInteger();
+            AtomicInteger superseded = new AtomicInteger();
+
+            NativeTickToken first = new NativeTickToken(1L);
+            offerTickTask(context, first, () -> {
+                executed.incrementAndGet();
+                firstStarted.countDown();
+                await(releaseFirst);
+            }, superseded::incrementAndGet);
+            first.seal();
+            assertTrue(firstStarted.await(2, TimeUnit.SECONDS));
+
+            for (long tick = 2L; tick <= 1_000L; tick++) {
+                NativeTickToken token = new NativeTickToken(tick);
+                boolean latest = tick == 1_000L;
+                offerTickTask(context, token, () -> {
+                    executed.incrementAndGet();
+                    if (latest) latestFinished.countDown();
+                }, superseded::incrementAndGet);
+                token.seal();
+            }
+
+            assertTrue(context.snapshot().queuedTasks() <= 1,
+                "future tick requests must not become Context mailbox entries");
+            releaseFirst.countDown();
+            assertTrue(latestFinished.await(2, TimeUnit.SECONDS));
+            assertEquals(2, executed.get());
+            assertEquals(998, superseded.get());
+            context.submit(0, () -> { }).get(2, TimeUnit.SECONDS);
+            assertEquals(0, context.snapshot().queuedTasks());
+        }
+    }
+
+    @Test
     void entityBatchFinishesBeforeItsGlobalIndexCommit() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
@@ -659,5 +700,25 @@ final class ContextSchedulerTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(exception);
         }
+    }
+
+    private static void offerTickTask(
+        ChunkContextImpl context,
+        NativeTickToken token,
+        Runnable action,
+        Runnable superseded
+    ) {
+        context.offerTickTask(token, state -> {
+            Runnable complete = () -> context.completeTickTask(state);
+            if (!context.submitNative(() -> {
+                try {
+                    action.run();
+                } finally {
+                    complete.run();
+                }
+            }, complete)) {
+                complete.run();
+            }
+        }, superseded);
     }
 }
