@@ -184,7 +184,7 @@ public final class PluginsCommand {
             ContextSnapshot chunk = AerogelRuntime.playerChunkSnapshot(player);
             sendSuccess(context, "commands.aerogel.tps.chunk",
                 "Current chunk [%s, %s] MSPT: %s | max: %s | queued: %s",
-                position.x(), position.z(), decimal(chunk.averageExecutionMillis()),
+                position.x(), position.z(), decimal(chunk.recentExecutionMillis()),
                 decimal(chunk.maximumExecutionNanos() / 1_000_000.0D),
                 chunk.queuedTasks());
         }

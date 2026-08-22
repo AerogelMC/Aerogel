@@ -58,10 +58,9 @@ final class ChunkContextImpl implements ChunkContext {
     private final PaddedLongAdder stale = new PaddedLongAdder();
     private final PaddedLongAdder measuredTicks = new PaddedLongAdder();
     private final PaddedLongAdder totalExecutionNanos = new PaddedLongAdder();
-    private final PaddedAtomicLong measurementTick =
-        new PaddedAtomicLong(UNMEASURED_TICK);
-    private final PaddedAtomicLong measurementTickExecutionNanos =
-        new PaddedAtomicLong();
+    private final PaddedAtomicReference<MeasurementWindow> measurement =
+        new PaddedAtomicReference<>(MeasurementWindow.EMPTY);
+    private final PaddedAtomicLong latestExecutionNanos = new PaddedAtomicLong();
     private final PaddedLongAccumulator maximumExecutionNanos =
         new PaddedLongAccumulator(Long::max, 0L);
 
@@ -459,6 +458,7 @@ final class ChunkContextImpl implements ChunkContext {
             TickWindow updated = next == null
                 ? TickWindow.EMPTY : new TickWindow(next, null);
             if (!tickWindow.compareAndSet(observed, updated)) continue;
+            finishMeasurement(state.token.serverTick());
             state.lifecycle.set(TickLifecycle.CLOSED);
             settledTick.accumulate(state.token.serverTick());
             if (next != null) next.activate();
@@ -467,16 +467,43 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private void recordTickExecution(long serverTick, long elapsed) {
-        long observedTick = measurementTick.get();
-        if (observedTick != serverTick) {
-            long completedTickNanos = measurementTickExecutionNanos.getAndSet(0L);
-            if (observedTick != UNMEASURED_TICK) {
-                measuredTicks.increment();
-                maximumExecutionNanos.accumulate(completedTickNanos);
-            }
-            measurementTick.set(serverTick);
+        while (true) {
+            MeasurementWindow observed = measurement.get();
+            MeasurementWindow updated = observed.tick == serverTick
+                ? new MeasurementWindow(serverTick, observed.executionNanos + elapsed)
+                : new MeasurementWindow(serverTick, elapsed);
+            if (!measurement.compareAndSet(observed, updated)) continue;
+            if (observed.tick != serverTick) publishMeasurement(observed);
+            return;
         }
-        measurementTickExecutionNanos.addAndGet(elapsed);
+    }
+
+    private void finishMeasurement(long serverTick) {
+        while (true) {
+            MeasurementWindow observed = measurement.get();
+            if (observed.tick != serverTick) return;
+            if (!measurement.compareAndSet(observed, MeasurementWindow.EMPTY)) continue;
+            publishMeasurement(observed);
+            return;
+        }
+    }
+
+    private void finishIdleMeasurement() {
+        if (ownership.get() != null || tickWindow.get().active != null) return;
+        while (true) {
+            MeasurementWindow observed = measurement.get();
+            if (observed.tick == UNMEASURED_TICK) return;
+            if (!measurement.compareAndSet(observed, MeasurementWindow.EMPTY)) continue;
+            publishMeasurement(observed);
+            return;
+        }
+    }
+
+    private void publishMeasurement(MeasurementWindow completedMeasurement) {
+        if (completedMeasurement.tick == UNMEASURED_TICK) return;
+        measuredTicks.increment();
+        latestExecutionNanos.set(completedMeasurement.executionNanos);
+        maximumExecutionNanos.accumulate(completedMeasurement.executionNanos);
     }
 
     private void addWaiter(ChunkContextImpl waiter) {
@@ -523,10 +550,11 @@ final class ChunkContextImpl implements ChunkContext {
 
     @Override
     public ContextSnapshot snapshot() {
-        long currentTick = measurementTick.get();
-        long currentTickExecutionNanos = measurementTickExecutionNanos.get();
-        long measuredTickCount = measuredTicks.sum()
-            + (currentTick == UNMEASURED_TICK ? 0L : 1L);
+        finishIdleMeasurement();
+        MeasurementWindow current = measurement.get();
+        long currentTickExecutionNanos = current.executionNanos;
+        long recentExecutionNanos = current.tick == UNMEASURED_TICK
+            ? latestExecutionNanos.get() : currentTickExecutionNanos;
         return new ContextSnapshot(
             epoch,
             lifecycle.get().name(),
@@ -534,8 +562,9 @@ final class ChunkContextImpl implements ChunkContext {
             completed.sum(),
             failed.sum(),
             stale.sum(),
-            measuredTickCount,
+            measuredTicks.sum(),
             totalExecutionNanos.sum(),
+            recentExecutionNanos,
             Math.max(maximumExecutionNanos.get(), currentTickExecutionNanos),
             Math.max(0, queued.get()));
     }
@@ -691,6 +720,11 @@ final class ChunkContextImpl implements ChunkContext {
 
     private record TickWindow(TickState active, TickState pending) {
         private static final TickWindow EMPTY = new TickWindow(null, null);
+    }
+
+    private record MeasurementWindow(long tick, long executionNanos) {
+        private static final MeasurementWindow EMPTY =
+            new MeasurementWindow(UNMEASURED_TICK, 0L);
     }
 
     private enum TickLifecycle {

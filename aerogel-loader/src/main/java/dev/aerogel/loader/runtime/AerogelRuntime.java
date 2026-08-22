@@ -232,6 +232,15 @@ public final class AerogelRuntime {
         return api().contexts().routeBlockTask(level, position, action);
     }
 
+    public static boolean routeGameEvent(
+        ServerLevel level,
+        net.minecraft.core.Holder<net.minecraft.world.level.gameevent.GameEvent> event,
+        net.minecraft.world.phys.Vec3 position,
+        net.minecraft.world.level.gameevent.GameEvent.Context context
+    ) {
+        return api().contexts().routeGameEvent(level, event, position, context);
+    }
+
     public static boolean routeOutputSignalUpdate(
         ServerLevel level,
         net.minecraft.core.BlockPos position,

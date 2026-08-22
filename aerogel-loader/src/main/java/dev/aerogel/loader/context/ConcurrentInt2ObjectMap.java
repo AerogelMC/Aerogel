@@ -4,7 +4,6 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectCollection;
 
-import java.util.Collection;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntFunction;
 import it.unimi.dsi.fastutil.ints.Int2ObjectFunction;

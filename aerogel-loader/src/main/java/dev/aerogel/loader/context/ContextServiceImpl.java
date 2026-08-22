@@ -17,6 +17,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.Direction;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -50,6 +51,7 @@ import net.minecraft.world.level.LocalMobCapCalculator;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.gameevent.GameEvent;
 
 public final class ContextServiceImpl implements ContextService, AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger("Aerogel-Contexts");
@@ -1014,6 +1016,94 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Owns every loaded chunk whose listener registry vanilla's dispatcher reads.
+     * The range comes directly from the posted event's notification radius; it is
+     * neither guessed nor widened. Overlapping game events and listener lifecycle
+     * changes are consequently ordered by the same Context ownership mechanism as
+     * the blocks and entities that produced them.
+     */
+    public boolean routeGameEvent(
+        ServerLevel level, Holder<GameEvent> event, Vec3 position,
+        GameEvent.Context eventContext
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(event, "event");
+        Objects.requireNonNull(position, "position");
+        Objects.requireNonNull(eventContext, "eventContext");
+        if (closed) return false;
+        WorldContextImpl world = worlds.get(level);
+        if (world == null) return false;
+
+        int blockX = (int) Math.floor(position.x);
+        int blockZ = (int) Math.floor(position.z);
+        long[] candidates = gameEventScope(
+            blockX, blockZ, event.value().notificationRadius());
+        LongOpenHashSet loadedScope = new LongOpenHashSet();
+        ChunkContextImpl primary = null;
+        ContextThreadState.AccessScope currentScope = ContextThreadState.current();
+        for (long key : candidates) {
+            int chunkX = ChunkPos.getX(key);
+            int chunkZ = ChunkPos.getZ(key);
+            LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+            if (chunk == null) continue;
+            ChunkContextImpl context = world.context(chunk);
+            loadedScope.add(key);
+            if (primary == null && context.active()) primary = context;
+        }
+        if (loadedScope.isEmpty() || primary == null) return false;
+        if (currentScope != null && currentScope.primary().world() == world
+            && loadedScope.contains(currentScope.primary().key())) {
+            primary = currentScope.primary();
+        }
+
+        long[] scopeKeys = loadedScope.toLongArray();
+        if (currentScope != null && currentScope.primary().world() == world) {
+            boolean allOwned = true;
+            for (long key : scopeKeys) {
+                if (!currentScope.containsKey(key)) {
+                    allOwned = false;
+                    break;
+                }
+            }
+            if (allOwned) return false;
+        }
+
+        Runnable post = () -> level.gameEvent(event, position, eventContext);
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() -> {
+                if (!routeGameEvent(level, event, position, eventContext)) post.run();
+            });
+        };
+        boolean accepted = primary.submitNative(scopeKeys,
+            () -> NativeTickCoordinator.runNative(
+                List.of(post), Runnable::run, () -> { }), rejected);
+        if (!accepted) {
+            NativeTickCoordinator.taskRejected();
+            return false;
+        }
+        return true;
+    }
+
+    static long[] gameEventScope(int blockX, int blockZ, int notificationRadius) {
+        if (notificationRadius < 0) {
+            throw new IllegalArgumentException("notification radius must not be negative");
+        }
+        int minimumChunkX = (blockX - notificationRadius) >> 4;
+        int maximumChunkX = (blockX + notificationRadius) >> 4;
+        int minimumChunkZ = (blockZ - notificationRadius) >> 4;
+        int maximumChunkZ = (blockZ + notificationRadius) >> 4;
+        LongOpenHashSet keys = new LongOpenHashSet();
+        for (int chunkX = minimumChunkX; chunkX <= maximumChunkX; chunkX++) {
+            for (int chunkZ = minimumChunkZ; chunkZ <= maximumChunkZ; chunkZ++) {
+                keys.add(WorldContextImpl.key(chunkX, chunkZ));
+            }
+        }
+        return keys.toLongArray();
     }
 
     /**

@@ -53,6 +53,22 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void gameEventScopeMatchesVanillaNotificationRadiusAtChunkBorders() {
+        long[] actual = ContextServiceImpl.gameEventScope(15, -1, 1);
+        long[] expected = {
+            ChunkPos.pack(0, -1), ChunkPos.pack(0, 0),
+            ChunkPos.pack(1, -1), ChunkPos.pack(1, 0)
+        };
+        Arrays.sort(actual);
+        Arrays.sort(expected);
+        assertArrayEquals(expected, actual);
+
+        assertArrayEquals(
+            new long[] { ChunkPos.pack(-2, 3) },
+            ContextServiceImpl.gameEventScope(-24, 55, 0));
+    }
+
+    @Test
     void entityTickScopeComesFromItsActualSweptBlockFootprint() {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
@@ -469,6 +485,7 @@ final class ContextSchedulerTest {
             assertEquals(first.totalExecutionNanos(), first.maximumExecutionNanos());
             assertEquals(first.totalExecutionNanos() / 1_000_000.0D,
                 first.averageExecutionMillis(), 0.0D);
+            assertEquals(first.totalExecutionNanos(), first.recentExecutionNanos());
 
             NativeTickCoordinator.beginServerTick();
             context.submit(0, Thread::onSpinWait).join();
@@ -476,6 +493,9 @@ final class ContextSchedulerTest {
             assertEquals(2L, second.measuredTicks());
             assertEquals(second.totalExecutionNanos() / 2_000_000.0D,
                 second.averageExecutionMillis(), 0.0D);
+            assertEquals(
+                second.totalExecutionNanos() - first.totalExecutionNanos(),
+                second.recentExecutionNanos());
         }
     }
 
@@ -682,9 +702,12 @@ final class ContextSchedulerTest {
             CompletableFuture.allOf(running, accepted).get(2, TimeUnit.SECONDS);
 
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-            while (!context.closed() && System.nanoTime() < deadline) Thread.onSpinWait();
+            while ((!context.closed() || !committed.get())
+                && System.nanoTime() < deadline) {
+                NativeTickCoordinator.pumpMainThread();
+                Thread.onSpinWait();
+            }
             assertTrue(context.closed());
-            NativeTickCoordinator.pumpMainThread();
             assertTrue(committed.get());
             assertEquals(3, order.get());
         }

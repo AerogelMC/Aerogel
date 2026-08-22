@@ -61,6 +61,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import net.minecraft.world.ticks.LevelTicks;
 import net.minecraft.world.level.saveddata.WeatherData;
@@ -81,6 +82,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import net.minecraft.world.phys.shapes.BooleanOp;
 import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.Vec3;
 
 @Mixin(targets = "net.minecraft.server.level.ServerLevel")
 abstract class ServerLevelMixin implements NavigationIndexBridge {
@@ -93,6 +95,20 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     @Unique private boolean aerogel$explosionOverride;
     @Unique private static final ThreadLocal<AerogelNavigationInvalidations>
         AEROGEL$NAVIGATION_INVALIDATIONS = new ThreadLocal<>();
+
+    @Inject(method = "gameEvent(Lnet/minecraft/core/Holder;"
+        + "Lnet/minecraft/world/phys/Vec3;"
+        + "Lnet/minecraft/world/level/gameevent/GameEvent$Context;)V",
+        at = @At("HEAD"), cancellable = true)
+    private void aerogel$routeGameEvent(
+        Holder<GameEvent> event, Vec3 position, GameEvent.Context context,
+        CallbackInfo callback
+    ) {
+        ServerLevel level = (ServerLevel) (Object) this;
+        if (AerogelRuntime.routeGameEvent(level, event, position, context)) {
+            callback.cancel();
+        }
+    }
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$publishPlayerIndexConcurrently(CallbackInfo callback) {
