@@ -83,6 +83,7 @@ final class ChunkContextImpl implements ChunkContext {
 
     @Override public int chunkX() { return chunkX; }
     @Override public int chunkZ() { return chunkZ; }
+    ContextServiceImpl scheduler() { return scheduler; }
 
     @Override
     public boolean current() {

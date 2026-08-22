@@ -47,6 +47,7 @@
     "DistanceManagerMixin",
     "SimulationChunkTrackerMixin",
     "TicketStorageMixin",
+    "ThrottlingChunkTaskDispatcherMixin",
     "TrackedEntityMixin",
     "GenerationChunkHolderMixin",
     "LevelChunkContextMixin",

@@ -23,7 +23,10 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
         Object expectedOwner = ownership.aerogel$contextOwner();
         if (NativeTickCoordinator.isNativeWorker()) {
             try {
-                if (!entity.isRemoved()) delegate.onMove();
+                if (!entity.isRemoved()) {
+                    delegate.onMove();
+                    recordBoundaryMove(expectedOwner, entity.chunkPosition());
+                }
             } finally {
                 if (!stillOwnsPosition(expectedOwner, entity.chunkPosition())) {
                     Runnable release = () -> ownership.aerogel$compareAndSetContextOwner(
@@ -35,7 +38,10 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
         }
         Runnable commit = () -> {
             try {
-                if (!entity.isRemoved()) delegate.onMove();
+                if (!entity.isRemoved()) {
+                    delegate.onMove();
+                    recordBoundaryMove(expectedOwner, entity.chunkPosition());
+                }
             } finally {
                 if (!stillOwnsPosition(expectedOwner, entity.chunkPosition())) {
                     releaseAfterOwnedWork(ownership, expectedOwner);
@@ -69,5 +75,12 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
     private static boolean stillOwnsPosition(Object owner, ChunkPos position) {
         return owner instanceof ChunkContextImpl context
             && context.chunkX() == position.x() && context.chunkZ() == position.z();
+    }
+
+    private static void recordBoundaryMove(Object owner, ChunkPos position) {
+        if (!(owner instanceof ChunkContextImpl context)
+            || context.chunkX() == position.x() && context.chunkZ() == position.z()) return;
+        context.scheduler().entityMovedAcrossChunks(
+            context.world(), context.key(), position.pack());
     }
 }

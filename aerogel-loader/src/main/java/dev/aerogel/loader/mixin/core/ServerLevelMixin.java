@@ -102,6 +102,8 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
         navigatingMobs = concurrentNavigations;
         ((EntityLoadStatusBridge) (Object) entityManager)
             .aerogel$loadStatusListener(this::aerogel$scheduledTickEligibilityChanged);
+        ((EntityLoadStatusBridge) (Object) entityManager)
+            .aerogel$level((ServerLevel) (Object) this);
         ((DistanceManagerBridge) getChunkSource().chunkMap.getDistanceManager())
             .aerogel$blockTickingListener(this::aerogel$scheduledTickEligibilityChanged);
     }

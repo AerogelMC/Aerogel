@@ -1,11 +1,13 @@
 package dev.aerogel.loader.context;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectFunction;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectCollection;
+import it.unimi.dsi.fastutil.objects.ObjectSet;
 
 import java.util.Objects;
 
@@ -183,6 +185,19 @@ public final class ConcurrentLong2ObjectMap<V> extends Long2ObjectOpenHashMap<V>
             }
         });
         return snapshot;
+    }
+
+    @Override
+    public ObjectSet<Long2ObjectMap.Entry<V>> long2ObjectEntrySet() {
+        Long2ObjectOpenHashMap<V> snapshot = new Long2ObjectOpenHashMap<>();
+        Long2ObjectOpenHashMap<Cell<V>> generation = publishedGeneration();
+        generation.keySet().forEach((long key) -> {
+            Cell<V> cell = generation.get(key);
+            V value = cell == null ? null : cell.get();
+            if (value != null) snapshot.put(key, value);
+        });
+        snapshot.defaultReturnValue(defaultValue);
+        return snapshot.long2ObjectEntrySet();
     }
 
     @Override

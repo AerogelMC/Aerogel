@@ -79,11 +79,11 @@ Minecraft jar selected
 ## Installation
 
 1. Install **JDK 25**.
-2. Copy `Aerogel-26.2-6.jar` to a fresh server directory.
+2. Copy `Aerogel-26.2-7.jar` to a fresh server directory.
 3. Start once:
 
 ```bash
-java -Xms2G -Xmx4G -jar Aerogel-26.2-6.jar nogui
+java -Xms2G -Xmx4G -jar Aerogel-26.2-7.jar nogui
 ```
 
 4. On first run, `eula.txt` is generated. Accept EULA if you agree.
@@ -105,8 +105,8 @@ On Windows:
 ```
 
 Artifacts:
-- `aerogel-loader/build/libs/Aerogel-26.2-6.jar`
-- `aerogel-loader/build/libs/Aerogel-26.2-6-all.jar` (standalone, depending on selected task)
+- `aerogel-loader/build/libs/Aerogel-26.2-7.jar`
+- `aerogel-loader/build/libs/Aerogel-26.2-7-all.jar` (standalone, depending on selected task)
 
 ## Configuration
 
@@ -121,6 +121,11 @@ dedicated worker pool. Its default worker count is the JVM's available processor
 count. Override it with
 `--jvm-arg=-Daerogel.network.compression.workers=<positive-count>` when CPU
 allocation is managed externally.
+
+Player-driven chunk loading replaces vanilla's fixed four in-flight chunks with
+the Context pool's live worker headroom. Ready chunk packets have no artificial
+per-tick or unacknowledged-batch quota; Context ownership, ordered compression,
+and the network socket provide the remaining backpressure.
 
 ## Development
 

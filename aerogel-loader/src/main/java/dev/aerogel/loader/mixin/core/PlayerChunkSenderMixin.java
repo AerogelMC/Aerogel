@@ -2,21 +2,27 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.runtime.AerogelRuntime;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
 import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.PlayerChunkSender;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.lighting.LevelLightEngine;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.BitSet;
 import java.util.concurrent.CompletableFuture;
@@ -24,6 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Mixin(targets = "net.minecraft.server.network.PlayerChunkSender")
 abstract class PlayerChunkSenderMixin {
+    @Shadow @Final private LongSet pendingChunks;
+    @Shadow private float desiredChunksPerTick;
+    @Shadow private float batchQuota;
+    @Shadow private int unacknowledgedBatches;
+
     @Unique private static final ThreadLocal<ClientboundLevelChunkWithLightPacket>
         AEROGEL_PREBUILT_PACKET = new ThreadLocal<>();
 
@@ -36,6 +47,25 @@ abstract class PlayerChunkSenderMixin {
         ServerGamePacketListenerImpl connection, ServerLevel level, LevelChunk chunk
     ) {
         throw new AssertionError();
+    }
+
+    /**
+     * Vanilla's adaptive quota is useful when chunk packet construction and
+     * compression share the connection event loop. Aerogel moves both costs to
+     * owned Context/compression lanes, so every chunk ready at the start of this
+     * call is admitted and the socket becomes the only remaining backpressure.
+     */
+    @Inject(
+        method = "sendNextChunks(Lnet/minecraft/server/level/ServerPlayer;)V",
+        at = @At("HEAD")
+    )
+    private void aerogel$admitEveryReadyChunk(
+        ServerPlayer player, CallbackInfo callbackInfo
+    ) {
+        float readyChunks = pendingChunks.size();
+        desiredChunksPerTick = readyChunks;
+        batchQuota = readyChunks;
+        unacknowledgedBatches = 0;
     }
 
     @Redirect(

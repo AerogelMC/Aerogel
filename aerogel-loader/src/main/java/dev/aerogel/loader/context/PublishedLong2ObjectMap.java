@@ -1,10 +1,12 @@
 package dev.aerogel.loader.context;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectFunction;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectCollection;
+import it.unimi.dsi.fastutil.objects.ObjectSet;
 
 import java.util.concurrent.ConcurrentHashMap;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
@@ -87,6 +89,17 @@ public final class PublishedLong2ObjectMap<V> extends Long2ObjectOpenHashMap<V> 
     @Override
     public ObjectCollection<V> values() {
         return readImage().values();
+    }
+
+    /**
+     * Fastutil does not derive its primitive entry set from {@link #keySet()}.
+     * Vanilla uses {@code Long2ObjectMaps.fastIterable} while collecting every
+     * loaded entity chunk that must be saved, so exposing the inherited (empty)
+     * backing map here silently loses loaded-but-now-empty chunks.
+     */
+    @Override
+    public ObjectSet<Long2ObjectMap.Entry<V>> long2ObjectEntrySet() {
+        return readImage().long2ObjectEntrySet();
     }
 
     @Override public int size() { return writes.size(); }

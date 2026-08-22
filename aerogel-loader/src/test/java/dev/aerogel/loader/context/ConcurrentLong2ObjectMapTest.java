@@ -1,7 +1,10 @@
 package dev.aerogel.loader.context;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectMaps;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.SplittableRandom;
@@ -16,6 +19,19 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ConcurrentLong2ObjectMapTest {
+    @Test
+    void fastIterableReflectsPublishedEntries() {
+        ConcurrentLong2ObjectMap<String> map = new ConcurrentLong2ObjectMap<>();
+        map.put(7L, "visible");
+        map.put(-11L, "hidden");
+        map.remove(-11L);
+
+        Map<Long, String> entries = new HashMap<>();
+        Long2ObjectMaps.fastIterable(map).forEach(entry ->
+            entries.put(entry.getLongKey(), entry.getValue()));
+
+        assertEquals(Map.of(7L, "visible"), entries);
+    }
     @Test
     void splitMixFinalizerIsReversibleForRepresentativeAndRandomKeys() {
         long[] representative = {

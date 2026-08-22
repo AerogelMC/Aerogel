@@ -20,6 +20,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongConsumer;
+import it.unimi.dsi.fastutil.longs.LongSet;
 
 import java.time.Duration;
 import java.util.Objects;
@@ -67,6 +69,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
      * same view that vanilla uses for TrackedEntity.updatePlayer.
      */
     private final ConcurrentHashMap<ServerLevel, Set<ServerPlayer>> trackingViewers =
+        new ConcurrentHashMap<>();
+    /** Only populated while a world's vanilla entity autosave pass is in flight. */
+    private final ConcurrentHashMap<WorldContextImpl, EntitySaveWave> entitySaveWaves =
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Entity, TickingRegistration> tickingEntities =
         new ConcurrentHashMap<>();
@@ -141,6 +146,14 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return workerCount;
     }
 
+    /**
+     * CPU headroom that player-driven chunk loading may consume without
+     * competing with Context work already running in this pool.
+     */
+    public int availableWorkerCount() {
+        return Math.max(1, workers.getParallelism() - workers.getActiveThreadCount());
+    }
+
     long nextEpoch() {
         return nextEpoch.getAndIncrement();
     }
@@ -179,7 +192,11 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
 
     public void worldUnloaded(ServerLevel level) {
         WorldContextImpl context = worlds.remove(level);
-        if (context != null) context.close();
+        if (context != null) {
+            EntitySaveWave wave = entitySaveWaves.remove(context);
+            if (wave != null) wave.stopAccepting();
+            context.close();
+        }
     }
 
     public void chunkLoaded(ServerLevel level, LevelChunk chunk) {
@@ -288,6 +305,85 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 submitTickingContext(context, registrations, action, serverTick);
             }
         }));
+    }
+
+    /**
+     * Appends each entity-chunk serialization to its exact owner Context. This is
+     * an ordering fence, not a lock: a busy owner saves after its already queued
+     * mutations, while independent owners serialize concurrently.
+     */
+    public boolean saveEntityChunks(
+        ServerLevel level, LongSet chunks, LongConsumer saveChunk
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(chunks, "chunks");
+        Objects.requireNonNull(saveChunk, "saveChunk");
+        if (closed || chunks.isEmpty()) return false;
+        WorldContextImpl world = worlds.get(level);
+        if (world == null) return false;
+
+        long[] keys = chunks.toLongArray();
+        if (keys.length == 0) return true;
+        EntitySaveWave wave = new EntitySaveWave(world, saveChunk, keys.length);
+        EntitySaveWave previous = entitySaveWaves.put(world, wave);
+        if (previous != null) previous.stopAccepting();
+        dispatch(() -> dispatchBatched(() -> {
+            for (long key : keys) queueEntitySave(wave, new long[] { key }, null);
+        }));
+        return true;
+    }
+
+    /**
+     * Repairs the exact two entity chunks touched by a move that overlaps an
+     * autosave wave. The pair is coalesced only while queued and acquires those
+     * two Contexts together, so it cannot serialize half of the movement.
+     */
+    void entityMovedAcrossChunks(
+        WorldContextImpl world, long previousChunk, long currentChunk
+    ) {
+        if (previousChunk == currentChunk) return;
+        EntitySaveWave wave = entitySaveWaves.get(world);
+        if (wave != null) wave.moved(previousChunk, currentChunk);
+    }
+
+    private void queueEntitySave(
+        EntitySaveWave wave, long[] scopeKeys, EntityChunkPair pair
+    ) {
+        Runnable save = () -> {
+            if (pair != null) wave.queuedPairs.remove(pair);
+            for (long key : scopeKeys) wave.saveChunk.accept(key);
+        };
+        ChunkContextImpl context = null;
+        for (long key : scopeKeys) {
+            context = wave.world.existingContext(ChunkPos.getX(key), ChunkPos.getZ(key));
+            if (context != null) break;
+        }
+        if (context == null) {
+            NativeTickCoordinator.submitMainThread(() -> {
+                try {
+                    save.run();
+                } finally {
+                    wave.complete();
+                }
+            });
+            return;
+        }
+
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() -> {
+                try {
+                    save.run();
+                } finally {
+                    wave.complete();
+                }
+            });
+        };
+        boolean accepted = context.submitNative(scopeKeys, () ->
+            NativeTickCoordinator.runNative(
+                List.of(Boolean.TRUE), ignored -> save.run(), wave::complete), rejected);
+        if (!accepted) rejected.run();
     }
 
     private void submitTickingContext(
@@ -1306,6 +1402,77 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 : recycled.remove(last);
             batch.context = context;
             return batch;
+        }
+    }
+
+    /**
+     * A lock-free lifetime counter for one autosave pass. Zero is closed with a
+     * CAS, so a boundary movement either joins this pass or happens strictly
+     * after it; there is no lost registration window.
+     */
+    private final class EntitySaveWave {
+        private static final int CLOSED = -1;
+
+        private final WorldContextImpl world;
+        private final LongConsumer saveChunk;
+        private final AtomicInteger pending;
+        private final Set<EntityChunkPair> queuedPairs = ConcurrentHashMap.newKeySet();
+
+        private EntitySaveWave(
+            WorldContextImpl world, LongConsumer saveChunk, int initialTasks
+        ) {
+            this.world = world;
+            this.saveChunk = saveChunk;
+            this.pending = new AtomicInteger(initialTasks);
+        }
+
+        private void moved(long previousChunk, long currentChunk) {
+            EntityChunkPair pair = EntityChunkPair.of(previousChunk, currentChunk);
+            if (!queuedPairs.add(pair)) return;
+            if (!tryRegister()) {
+                queuedPairs.remove(pair);
+                return;
+            }
+            queueEntitySave(this, new long[] { pair.first(), pair.second() }, pair);
+        }
+
+        private boolean tryRegister() {
+            int current = pending.get();
+            while (current != CLOSED) {
+                if (pending.compareAndSet(current, current + 1)) return true;
+                current = pending.get();
+            }
+            return false;
+        }
+
+        private void complete() {
+            int current = pending.get();
+            while (current > 0) {
+                int updated = current - 1;
+                if (!pending.compareAndSet(current, updated)) {
+                    current = pending.get();
+                    continue;
+                }
+                if (updated == 0 && pending.compareAndSet(0, CLOSED)) {
+                    entitySaveWaves.remove(world, this);
+                }
+                return;
+            }
+        }
+
+        private void stopAccepting() {
+            int current = pending.get();
+            while (current != CLOSED && !pending.compareAndSet(current, CLOSED)) {
+                current = pending.get();
+            }
+        }
+    }
+
+    private record EntityChunkPair(long first, long second) {
+        private static EntityChunkPair of(long left, long right) {
+            return Long.compareUnsigned(left, right) <= 0
+                ? new EntityChunkPair(left, right)
+                : new EntityChunkPair(right, left);
         }
     }
 

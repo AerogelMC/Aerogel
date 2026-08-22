@@ -20,6 +20,8 @@ import dev.aerogel.loader.internal.DistanceManagerBridge;
 import net.minecraft.world.level.LocalMobCapCalculator;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.entity.MobCategory;
+import it.unimi.dsi.fastutil.longs.LongConsumer;
+import it.unimi.dsi.fastutil.longs.LongSet;
 
 public final class AerogelRuntime {
     private static volatile PluginManager pluginManager;
@@ -71,6 +73,14 @@ public final class AerogelRuntime {
         CompressionWorkers.shutdown();
     }
 
+    public static int availableChunkLoadingSlots() {
+        AerogelApiRuntime current = apiRuntime;
+        if (current == null) {
+            return Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+        }
+        return current.contexts().availableWorkerCount();
+    }
+
     public static void worldLoaded(ServerLevel level) {
         AerogelApiRuntime current = apiRuntime;
         if (current != null) current.contexts().worldLoaded(level);
@@ -117,6 +127,14 @@ public final class AerogelRuntime {
         ServerLevel level, Consumer<Entity> action
     ) {
         api().contexts().tickRegisteredEntities(level, action);
+    }
+
+    public static boolean saveEntityChunks(
+        ServerLevel level, LongSet chunks, LongConsumer saveChunk
+    ) {
+        AerogelApiRuntime current = apiRuntime;
+        return current != null
+            && current.contexts().saveEntityChunks(level, chunks, saveChunk);
     }
 
     public static void routeOwnedEntityBatch(

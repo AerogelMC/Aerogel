@@ -5,6 +5,9 @@ import java.util.HashMap;
 import java.util.Map;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectCollection;
+import it.unimi.dsi.fastutil.objects.ObjectSet;
+import java.util.AbstractSet;
+import java.util.Iterator;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class Long2ObjectOpenHashMap<V> implements Long2ObjectMap<V>, Cloneable {
@@ -25,6 +28,9 @@ public class Long2ObjectOpenHashMap<V> implements Long2ObjectMap<V>, Cloneable {
         values.keySet().forEach(result::add);
         return result;
     }
+    public ObjectSet<Long2ObjectMap.Entry<V>> long2ObjectEntrySet() {
+        return new EntrySet();
+    }
     public void defaultReturnValue(V value) { defaultValue = value; }
     public V defaultReturnValue() { return defaultValue; }
     public ObjectCollection<V> values() { return new ObjectArrayList<>(values.values()); }
@@ -36,5 +42,23 @@ public class Long2ObjectOpenHashMap<V> implements Long2ObjectMap<V>, Cloneable {
         copy.values.putAll(values);
         copy.defaultValue = defaultValue;
         return copy;
+    }
+
+    private final class EntrySet extends AbstractSet<Long2ObjectMap.Entry<V>>
+        implements ObjectSet<Long2ObjectMap.Entry<V>> {
+        @Override public int size() { return values.size(); }
+        @Override public Iterator<Long2ObjectMap.Entry<V>> iterator() {
+            Iterator<Map.Entry<Long, V>> source = values.entrySet().iterator();
+            return new Iterator<>() {
+                @Override public boolean hasNext() { return source.hasNext(); }
+                @Override public Long2ObjectMap.Entry<V> next() {
+                    Map.Entry<Long, V> entry = source.next();
+                    return new Long2ObjectMap.Entry<>() {
+                        @Override public long getLongKey() { return entry.getKey(); }
+                        @Override public V getValue() { return entry.getValue(); }
+                    };
+                }
+            };
+        }
     }
 }
