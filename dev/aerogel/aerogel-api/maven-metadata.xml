@@ -3,8 +3,8 @@
   <groupId>dev.aerogel</groupId>
   <artifactId>aerogel-api</artifactId>
   <versioning>
-    <latest>26.2-11</latest>
-    <release>26.2-11</release>
+    <latest>26.2-12</latest>
+    <release>26.2-12</release>
     <versions>
       <version>26.2-1</version>
       <version>26.2-2</version>
@@ -17,7 +17,8 @@
       <version>26.2-9</version>
       <version>26.2-10</version>
       <version>26.2-11</version>
+      <version>26.2-12</version>
     </versions>
-    <lastUpdated>20260823000159</lastUpdated>
+    <lastUpdated>20260823041536</lastUpdated>
   </versioning>
 </metadata>
