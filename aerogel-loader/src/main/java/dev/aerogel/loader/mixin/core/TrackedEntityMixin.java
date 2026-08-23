@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.internal.TrackedEntityBridge;
+import dev.aerogel.loader.internal.ServerEntityBridge;
 import dev.aerogel.loader.internal.PlayerViewService;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerEntity;
@@ -68,6 +69,11 @@ abstract class TrackedEntityMixin implements TrackedEntityBridge {
     @Override
     public void aerogel$updatePlayer(ServerPlayer player) {
         updatePlayer(player);
+    }
+
+    @Override
+    public void aerogel$publishDirtyState() {
+        ((ServerEntityBridge) serverEntity).aerogel$publishDirtyState();
     }
 
     @Inject(method = "updatePlayer", at = @At("HEAD"), cancellable = true)

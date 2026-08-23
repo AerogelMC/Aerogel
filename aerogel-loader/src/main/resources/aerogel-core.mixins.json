@@ -82,6 +82,7 @@
     "ServerExplosionMixin",
     "LivingEntityMixin",
     "EntityMixin",
+    "SynchedEntityDataMixin",
     "EntityContextCallbackMixin",
     "EntityLookupMixin",
     "EntitySectionStorageMixin",

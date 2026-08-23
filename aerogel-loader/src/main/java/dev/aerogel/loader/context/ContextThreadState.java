@@ -23,7 +23,11 @@ final class ContextThreadState {
         CURRENT.remove();
     }
 
-    record AccessScope(ChunkContextImpl primary, LongOpenHashSet ownedKeys) {
+    record AccessScope(
+        ChunkContextImpl primary,
+        LongOpenHashSet ownedKeys,
+        boolean interactive
+    ) {
         boolean contains(ChunkContextImpl context) {
             return context.world() == primary.world()
                 && (context == primary

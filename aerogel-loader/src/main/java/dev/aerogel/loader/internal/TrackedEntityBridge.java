@@ -13,4 +13,5 @@ public interface TrackedEntityBridge {
     boolean aerogel$isSeenBy(Object connection);
     void aerogel$removePlayer(ServerPlayer player);
     void aerogel$updatePlayer(ServerPlayer player);
+    void aerogel$publishDirtyState();
 }

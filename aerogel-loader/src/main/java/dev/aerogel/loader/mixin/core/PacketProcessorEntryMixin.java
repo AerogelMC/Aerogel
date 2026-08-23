@@ -3,6 +3,7 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.network.QueuedPacketBridge;
 import dev.aerogel.loader.network.PacketQueueMetrics;
 import dev.aerogel.loader.internal.EntityOwnedPacketListener;
+import dev.aerogel.loader.network.EntityTargetPackets;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.Packet;
@@ -35,14 +36,23 @@ abstract class PacketProcessorEntryMixin implements QueuedPacketBridge {
     private void aerogel$routeAndRecordQueueLatency(CallbackInfo callbackInfo) {
         if (listener instanceof EntityOwnedPacketListener owned) {
             Entity entity = owned.aerogel$packetOwner();
+            if (EntityTargetPackets.targeted(packet)
+                && entity.level() instanceof ServerLevel level) {
+                Entity target = level.getEntity(EntityTargetPackets.targetEntityId(packet));
+                if (target != null && AerogelRuntime.routeInteractiveEntityTargetTask(
+                    entity, target, this::handle)) {
+                    callbackInfo.cancel();
+                    return;
+                }
+            }
             if (packet instanceof ServerboundUseItemOnPacket useItemOn
                 && entity.level() instanceof ServerLevel level
-                && AerogelRuntime.routeEntityBlockTask(
+                && AerogelRuntime.routeInteractiveEntityBlockTask(
                     entity, level, useItemOn.getHitResult().getBlockPos().immutable(), this::handle)) {
                 callbackInfo.cancel();
                 return;
             }
-            if (AerogelRuntime.routeEntityTask(entity, this::handle)) {
+            if (AerogelRuntime.routeInteractiveEntityTask(entity, this::handle)) {
                 callbackInfo.cancel();
                 return;
             }

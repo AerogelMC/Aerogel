@@ -38,6 +38,7 @@ import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.function.Consumer;
@@ -763,10 +764,87 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             return;
         }
         if (!registration.claim(serverTick)) return;
-        registration.tracked.aerogel$tickTracking(
-            players, tickingEntities.containsKey(registration.entity));
-        if (!movedPlayers.isEmpty()) {
-            registration.tracked.aerogel$updatePlayers(movedPlayers);
+        registration.publishing = true;
+        try {
+            registration.tracked.aerogel$tickTracking(
+                players, tickingEntities.containsKey(registration.entity));
+            if (!movedPlayers.isEmpty()) {
+                registration.tracked.aerogel$updatePlayers(movedPlayers);
+            }
+        } finally {
+            registration.publishing = false;
+        }
+    }
+
+    /**
+     * Publishes entity state changed by an interactive owner transaction before
+     * returning to tick backlog. Normal entity ticks keep vanilla's publication
+     * cadence; packet names and entity types do not participate in this decision.
+     */
+    public void entityTrackingDirty(Entity entity) {
+        if (closed || entity == null) return;
+        ContextThreadState.AccessScope scope = ContextThreadState.current();
+        if (scope == null || !scope.interactive()) return;
+        TrackedRegistration registration = trackedEntities.get(entity);
+        if (registration == null || registration.publishing
+            || !registration.dirtyPublicationPending.compareAndSet(false, true)) return;
+
+        Runnable publication = () -> publishDirtyRegistration(registration);
+        if (!NativeTickCoordinator.deferNativeCompletion(publication)) {
+            registration.dirtyPublicationPending.set(false);
+        }
+    }
+
+    private void publishDirtyRegistration(TrackedRegistration registration) {
+        if (trackedEntities.get(registration.entity) != registration
+            || registration.entity.isRemoved()) {
+            registration.dirtyPublicationPending.set(false);
+            return;
+        }
+        ChunkContextImpl owner = resolveOwner(registration.entity);
+        if (owner == null) {
+            registration.dirtyPublicationPending.set(false);
+            return;
+        }
+        if (owner.current()) {
+            publishDirtyOwned(registration, owner);
+            return;
+        }
+
+        NativeTickCoordinator.taskSubmitted();
+        AtomicBoolean rejectedOnce = new AtomicBoolean();
+        Runnable rejected = () -> {
+            if (rejectedOnce.compareAndSet(false, true)) {
+                NativeTickCoordinator.taskRejected();
+            }
+            registration.dirtyPublicationPending.set(false);
+        };
+        boolean accepted = owner.submitInteractiveNative(() ->
+            NativeTickCoordinator.runNative(List.of(registration.entity), ignored ->
+                publishDirtyOwned(registration, owner), () -> { }), rejected);
+        if (!accepted) rejected.run();
+    }
+
+    private void publishDirtyOwned(
+        TrackedRegistration registration, ChunkContextImpl expected
+    ) {
+        if (trackedEntities.get(registration.entity) != registration
+            || registration.entity.isRemoved()) {
+            registration.dirtyPublicationPending.set(false);
+            return;
+        }
+        ChunkContextImpl current = resolveOwner(registration.entity);
+        if (current != expected) {
+            registration.dirtyPublicationPending.set(false);
+            entityTrackingDirty(registration.entity);
+            return;
+        }
+        registration.publishing = true;
+        try {
+            registration.tracked.aerogel$publishDirtyState();
+        } finally {
+            registration.publishing = false;
+            registration.dirtyPublicationPending.set(false);
         }
     }
 
@@ -1342,6 +1420,16 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
      * Returns false only when the caller must execute the work on its current thread.
      */
     public boolean routeEntityTask(Entity entity, Runnable action) {
+        return routeEntityTask(entity, action, false);
+    }
+
+    public boolean routeInteractiveEntityTask(Entity entity, Runnable action) {
+        return routeEntityTask(entity, action, true);
+    }
+
+    private boolean routeEntityTask(
+        Entity entity, Runnable action, boolean interactive
+    ) {
         Objects.requireNonNull(entity, "entity");
         Objects.requireNonNull(action, "action");
         if (closed) return false;
@@ -1353,11 +1441,15 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
             NativeTickCoordinator.submitMainThread(() -> {
-                if (!routeEntityTask(entity, action)) action.run();
+                if (!routeEntityTask(entity, action, interactive)) action.run();
             });
         };
-        boolean accepted = context.submitNative(() -> NativeTickCoordinator.runNative(
-            List.of(entity), ignored -> runRouted(context, entity, action), () -> { }), rejected);
+        Runnable routed = () -> NativeTickCoordinator.runNative(
+            List.of(entity), ignored -> runRouted(
+                context, entity, action, interactive), () -> { });
+        boolean accepted = interactive
+            ? context.submitInteractiveNative(routed, rejected)
+            : context.submitNative(routed, rejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
@@ -1372,6 +1464,19 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
      */
     public boolean routeEntityBlockTask(
         Entity entity, ServerLevel level, BlockPos position, Runnable action
+    ) {
+        return routeEntityBlockTask(entity, level, position, action, false);
+    }
+
+    public boolean routeInteractiveEntityBlockTask(
+        Entity entity, ServerLevel level, BlockPos position, Runnable action
+    ) {
+        return routeEntityBlockTask(entity, level, position, action, true);
+    }
+
+    private boolean routeEntityBlockTask(
+        Entity entity, ServerLevel level, BlockPos position, Runnable action,
+        boolean interactive
     ) {
         Objects.requireNonNull(entity, "entity");
         Objects.requireNonNull(level, "level");
@@ -1400,15 +1505,63 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
             NativeTickCoordinator.submitMainThread(() -> {
-                if (!routeEntityBlockTask(entity, level, position, action)) action.run();
+                if (!routeEntityBlockTask(
+                    entity, level, position, action, interactive)) action.run();
             });
         };
-        boolean accepted = owner.submitNative(scopeKeys, () -> NativeTickCoordinator.runNative(
+        Runnable routed = () -> NativeTickCoordinator.runNative(
             List.of(entity), ignored -> {
                 ChunkContextImpl current = resolveOwner(entity);
                 if (current == owner) {
                     action.run();
-                } else if (!routeEntityBlockTask(entity, level, position, action)) {
+                } else if (!routeEntityBlockTask(
+                    entity, level, position, action, interactive)) {
+                    action.run();
+                }
+            }, () -> { });
+        boolean accepted = interactive
+            ? owner.submitInteractiveNative(scopeKeys, routed, rejected)
+            : owner.submitNative(scopeKeys, routed, rejected);
+        if (!accepted) NativeTickCoordinator.taskRejected();
+        return accepted;
+    }
+
+    /** Routes every entity-target interaction through both current owners. */
+    public boolean routeInteractiveEntityTargetTask(
+        Entity entity, Entity target, Runnable action
+    ) {
+        Objects.requireNonNull(entity, "entity");
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(action, "action");
+        if (closed || entity.level() != target.level()) return false;
+
+        ChunkContextImpl owner = resolveOwner(entity);
+        ChunkContextImpl targetOwner = resolveOwner(target);
+        if (owner == null || targetOwner == null || owner.world() != targetOwner.world()) {
+            return false;
+        }
+        long[] scopeKeys = owner == targetOwner
+            ? new long[] { owner.key() }
+            : new long[] { owner.key(), targetOwner.key() };
+        ContextThreadState.AccessScope currentScope = ContextThreadState.current();
+        if (currentScope != null && currentScope.primary().world() == owner.world()
+            && currentScope.containsKey(owner.key())
+            && currentScope.containsKey(targetOwner.key())) return false;
+
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() -> {
+                if (!routeInteractiveEntityTargetTask(entity, target, action)) action.run();
+            });
+        };
+        boolean accepted = owner.submitInteractiveNative(scopeKeys, () ->
+            NativeTickCoordinator.runNative(List.of(entity), ignored -> {
+                ChunkContextImpl currentOwner = resolveOwner(entity);
+                ChunkContextImpl currentTargetOwner = resolveOwner(target);
+                if (currentOwner == owner && currentTargetOwner == targetOwner) {
+                    action.run();
+                } else if (!routeInteractiveEntityTargetTask(entity, target, action)) {
                     action.run();
                 }
             }, () -> { }), rejected);
@@ -1423,11 +1576,17 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     void runRouted(ChunkContextImpl expected, Entity entity, Runnable action) {
+        runRouted(expected, entity, action, false);
+    }
+
+    private void runRouted(
+        ChunkContextImpl expected, Entity entity, Runnable action, boolean interactive
+    ) {
         if (closed || !expected.active()) return;
         ChunkContextImpl current = resolveOwner(entity);
         if (current == expected || current == null) {
             action.run();
-        } else if (!routeEntityTask(entity, action)) {
+        } else if (!routeEntityTask(entity, action, interactive)) {
             action.run();
         }
     }
@@ -1462,7 +1621,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         private final Entity entity;
         private final TrackedEntityBridge tracked;
         private final AtomicLong lastTick = new AtomicLong(Long.MIN_VALUE);
+        private final AtomicBoolean dirtyPublicationPending = new AtomicBoolean();
         private volatile ChunkContextImpl owner;
+        private volatile boolean publishing;
 
         private TrackedRegistration(
             Entity entity, TrackedEntityBridge tracked, ChunkContextImpl owner

@@ -286,6 +286,10 @@ public final class AerogelRuntime {
         return api().contexts().routeEntityTask(entity, action);
     }
 
+    public static boolean routeInteractiveEntityTask(Entity entity, Runnable action) {
+        return api().contexts().routeInteractiveEntityTask(entity, action);
+    }
+
     public static boolean routeEntityBlockTask(
         Entity entity,
         ServerLevel level,
@@ -293,6 +297,26 @@ public final class AerogelRuntime {
         Runnable action
     ) {
         return api().contexts().routeEntityBlockTask(entity, level, position, action);
+    }
+
+    public static boolean routeInteractiveEntityBlockTask(
+        Entity entity,
+        ServerLevel level,
+        net.minecraft.core.BlockPos position,
+        Runnable action
+    ) {
+        return api().contexts().routeInteractiveEntityBlockTask(
+            entity, level, position, action);
+    }
+
+    public static boolean routeInteractiveEntityTargetTask(
+        Entity entity, Entity target, Runnable action
+    ) {
+        return api().contexts().routeInteractiveEntityTargetTask(entity, target, action);
+    }
+
+    public static void entityTrackingDirty(Entity entity) {
+        api().contexts().entityTrackingDirty(entity);
     }
 
     public static boolean isEntityMutationThread(Entity entity) {

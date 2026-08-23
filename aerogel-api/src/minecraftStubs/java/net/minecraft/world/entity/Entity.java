@@ -23,6 +23,7 @@ import java.util.function.Predicate;
 import java.util.Set;
 
 public abstract class Entity implements net.minecraft.world.level.entity.EntityAccess {
+    public boolean hurtMarked;
     public boolean needsSync;
     public Collection<Entity> nearbyEntities(double radius) { return null; }
     public Collection<Entity> nearbyEntities(double radius, Predicate<Entity> filter) { return null; }

@@ -726,6 +726,43 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void interactiveWorkKeepsFifoOrderAndRunsBeforeTickBacklog() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            CountDownLatch running = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            CountDownLatch finished = new CountDownLatch(3);
+            List<String> order = java.util.Collections.synchronizedList(
+                new ArrayList<>());
+
+            assertTrue(context.submitNative(() -> {
+                running.countDown();
+                await(release);
+            }, () -> { }));
+            assertTrue(running.await(2, TimeUnit.SECONDS));
+            assertTrue(context.submitNative(() -> {
+                order.add("tick");
+                finished.countDown();
+            }, () -> { }));
+            assertTrue(context.submitInteractiveNative(() -> {
+                assertTrue(ContextThreadState.current().interactive());
+                order.add("first");
+                finished.countDown();
+            }, () -> { }));
+            assertTrue(context.submitInteractiveNative(() -> {
+                assertTrue(ContextThreadState.current().interactive());
+                order.add("second");
+                finished.countDown();
+            }, () -> { }));
+
+            release.countDown();
+            assertTrue(finished.await(2, TimeUnit.SECONDS));
+            assertEquals(List.of("first", "second", "tick"), order);
+        }
+    }
+
+    @Test
     void concurrentDeactivationSettlesEveryNativeSubmission() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(4);
              ExecutorService submitters = Executors.newFixedThreadPool(4)) {

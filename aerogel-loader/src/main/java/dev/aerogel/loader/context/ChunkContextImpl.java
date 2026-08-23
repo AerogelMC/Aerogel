@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
@@ -37,6 +38,12 @@ final class ChunkContextImpl implements ChunkContext {
     private final NativeEntityLane entityLane;
     private final NativeChunkLane chunkLane;
     private final NativeBlockEntityLane blockEntityLane;
+    /**
+     * Per-player inbound work. Producers append in connection order; the owner
+     * consumes it at the next transaction boundary before tick backlog.
+     */
+    private final ConcurrentLinkedDeque<ContextTask> interactiveMailbox =
+        new ConcurrentLinkedDeque<>();
     private final ConcurrentLinkedQueue<ContextTask> snapshotMailbox =
         new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<ContextTask> mailbox = new ConcurrentLinkedQueue<>();
@@ -152,6 +159,30 @@ final class ChunkContextImpl implements ChunkContext {
         return true;
     }
 
+    boolean submitInteractiveNative(Runnable task, Runnable rejection) {
+        return submitInteractiveNative(selfScope, task, rejection);
+    }
+
+    boolean submitInteractiveNative(
+        long[] scopeKeys, Runnable task, Runnable rejection
+    ) {
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(rejection, "rejection");
+        if (!active()) return false;
+        submitted.increment();
+        queued.incrementAndGet();
+        ContextTask contextTask = new ContextTask(
+            epoch, normalizeScope(scopeKeys), task, null, rejection);
+        interactiveMailbox.addLast(contextTask);
+        if (!active() && interactiveMailbox.remove(contextTask)) {
+            queued.decrementAndGet();
+            rejectStale(contextTask);
+            return false;
+        }
+        schedule();
+        return true;
+    }
+
     boolean submitSnapshot(Runnable task, Runnable rejection) {
         Objects.requireNonNull(task, "task");
         Objects.requireNonNull(rejection, "rejection");
@@ -253,7 +284,9 @@ final class ChunkContextImpl implements ChunkContext {
                     pendingReservation.primary().schedule();
                     break;
                 }
-                ContextTask task = snapshotMailbox.poll();
+                ContextTask task = interactiveMailbox.pollFirst();
+                boolean interactive = task != null;
+                if (task == null) task = snapshotMailbox.poll();
                 if (task == null) task = mailbox.poll();
                 if (task == null) break;
                 queued.decrementAndGet();
@@ -263,10 +296,11 @@ final class ChunkContextImpl implements ChunkContext {
                 }
                 if (task.scopeKeys() == selfScope
                     || task.scopeKeys().length == 1 && task.scopeKeys()[0] == key) {
-                    runOwned(task, null);
-                } else if (!runNeighborhood(task, self)) {
+                    runOwned(task, null, interactive);
+                } else if (!runNeighborhood(task, self, interactive)) {
                     queued.incrementAndGet();
-                    mailbox.add(task);
+                    if (interactive) interactiveMailbox.addFirst(task);
+                    else mailbox.add(task);
                     break;
                 }
             }
@@ -279,7 +313,9 @@ final class ChunkContextImpl implements ChunkContext {
         }
     }
 
-    private boolean runNeighborhood(ContextTask task, NeighborhoodLease self) {
+    private boolean runNeighborhood(
+        ContextTask task, NeighborhoodLease self, boolean interactive
+    ) {
         long[] scopeKeys = task.scopeKeys();
         List<ChunkContextImpl> affected = new ArrayList<>(scopeKeys.length);
         for (long scopeKey : scopeKeys) {
@@ -337,7 +373,7 @@ final class ChunkContextImpl implements ChunkContext {
         }
 
         try {
-            runOwned(task, new LongOpenHashSet(scopeKeys));
+            runOwned(task, new LongOpenHashSet(scopeKeys), interactive);
         } finally {
             for (int i = acquired.size() - 1; i >= 0; i--) {
                 acquired.get(i).release(neighborhood);
@@ -359,7 +395,9 @@ final class ChunkContextImpl implements ChunkContext {
         if (hasTasks()) schedule();
     }
 
-    private void runOwned(ContextTask task, LongOpenHashSet ownedKeys) {
+    private void runOwned(
+        ContextTask task, LongOpenHashSet ownedKeys, boolean interactive
+    ) {
         long started = System.nanoTime();
         TickState activeTick = tickWindow.get().active;
         // A local tick may keep running while the server clock advances through
@@ -368,7 +406,8 @@ final class ChunkContextImpl implements ChunkContext {
         long measuredTick = activeTick == null
             ? NativeTickCoordinator.currentServerTick()
             : activeTick.token.serverTick();
-        ContextThreadState.enter(new ContextThreadState.AccessScope(this, ownedKeys));
+        ContextThreadState.enter(
+            new ContextThreadState.AccessScope(this, ownedKeys, interactive));
         Throwable failure = null;
         try {
             task.action().run();
@@ -608,6 +647,10 @@ final class ChunkContextImpl implements ChunkContext {
     void deactivate() {
         if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.DRAINING)) return;
         ContextTask task;
+        while ((task = interactiveMailbox.pollFirst()) != null) {
+            queued.decrementAndGet();
+            rejectStale(task);
+        }
         while ((task = snapshotMailbox.poll()) != null) {
             queued.decrementAndGet();
             rejectStale(task);
@@ -624,7 +667,8 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private boolean hasTasks() {
-        return !snapshotMailbox.isEmpty() || !mailbox.isEmpty();
+        return !interactiveMailbox.isEmpty()
+            || !snapshotMailbox.isEmpty() || !mailbox.isEmpty();
     }
 
     WorldContextImpl world() { return world; }

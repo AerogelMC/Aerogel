@@ -18,6 +18,7 @@ import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.EntityViewBridge;
 import dev.aerogel.loader.internal.PersistentDataHolderBridge;
 import dev.aerogel.loader.internal.PersistentDataViews;
+import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.api.persistence.PersistentDataView;
 import dev.aerogel.api.PluginContext;
 import dev.aerogel.api.virtualentity.VirtualEntity;
@@ -171,6 +172,11 @@ abstract class EntityMixin implements EntityViewBridge, PersistentDataHolderBrid
     private void aerogel$removed(Entity.RemovalReason reason, CallbackInfo callbackInfo) {
         if (!EventHooks.hasListeners(EntityRemoveEvent.class)) return;
         EventHooks.post(new EntityRemoveEvent((Entity) (Object) this, reason));
+    }
+
+    @Inject(method = "markHurt()V", at = @At("RETURN"))
+    private void aerogel$hurtStateChanged(CallbackInfo callbackInfo) {
+        AerogelRuntime.entityTrackingDirty((Entity) (Object) this);
     }
 
     @Inject(method = "startRiding(Lnet/minecraft/world/entity/Entity;ZZ)Z",
