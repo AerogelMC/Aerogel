@@ -16,11 +16,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class ChunkContextImpl implements ChunkContext {
-    private static final Logger LOGGER = Logger.getLogger("Aerogel-Contexts");
+    private static final Logger LOGGER = LoggerFactory.getLogger("Aerogel-Contexts");
     private static final long UNMEASURED_TICK = Long.MIN_VALUE;
 
     private final WorldContextImpl world;
@@ -373,8 +373,7 @@ final class ChunkContextImpl implements ChunkContext {
         } catch (Throwable error) {
             failure = error;
             failed.increment();
-            LOGGER.log(Level.SEVERE,
-                "Chunk context task failed at " + chunkX + "," + chunkZ, error);
+            LOGGER.error("Chunk context task failed at {},{}", chunkX, chunkZ, error);
         } finally {
             ContextThreadState.leave();
             long elapsed = System.nanoTime() - started;

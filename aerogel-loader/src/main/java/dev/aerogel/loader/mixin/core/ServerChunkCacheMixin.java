@@ -33,6 +33,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.function.Consumer;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.LocalMobCapCalculator;
@@ -44,6 +45,9 @@ abstract class ServerChunkCacheMixin {
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private ChunkMap chunkMap;
     @Unique private NaturalSpawner.SpawnState aerogel$currentSpawnState;
+    @Unique private final AtomicBoolean aerogel$distanceUpdateQueued = new AtomicBoolean();
+    @Unique private boolean aerogel$distanceUpdateRunning;
+    @Unique private boolean aerogel$distanceUpdateRequested;
     @Shadow public abstract ChunkAccess getChunk(
         int chunkX, int chunkZ, ChunkStatus targetStatus, boolean create);
 
@@ -62,6 +66,127 @@ abstract class ServerChunkCacheMixin {
 
     @Invoker("runDistanceManagerUpdates")
     protected abstract boolean aerogel$runDistanceManagerUpdates();
+
+    @Invoker("addTicketAndLoadWithRadius")
+    protected abstract CompletableFuture<?> aerogel$addTicketAndLoadWithRadius(
+        TicketType type, ChunkPos position, int radius);
+
+    @Invoker("addTicket")
+    protected abstract void aerogel$addTicket(Ticket ticket, ChunkPos position);
+
+    @Invoker("addTicketWithRadius")
+    protected abstract void aerogel$addTicketWithRadius(
+        TicketType type, ChunkPos position, int radius);
+
+    @Invoker("removeTicketWithRadius")
+    protected abstract void aerogel$removeTicketWithRadius(
+        TicketType type, ChunkPos position, int radius);
+
+    /**
+     * DistanceManager owns several fastutil collections that vanilla deliberately
+     * leaves non-concurrent, including chunksToUpdateFutures. Keep their mutation
+     * on the ServerChunkCache owner thread. A foreign caller publishes one
+     * coalesced request; it never enters the distance graph itself.
+     */
+    @Inject(method = "runDistanceManagerUpdates", at = @At("HEAD"), cancellable = true)
+    private void aerogel$ownDistanceManagerUpdates(
+        CallbackInfoReturnable<Boolean> callback
+    ) {
+        if (Thread.currentThread() != mainThread) {
+            if (aerogel$distanceUpdateQueued.compareAndSet(false, true)) {
+                NativeTickCoordinator.submitGlobalCommit(() -> {
+                    aerogel$distanceUpdateQueued.set(false);
+                    aerogel$runDistanceManagerUpdates();
+                });
+            }
+            callback.setReturnValue(false);
+            return;
+        }
+        if (aerogel$distanceUpdateRunning) {
+            aerogel$distanceUpdateRequested = true;
+            callback.setReturnValue(false);
+            return;
+        }
+        aerogel$distanceUpdateRunning = true;
+    }
+
+    @Inject(method = "runDistanceManagerUpdates", at = @At("RETURN"))
+    private void aerogel$finishDistanceManagerUpdates(
+        CallbackInfoReturnable<Boolean> callback
+    ) {
+        aerogel$distanceUpdateRunning = false;
+        if (!aerogel$distanceUpdateRequested) return;
+        aerogel$distanceUpdateRequested = false;
+        boolean followUpChangedChunks = aerogel$runDistanceManagerUpdates();
+        callback.setReturnValue(callback.getReturnValueZ() || followUpChangedChunks);
+    }
+
+    @Inject(
+        method = "addTicketAndLoadWithRadius(Lnet/minecraft/server/level/TicketType;"
+            + "Lnet/minecraft/world/level/ChunkPos;I)Ljava/util/concurrent/CompletableFuture;",
+        at = @At("HEAD"), cancellable = true
+    )
+    private void aerogel$ownTicketLoadTransaction(
+        TicketType type, ChunkPos position, int radius,
+        CallbackInfoReturnable<CompletableFuture<?>> callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        CompletableFuture<Object> published = new CompletableFuture<>();
+        NativeTickCoordinator.submitGlobalCommit(() -> {
+            try {
+                aerogel$addTicketAndLoadWithRadius(type, position, radius)
+                    .whenComplete((result, error) -> {
+                        if (error == null) published.complete(result);
+                        else published.completeExceptionally(error);
+                    });
+            } catch (Throwable error) {
+                published.completeExceptionally(error);
+            }
+        });
+        callback.setReturnValue(published);
+    }
+
+    @Inject(
+        method = "addTicket(Lnet/minecraft/server/level/Ticket;"
+            + "Lnet/minecraft/world/level/ChunkPos;)V",
+        at = @At("HEAD"), cancellable = true
+    )
+    private void aerogel$ownTicketAdd(
+        Ticket ticket, ChunkPos position, CallbackInfo callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        NativeTickCoordinator.submitGlobalCommit(() ->
+            aerogel$addTicket(ticket, position));
+        callback.cancel();
+    }
+
+    @Inject(
+        method = "addTicketWithRadius(Lnet/minecraft/server/level/TicketType;"
+            + "Lnet/minecraft/world/level/ChunkPos;I)V",
+        at = @At("HEAD"), cancellable = true
+    )
+    private void aerogel$ownRadiusTicketAdd(
+        TicketType type, ChunkPos position, int radius, CallbackInfo callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        NativeTickCoordinator.submitGlobalCommit(() ->
+            aerogel$addTicketWithRadius(type, position, radius));
+        callback.cancel();
+    }
+
+    @Inject(
+        method = "removeTicketWithRadius(Lnet/minecraft/server/level/TicketType;"
+            + "Lnet/minecraft/world/level/ChunkPos;I)V",
+        at = @At("HEAD"), cancellable = true
+    )
+    private void aerogel$ownRadiusTicketRemoval(
+        TicketType type, ChunkPos position, int radius, CallbackInfo callback
+    ) {
+        if (!NativeTickCoordinator.isNativeWorker()) return;
+        NativeTickCoordinator.submitGlobalCommit(() ->
+            aerogel$removeTicketWithRadius(type, position, radius));
+        callback.cancel();
+    }
 
     @Inject(method = "getChunkNow(II)Lnet/minecraft/world/level/chunk/LevelChunk;",
         at = @At("HEAD"), cancellable = true)
