@@ -41,6 +41,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import dev.aerogel.loader.internal.EntityContextOwnerBridge;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
@@ -155,6 +156,21 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
      */
     public int availableWorkerCount() {
         return Math.max(1, workers.getParallelism() - workers.getActiveThreadCount());
+    }
+
+    /**
+     * Runs one task for each stable ownership stripe on the Context pool and
+     * returns only after every owner has published its result. No stripe is ever
+     * entered concurrently by two tasks from the same invocation.
+     */
+    public void invokeOwnedStripes(int taskCount, IntConsumer task) {
+        Objects.requireNonNull(task, "task");
+        if (taskCount < 1) return;
+        if (taskCount == 1 || closed) {
+            for (int index = 0; index < taskCount; index++) task.accept(index);
+            return;
+        }
+        workers.invoke(new IndexedDispatchBatch(task, 0, taskCount));
     }
 
     long nextEpoch() {
@@ -974,6 +990,31 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             invokeAll(
                 new DispatchBatch(tasks, from, middle),
                 new DispatchBatch(tasks, middle, to));
+        }
+    }
+
+    @SuppressWarnings("serial")
+    private static final class IndexedDispatchBatch extends RecursiveAction {
+        private final IntConsumer task;
+        private final int from;
+        private final int to;
+
+        private IndexedDispatchBatch(IntConsumer task, int from, int to) {
+            this.task = task;
+            this.from = from;
+            this.to = to;
+        }
+
+        @Override
+        protected void compute() {
+            int length = to - from;
+            if (length == 1) {
+                task.accept(from);
+                return;
+            }
+            int middle = from + length / 2;
+            invokeAll(new IndexedDispatchBatch(task, from, middle),
+                new IndexedDispatchBatch(task, middle, to));
         }
     }
 

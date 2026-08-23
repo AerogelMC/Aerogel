@@ -6,11 +6,50 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ConcurrentLongSetTest {
+    @Test
+    void iteratorRestoresEveryExternallyVisibleKey() {
+        ConcurrentLongSet set = new ConcurrentLongSet();
+        long[] keys = {
+            0L, 1L, -1L, Long.MIN_VALUE, Long.MAX_VALUE,
+            WorldContextImpl.key(17, 17), WorldContextImpl.key(-17, -17)
+        };
+        for (long key : keys) set.add(key);
+
+        var observed = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        var iterator = set.iterator();
+        while (iterator.hasNext()) observed.add(iterator.nextLong());
+
+        assertEquals(keys.length, observed.size());
+        for (long key : keys) assertTrue(observed.contains(key));
+    }
+
+    @Test
+    void primitiveArrayMethodsAreImplementedByTheConcreteClass() throws Exception {
+        assertEquals(
+            ConcurrentLongSet.class,
+            ConcurrentLongSet.class.getMethod("toLongArray").getDeclaringClass()
+        );
+        assertEquals(
+            ConcurrentLongSet.class,
+            ConcurrentLongSet.class.getMethod("toArray", long[].class).getDeclaringClass()
+        );
+
+        ConcurrentLongSet set = new ConcurrentLongSet();
+        set.add(7L);
+        assertArrayEquals(new long[] {7L}, set.toLongArray());
+
+        long[] target = {Long.MIN_VALUE, Long.MAX_VALUE};
+        assertEquals(target, set.toArray(target));
+        assertEquals(7L, target[0]);
+        assertEquals(Long.MAX_VALUE, target[1]);
+    }
+
     @Test
     void parallelChunkOwnersCanPublishDistinctKeys() throws Exception {
         ConcurrentLongSet set = new ConcurrentLongSet();

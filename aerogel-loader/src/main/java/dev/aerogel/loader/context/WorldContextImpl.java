@@ -47,7 +47,8 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     ChunkContextImpl context(int chunkX, int chunkZ) {
         if (closed) throw new IllegalStateException("World context is closed");
         long key = key(chunkX, chunkZ);
-        return contexts.compute(key, (ignored, existing) ->
+        long indexKey = ConcurrentLong2ObjectMap.spread(key);
+        return contexts.compute(indexKey, (ignored, existing) ->
             existing != null && !existing.closed()
                 ? existing
                 : new ChunkContextImpl(this, scheduler, chunkX, chunkZ, key,
@@ -55,7 +56,8 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     }
 
     ChunkContextImpl existingContext(int chunkX, int chunkZ) {
-        ChunkContextImpl context = contexts.get(key(chunkX, chunkZ));
+        long key = ConcurrentLong2ObjectMap.spread(key(chunkX, chunkZ));
+        ChunkContextImpl context = contexts.get(key);
         return context != null && context.active() ? context : null;
     }
 
@@ -78,7 +80,8 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     void detach(LevelChunk chunk) {
         ChunkPos position = chunk.getPos();
         long key = key(position.x(), position.z());
-        ChunkContextImpl removed = contexts.remove(key);
+        ChunkContextImpl removed = contexts.remove(
+            ConcurrentLong2ObjectMap.spread(key));
         if (removed != null) removed.deactivate();
         if (chunk instanceof ChunkContextBridge bridge) bridge.aerogel$context(null);
     }

@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.PaddedAtomicLong;
+import dev.aerogel.loader.context.ConcurrentLongSet;
 import dev.aerogel.loader.internal.SimulationChunkTrackerBridge;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
 import net.minecraft.server.level.ChunkLevel;
@@ -11,25 +12,28 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.concurrent.ConcurrentHashMap;
-
 @Mixin(targets = "net.minecraft.server.level.SimulationChunkTracker")
 abstract class SimulationChunkTrackerMixin implements SimulationChunkTrackerBridge {
     @Shadow protected abstract int getLevel(long key);
-    @Unique private final ConcurrentHashMap<Long, Boolean> aerogel$entityTicking =
-        new ConcurrentHashMap<>();
+    @Unique private final ConcurrentLongSet aerogel$entityTicking =
+        new ConcurrentLongSet();
     @Unique private final PaddedAtomicLong aerogel$publicationVersion =
         new PaddedAtomicLong();
     @Unique private volatile LongConsumer aerogel$blockTickingListener = ignored -> { };
 
     @Inject(method = "setLevel(JI)V", at = @At("HEAD"))
     private void aerogel$publishLevel(long key, int level, CallbackInfo callback) {
-        if (ChunkLevel.isBlockTicking(getLevel(key)) != ChunkLevel.isBlockTicking(level)) {
+        int previous = getLevel(key);
+        if (ChunkLevel.isBlockTicking(previous) != ChunkLevel.isBlockTicking(level)) {
             aerogel$blockTickingListener.accept(key);
         }
+        boolean wasEntityTicking = ChunkLevel.isEntityTicking(previous);
+        boolean entityTicking = ChunkLevel.isEntityTicking(level);
+        if (wasEntityTicking == entityTicking) return;
+
         aerogel$publicationVersion.incrementAndGet();
-        if (ChunkLevel.isEntityTicking(level)) {
-            aerogel$entityTicking.put(key, Boolean.TRUE);
+        if (entityTicking) {
+            aerogel$entityTicking.add(key);
         } else {
             aerogel$entityTicking.remove(key);
         }
@@ -38,21 +42,21 @@ abstract class SimulationChunkTrackerMixin implements SimulationChunkTrackerBrid
 
     @Override
     public void aerogel$forEachEntityTickingChunk(LongConsumer consumer) {
-        Long[] snapshot;
+        long[] snapshot;
         while (true) {
             long before = aerogel$publicationVersion.get();
             if ((before & 1L) != 0L) {
                 Thread.onSpinWait();
                 continue;
             }
-            Long[] candidate = aerogel$entityTicking.keySet().toArray(Long[]::new);
+            long[] candidate = aerogel$entityTicking.toLongArray();
             long after = aerogel$publicationVersion.get();
             if (before == after && (after & 1L) == 0L) {
                 snapshot = candidate;
                 break;
             }
         }
-        for (Long key : snapshot) consumer.accept(key.longValue());
+        for (long key : snapshot) consumer.accept(key);
     }
 
     @Override

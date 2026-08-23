@@ -12,6 +12,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.entity.Entity;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import dev.aerogel.api.context.ContextSnapshot;
 import net.minecraft.server.level.ServerPlayer;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
@@ -79,6 +80,22 @@ public final class AerogelRuntime {
             return Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
         }
         return current.contexts().availableWorkerCount();
+    }
+
+    public static int contextWorkerCount() {
+        AerogelApiRuntime current = apiRuntime;
+        return current == null
+            ? Math.max(1, Runtime.getRuntime().availableProcessors() - 1)
+            : current.contexts().workerCount();
+    }
+
+    public static void invokeContextOwners(int ownerCount, IntConsumer task) {
+        AerogelApiRuntime current = apiRuntime;
+        if (current == null) {
+            for (int index = 0; index < ownerCount; index++) task.accept(index);
+            return;
+        }
+        current.contexts().invokeOwnedStripes(ownerCount, task);
     }
 
     public static void worldLoaded(ServerLevel level) {

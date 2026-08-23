@@ -12,11 +12,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
 
 /**
- * Concurrent writes with a versioned primitive-key read image.
+ * Concurrent point access with a versioned primitive-key iteration image.
  *
  * <p>Chunk visibility changes at load boundaries, while tick eligibility reads the
- * same state repeatedly. Readers rebuild only after an actual publication and never
- * lock a writer; a version change during copying simply retries the exact snapshot.</p>
+ * same state repeatedly. Point reads use the concurrent source directly: rebuilding
+ * every loaded status merely to answer one key turns a boundary transition into
+ * quadratic copying. Operations that enumerate the map still rebuild only after an
+ * actual publication and never lock a writer; a version change during copying simply
+ * retries the exact iteration snapshot.</p>
  */
 public final class PublishedLong2ObjectMap<V> extends Long2ObjectOpenHashMap<V> {
     private final ConcurrentHashMap<Long, V> writes = new ConcurrentHashMap<>();
@@ -28,19 +31,19 @@ public final class PublishedLong2ObjectMap<V> extends Long2ObjectOpenHashMap<V> 
 
     @Override
     public V get(long key) {
-        Long2ObjectOpenHashMap<V> current = readImage();
-        return current.containsKey(key) ? current.get(key) : defaultValue;
+        V current = writes.get(ConcurrentLong2ObjectMap.spread(key));
+        return current != null ? current : defaultValue;
     }
 
     @Override
     public V getOrDefault(long key, V fallback) {
-        Long2ObjectOpenHashMap<V> current = readImage();
-        return current.containsKey(key) ? current.get(key) : fallback;
+        V current = writes.get(ConcurrentLong2ObjectMap.spread(key));
+        return current != null ? current : fallback;
     }
 
     @Override
     public boolean containsKey(long key) {
-        return readImage().containsKey(key);
+        return writes.containsKey(ConcurrentLong2ObjectMap.spread(key));
     }
 
     @Override

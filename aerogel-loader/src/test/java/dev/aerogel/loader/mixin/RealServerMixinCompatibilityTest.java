@@ -41,6 +41,7 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.server.dedicated.DedicatedServer",
         "net.minecraft.server.dedicated.DedicatedServer$1",
         "net.minecraft.server.level.ChunkMap",
+        "net.minecraft.server.level.ChunkTracker",
         "net.minecraft.server.level.ChunkMap$TrackedEntity",
         "net.minecraft.server.level.GenerationChunkHolder",
         "net.minecraft.server.level.ServerChunkCache",
@@ -80,6 +81,7 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.world.level.PotentialCalculator",
         "net.minecraft.world.level.LocalMobCapCalculator",
         "net.minecraft.world.level.LocalMobCapCalculator$MobCounts",
+        "net.minecraft.world.level.lighting.DynamicGraphMinFixedPoint",
         "net.minecraft.world.level.NaturalSpawner",
         "net.minecraft.world.level.NaturalSpawner$SpawnState",
         "net.minecraft.world.level.redstone.CollectingNeighborUpdater$SimpleNeighborUpdate",
@@ -312,6 +314,131 @@ final class RealServerMixinCompatibilityTest {
             .invoke(storage, predicate, null);
         if ((boolean) shouldKeepActive.invoke(storage)) {
             throw new AssertionError("Predicate-removed active ticket remained indexed");
+        }
+
+        verifyExactSimulationDistances(
+            loader, storageType, ticketType, typeType, ticketConstructor);
+    }
+
+    private static void verifyExactSimulationDistances(
+        ClassLoader loader,
+        Class<?> storageType,
+        Class<?> ticketType,
+        Class<?> typeType,
+        Constructor<?> ticketConstructor
+    ) throws Exception {
+        Object storage = storageType.getConstructor().newInstance();
+        Method doesSimulate = typeType.getMethod("doesSimulate");
+        Object simulationType = null;
+        for (java.lang.reflect.Field field : typeType.getFields()) {
+            if (java.lang.reflect.Modifier.isStatic(field.getModifiers())
+                && field.getType() == typeType) {
+                Object candidate = field.get(null);
+                if ((boolean) doesSimulate.invoke(candidate)) {
+                    simulationType = candidate;
+                    break;
+                }
+            }
+        }
+        if (simulationType == null) {
+            throw new AssertionError("No vanilla simulation ticket type found");
+        }
+
+        Class<?> trackerType = Class.forName(
+            "net.minecraft.server.level.SimulationChunkTracker", true, loader);
+        Class<?> chunkPosType = Class.forName(
+            "net.minecraft.world.level.ChunkPos", true, loader);
+        Object tracker = trackerType.getConstructor(storageType).newInstance(storage);
+        Method add = storageType.getMethod("addTicket", long.class, ticketType);
+        Method remove = storageType.getMethod("removeTicket", long.class, ticketType);
+        Method runAllUpdates = trackerType.getMethod("runAllUpdates");
+        Method getLevel = trackerType.getMethod("getLevel", chunkPosType);
+        Method pack = chunkPosType.getMethod("pack", int.class, int.class);
+        Constructor<?> chunkPos = chunkPosType.getConstructor(int.class, int.class);
+
+        int firstX = -7;
+        int firstZ = 11;
+        int firstLevel = 29;
+        long firstKey = (long) pack.invoke(null, firstX, firstZ);
+        Object first = ticketConstructor.newInstance(simulationType, firstLevel);
+        if (!(boolean) add.invoke(storage, firstKey, first)) {
+            throw new AssertionError("Simulation ticket was not added");
+        }
+        runAllUpdates.invoke(tracker);
+        assertChebyshevField(
+            getLevel, tracker, chunkPos, firstX, firstZ, firstLevel);
+
+        int secondX = -4;
+        int secondZ = 9;
+        int secondLevel = 31;
+        long secondKey = (long) pack.invoke(null, secondX, secondZ);
+        Object second = ticketConstructor.newInstance(simulationType, secondLevel);
+        if (!(boolean) add.invoke(storage, secondKey, second)) {
+            throw new AssertionError("Overlapping simulation ticket was not added");
+        }
+        runAllUpdates.invoke(tracker);
+        for (int x = -12; x <= 1; x++) {
+            for (int z = 4; z <= 16; z++) {
+                int firstDistance = Math.max(Math.abs(x - firstX), Math.abs(z - firstZ));
+                int secondDistance = Math.max(Math.abs(x - secondX), Math.abs(z - secondZ));
+                int expected = Math.min(33, Math.min(
+                    firstLevel + firstDistance, secondLevel + secondDistance));
+                assertChunkLevel(getLevel, tracker, chunkPos, x, z, expected);
+            }
+        }
+
+        Object equivalentFirst = ticketConstructor.newInstance(
+            simulationType, firstLevel);
+        if (!(boolean) remove.invoke(storage, firstKey, equivalentFirst)) {
+            throw new AssertionError("Simulation ticket was not removed");
+        }
+        runAllUpdates.invoke(tracker);
+        assertChebyshevField(
+            getLevel, tracker, chunkPos, secondX, secondZ, secondLevel);
+
+        Object equivalentSecond = ticketConstructor.newInstance(
+            simulationType, secondLevel);
+        if (!(boolean) remove.invoke(storage, secondKey, equivalentSecond)) {
+            throw new AssertionError("Second simulation ticket was not removed");
+        }
+        runAllUpdates.invoke(tracker);
+        for (int x = -12; x <= 1; x++) {
+            for (int z = 4; z <= 16; z++) {
+                assertChunkLevel(getLevel, tracker, chunkPos, x, z, 33);
+            }
+        }
+    }
+
+    private static void assertChebyshevField(
+        Method getLevel,
+        Object tracker,
+        Constructor<?> chunkPos,
+        int sourceX,
+        int sourceZ,
+        int sourceLevel
+    ) throws Exception {
+        for (int x = sourceX - 6; x <= sourceX + 6; x++) {
+            for (int z = sourceZ - 6; z <= sourceZ + 6; z++) {
+                int distance = Math.max(Math.abs(x - sourceX), Math.abs(z - sourceZ));
+                assertChunkLevel(getLevel, tracker, chunkPos, x, z,
+                    Math.min(33, sourceLevel + distance));
+            }
+        }
+    }
+
+    private static void assertChunkLevel(
+        Method getLevel,
+        Object tracker,
+        Constructor<?> chunkPos,
+        int x,
+        int z,
+        int expected
+    ) throws Exception {
+        int actual = (int) getLevel.invoke(tracker, chunkPos.newInstance(x, z));
+        if (actual != expected) {
+            throw new AssertionError(
+                "Unexpected simulation level at [" + x + ", " + z
+                    + "]: expected=" + expected + ", actual=" + actual);
         }
     }
 
