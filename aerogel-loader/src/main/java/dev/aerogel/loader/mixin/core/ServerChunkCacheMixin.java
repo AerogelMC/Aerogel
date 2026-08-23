@@ -2,18 +2,23 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import net.minecraft.server.level.ChunkHolder;
+import net.minecraft.server.level.ChunkLevel;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ChunkResult;
+import net.minecraft.server.level.Ticket;
+import net.minecraft.server.level.TicketType;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.TicketStorage;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.LevelChunk;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.internal.ChunkMapTrackingBridge;
+import dev.aerogel.loader.internal.DistanceManagerBridge;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -27,6 +32,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.function.Consumer;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.LocalMobCapCalculator;
@@ -48,6 +54,14 @@ abstract class ServerChunkCacheMixin {
     protected abstract void aerogel$invokeTickSpawningChunk(
         LevelChunk chunk, long inhabitedTimeDelta, List<MobCategory> categories,
         NaturalSpawner.SpawnState spawnState);
+
+    @Invoker("getChunkFutureMainThread")
+    protected abstract CompletableFuture<ChunkResult<ChunkAccess>>
+        aerogel$getChunkFutureMainThread(
+            int chunkX, int chunkZ, ChunkStatus targetStatus, boolean create);
+
+    @Invoker("runDistanceManagerUpdates")
+    protected abstract boolean aerogel$runDistanceManagerUpdates();
 
     @Inject(method = "getChunkNow(II)Lnet/minecraft/world/level/chunk/LevelChunk;",
         at = @At("HEAD"), cancellable = true)
@@ -78,8 +92,8 @@ abstract class ServerChunkCacheMixin {
             return;
         }
 
-        ChunkResult<ChunkAccess> result = ((ServerChunkCache) (Object) this)
-            .getChunkFuture(chunkX, chunkZ, targetStatus, true).join();
+        ChunkResult<ChunkAccess> result = aerogel$loadNativeChunk(
+            chunkX, chunkZ, targetStatus);
         ChunkAccess loaded = result.orElse(null);
         if (loaded == null) {
             throw new IllegalStateException(
@@ -87,6 +101,52 @@ abstract class ServerChunkCacheMixin {
                     + " at status " + targetStatus + ": " + result.getError());
         }
         callback.setReturnValue(loaded);
+    }
+
+    /**
+     * Pins precisely the requested status while a native transaction consumes it.
+     * Vanilla's UNKNOWN ticket expires after one tick because the server thread uses
+     * managedBlock; a Context worker has a different lifetime and therefore owns an
+     * explicit request lease rather than an arbitrary timeout.
+     */
+    @Unique
+    private ChunkResult<ChunkAccess> aerogel$loadNativeChunk(
+        int chunkX, int chunkZ, ChunkStatus targetStatus
+    ) {
+        ChunkPos position = new ChunkPos(chunkX, chunkZ);
+        // TicketStorage de-duplicates by TicketType identity and level. A distinct
+        // type per in-flight request makes each lease independently removable.
+        TicketType leaseType = new TicketType(
+            TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING);
+        Ticket lease = new Ticket(leaseType, ChunkLevel.byStatus(targetStatus));
+        TicketStorage tickets = ((DistanceManagerBridge)
+            chunkMap.getDistanceManager()).aerogel$ticketStorage();
+        CompletableFuture<ChunkResult<ChunkAccess>> loaded = new CompletableFuture<>();
+
+        NativeTickCoordinator.submitGlobalCommit(() -> {
+            try {
+                tickets.addTicket(lease, position);
+                aerogel$runDistanceManagerUpdates();
+                aerogel$getChunkFutureMainThread(
+                    chunkX, chunkZ, targetStatus, false
+                ).whenComplete((result, error) -> {
+                    if (error == null) loaded.complete(result);
+                    else loaded.completeExceptionally(error);
+                });
+            } catch (Throwable error) {
+                loaded.completeExceptionally(error);
+            }
+        });
+
+        try {
+            return loaded.join();
+        } finally {
+            Runnable release = () -> NativeTickCoordinator.submitGlobalCommit(() -> {
+                tickets.removeTicket(lease, position);
+                aerogel$runDistanceManagerUpdates();
+            });
+            if (!NativeTickCoordinator.deferNativeCompletion(release)) release.run();
+        }
     }
 
     @Inject(method = "move(Lnet/minecraft/server/level/ServerPlayer;)V",

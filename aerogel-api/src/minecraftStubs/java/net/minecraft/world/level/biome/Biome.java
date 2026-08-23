@@ -1,4 +1,5 @@
 package net.minecraft.world.level.biome;
 
-public class Biome {
+/** Compile-time name stub. Not included in the Aerogel API JAR. */
+public final class Biome {
 }

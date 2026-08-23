@@ -8,4 +8,7 @@ public class TicketStorage {
     public interface TicketPredicate {
         boolean test(Ticket ticket, long chunkKey);
     }
+
+    public void addTicket(Ticket ticket, ChunkPos position) { }
+    public void removeTicket(Ticket ticket, ChunkPos position) { }
 }

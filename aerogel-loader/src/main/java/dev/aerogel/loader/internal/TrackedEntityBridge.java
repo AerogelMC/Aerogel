@@ -8,8 +8,7 @@ import java.util.List;
 public interface TrackedEntityBridge {
     Entity aerogel$entity();
     boolean aerogel$sectionChanged();
-    void aerogel$tickTracking(
-        List<ServerPlayer> players, DistanceManagerBridge distanceManager);
+    void aerogel$tickTracking(List<ServerPlayer> players, boolean entityTicking);
     void aerogel$updatePlayers(List<ServerPlayer> players);
     boolean aerogel$isSeenBy(Object connection);
     void aerogel$removePlayer(ServerPlayer player);

@@ -37,7 +37,7 @@ abstract class TrackedEntityMixin implements TrackedEntityBridge {
 
     @Override
     public void aerogel$tickTracking(
-        List<ServerPlayer> players, DistanceManagerBridge distanceManager
+        List<ServerPlayer> players, boolean entityTicking
     ) {
         SectionPos current = SectionPos.of(entity);
         boolean moved = !Objects.equals(lastSectionPos, current);
@@ -45,9 +45,7 @@ abstract class TrackedEntityMixin implements TrackedEntityBridge {
             updatePlayers(players);
             lastSectionPos = current;
         }
-        if (moved || entity.needsSync
-            || distanceManager.aerogel$isPublishedEntityTickingChunk(
-                current.chunk().pack())) {
+        if (moved || entity.needsSync || entityTicking) {
             serverEntity.sendChanges();
         }
     }

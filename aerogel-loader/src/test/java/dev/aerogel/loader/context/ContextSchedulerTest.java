@@ -528,6 +528,66 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void releasingNeighborhoodOwnershipFinishesAnOtherwiseIdleTick() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl primary = world.context(0, 0);
+            ChunkContextImpl secondary = world.context(1, 0);
+            CountDownLatch neighborhoodStarted = new CountDownLatch(1);
+            CountDownLatch releaseNeighborhood = new CountDownLatch(1);
+            CountDownLatch nextTickAdmitted = new CountDownLatch(1);
+
+            CompletableFuture<Void> reservation = primary.submit(
+                new long[] { primary.key(), secondary.key() }, () -> {
+                    neighborhoodStarted.countDown();
+                    await(releaseNeighborhood);
+                });
+            assertTrue(neighborhoodStarted.await(2, TimeUnit.SECONDS));
+
+            NativeTickToken blocked = new NativeTickToken(1L);
+            secondary.offerTickTask(blocked,
+                secondary::completeTickTask, () -> { });
+            blocked.seal();
+
+            NativeTickToken pending = new NativeTickToken(2L);
+            secondary.offerTickTask(pending, state -> {
+                nextTickAdmitted.countDown();
+                secondary.completeTickTask(state);
+            }, () -> { });
+            pending.seal();
+
+            releaseNeighborhood.countDown();
+            reservation.get(2, TimeUnit.SECONDS);
+            assertTrue(nextTickAdmitted.await(2, TimeUnit.SECONDS),
+                "releasing the final ownership blocker must recheck tick completion");
+        }
+    }
+
+    @Test
+    void registeringAContextAfterTokenSealStillClosesItsInput() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            ChunkContextImpl context =
+                new WorldContextImpl(scheduler, null).context(0, 0);
+            CountDownLatch nextTickAdmitted = new CountDownLatch(1);
+
+            NativeTickToken alreadySealed = new NativeTickToken(1L);
+            alreadySealed.seal();
+            context.offerTickTask(alreadySealed,
+                context::completeTickTask, () -> { });
+
+            NativeTickToken next = new NativeTickToken(2L);
+            context.offerTickTask(next, state -> {
+                nextTickAdmitted.countDown();
+                context.completeTickTask(state);
+            }, () -> { });
+            next.seal();
+
+            assertTrue(nextTickAdmitted.await(2, TimeUnit.SECONDS),
+                "a late registration must observe an already-closed token");
+        }
+    }
+
+    @Test
     void opposingNeighborhoodRequestsCompleteWithoutDeadlock() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(4)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);

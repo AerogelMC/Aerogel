@@ -56,11 +56,6 @@ abstract class SimulationChunkTrackerMixin implements SimulationChunkTrackerBrid
     }
 
     @Override
-    public boolean aerogel$isEntityTickingChunk(long chunkKey) {
-        return aerogel$entityTicking.containsKey(chunkKey);
-    }
-
-    @Override
     public void aerogel$blockTickingListener(LongConsumer listener) {
         aerogel$blockTickingListener = java.util.Objects.requireNonNull(listener, "listener");
     }

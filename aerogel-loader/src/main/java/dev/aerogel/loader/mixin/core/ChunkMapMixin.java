@@ -5,6 +5,7 @@ import dev.aerogel.loader.internal.DistanceManagerBridge;
 import dev.aerogel.loader.internal.ServerEntityBridge;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
+import dev.aerogel.loader.internal.GenerationNodeExecutorBridge;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -15,6 +16,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.DistanceManager;
+import net.minecraft.server.level.ChunkTaskDispatcher;
+import net.minecraft.server.level.GenerationChunkHolder;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.entity.EntityAccess;
@@ -34,7 +37,7 @@ import java.util.ArrayList;
 import dev.aerogel.loader.internal.LevelTicksBridge;
 
 @Mixin(targets = "net.minecraft.server.level.ChunkMap")
-abstract class ChunkMapMixin implements ChunkMapTrackingBridge {
+abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeExecutorBridge {
     private static final ThreadLocal<MoveSnapshot> AEROGEL_MOVE_SNAPSHOT =
         new ThreadLocal<>();
     private static final ObjectCollection<Object> AEROGEL_EMPTY_TRACKED_ENTITIES =
@@ -42,6 +45,7 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge {
 
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private Int2ObjectMap<Object> entityMap;
+    @Shadow @Final private ChunkTaskDispatcher worldgenTaskDispatcher;
     @Shadow public abstract DistanceManager getDistanceManager();
 
     @Inject(method = "onFullChunkStatusChange", at = @At("RETURN"))
@@ -64,8 +68,7 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge {
         cancellable = true
     )
     private void aerogel$tickPersistentTrackingIndex(CallbackInfo callback) {
-        AerogelRuntime.tickTrackedEntities(level, level.players(),
-            (DistanceManagerBridge) getDistanceManager());
+        AerogelRuntime.tickTrackedEntities(level, level.players());
         callback.cancel();
     }
 
@@ -93,6 +96,14 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge {
     @Override
     public Object aerogel$trackedEntity(int entityId) {
         return entityMap.get(entityId);
+    }
+
+    @Override
+    public void aerogel$submitGenerationNode(
+        GenerationChunkHolder holder, Runnable task
+    ) {
+        worldgenTaskDispatcher.submit(
+            task, holder.getPos().pack(), holder::getQueueLevel);
     }
 
     @Override

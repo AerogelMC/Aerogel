@@ -12,7 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class NativeTickToken {
     private final long serverTick;
     private final PaddedAtomicInteger producers = new PaddedAtomicInteger(1);
-    private final ConcurrentHashMap<ChunkContextImpl, ChunkContextImpl.TickState> contexts =
+    private final ConcurrentHashMap<ChunkContextImpl.TickState, ChunkContextImpl> contexts =
         new ConcurrentHashMap<>();
 
     NativeTickToken(long serverTick) {
@@ -35,7 +35,17 @@ final class NativeTickToken {
     void register(
         ChunkContextImpl context, ChunkContextImpl.TickState state
     ) {
-        contexts.putIfAbsent(context, state);
+        // A routed task may discover a new owner Context after the producer pass
+        // that created this token has returned. Hold a producer reference across
+        // publication so the zero transition cannot sweep the registry between
+        // the put and this registration becoming visible. If zero already won,
+        // close this state directly instead of publishing an orphaned input.
+        if (!retainProducer()) {
+            context.closeTickInput(state);
+            return;
+        }
+        contexts.putIfAbsent(state, context);
+        releaseProducer();
     }
 
     void releaseProducer() {
@@ -44,8 +54,9 @@ final class NativeTickToken {
             throw new IllegalStateException("Native tick producer released twice");
         }
         if (remaining != 0) return;
-        contexts.forEach(ChunkContextImpl::closeTickInput);
-        contexts.clear();
+        contexts.forEach((state, context) -> {
+            if (contexts.remove(state, context)) context.closeTickInput(state);
+        });
     }
 
     void seal() {

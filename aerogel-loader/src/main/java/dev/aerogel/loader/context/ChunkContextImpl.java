@@ -230,6 +230,7 @@ final class ChunkContextImpl implements ChunkContext {
         NeighborhoodLease reserved = reservation.get();
         if (reserved != null && reserved.primary() != this) {
             scheduled.set(false);
+            tryFinishActiveTick();
             reserved.primary().schedule();
             if (reservation.get() == null && hasTasks()) schedule();
             return;
@@ -237,6 +238,7 @@ final class ChunkContextImpl implements ChunkContext {
         NeighborhoodLease self = scheduler.newLease(this);
         if (!ownership.compareAndSet(null, self)) {
             scheduled.set(false);
+            tryFinishActiveTick();
             if (ownership.get() == null && hasTasks()) schedule();
             return;
         }
@@ -364,13 +366,13 @@ final class ChunkContextImpl implements ChunkContext {
             ? NativeTickCoordinator.currentServerTick()
             : activeTick.token.serverTick();
         ContextThreadState.enter(new ContextThreadState.AccessScope(this, ownedKeys));
+        Throwable failure = null;
         try {
             task.action().run();
             completed.increment();
-            complete(task, null);
         } catch (Throwable error) {
+            failure = error;
             failed.increment();
-            complete(task, error);
             LOGGER.log(Level.SEVERE,
                 "Chunk context task failed at " + chunkX + "," + chunkZ, error);
         } finally {
@@ -379,6 +381,9 @@ final class ChunkContextImpl implements ChunkContext {
             totalExecutionNanos.add(elapsed);
             recordTickExecution(measuredTick, elapsed);
         }
+        // Completion publishes both the action result and its accounting. A caller
+        // observing a completed Future must never race the MSPT publication.
+        complete(task, failure);
     }
 
     /**
@@ -420,9 +425,14 @@ final class ChunkContextImpl implements ChunkContext {
                 ? new TickWindow(created, null)
                 : new TickWindow(activeState, created);
             if (!tickWindow.compareAndSet(observed, updated)) continue;
-            token.register(this, created);
             if (pendingState != null) pendingState.cancel();
-            created.add(action);
+            try {
+                // Attach the first action before register may observe a token that
+                // has already reached zero and synchronously close its input.
+                created.add(action);
+            } finally {
+                token.register(this, created);
+            }
             return;
         }
         action.supersede();
@@ -516,6 +526,7 @@ final class ChunkContextImpl implements ChunkContext {
             throw new IllegalStateException("Neighborhood lease release mismatch");
         }
         wakeWaiters();
+        tryFinishActiveTick();
         if (hasTasks()) schedule();
     }
 

@@ -161,10 +161,9 @@ public final class AerogelRuntime {
 
     public static void tickTrackedEntities(
         ServerLevel level,
-        List<ServerPlayer> players,
-        DistanceManagerBridge distanceManager
+        List<ServerPlayer> players
     ) {
-        api().contexts().tickTrackedEntities(level, players, distanceManager);
+        api().contexts().tickTrackedEntities(level, players);
     }
 
     public static void playerChunkSent(

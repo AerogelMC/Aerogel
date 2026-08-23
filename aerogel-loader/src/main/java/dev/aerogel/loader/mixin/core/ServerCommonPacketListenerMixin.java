@@ -21,6 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.server.network.ServerCommonPacketListenerImpl")
 abstract class ServerCommonPacketListenerMixin {
+
     @ModifyVariable(
         method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
         at = @At("HEAD"), argsOnly = true

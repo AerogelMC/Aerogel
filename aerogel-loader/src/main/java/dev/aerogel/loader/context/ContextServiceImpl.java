@@ -669,8 +669,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
 
     public void tickTrackedEntities(
         ServerLevel level,
-        List<ServerPlayer> players,
-        DistanceManagerBridge distanceManager
+        List<ServerPlayer> players
     ) {
         if (closed || trackedByContext.isEmpty()) return;
         List<ServerPlayer> playerSnapshot = List.copyOf(players);
@@ -697,7 +696,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                     entry.getValue();
                 if (!context.active() || registrations.isEmpty()) continue;
                 submitTrackingContext(context, registrations, playerSnapshot,
-                    movedSnapshot, distanceManager, token);
+                    movedSnapshot, token);
             }
         }));
     }
@@ -707,7 +706,6 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ConcurrentHashMap<Entity, TrackedRegistration> registrations,
         List<ServerPlayer> players,
         List<ServerPlayer> movedPlayers,
-        DistanceManagerBridge distanceManager,
         NativeTickToken token
     ) {
         context.offerTickTask(token, tickState -> {
@@ -720,7 +718,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 List<TrackedRegistration> snapshot = List.copyOf(registrations.values());
                 NativeTickCoordinator.runNative(snapshot, registration ->
                     runTrackingRegistration(context, registration, players,
-                        movedPlayers, distanceManager, token),
+                        movedPlayers, token),
                     () -> context.completeTickTask(tickState));
             }, rejected);
             if (!accepted) rejected.run();
@@ -732,7 +730,6 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         TrackedRegistration registration,
         List<ServerPlayer> players,
         List<ServerPlayer> movedPlayers,
-        DistanceManagerBridge distanceManager,
         NativeTickToken token
     ) {
         long serverTick = token.serverTick();
@@ -745,12 +742,13 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 ConcurrentHashMap<Entity, TrackedRegistration> registrations =
                     trackedByContext.get(current);
                 if (registrations != null) submitTrackingContext(current, registrations,
-                    players, movedPlayers, distanceManager, token);
+                    players, movedPlayers, token);
             }
             return;
         }
         if (!registration.claim(serverTick)) return;
-        registration.tracked.aerogel$tickTracking(players, distanceManager);
+        registration.tracked.aerogel$tickTracking(
+            players, tickingEntities.containsKey(registration.entity));
         if (!movedPlayers.isEmpty()) {
             registration.tracked.aerogel$updatePlayers(movedPlayers);
         }
