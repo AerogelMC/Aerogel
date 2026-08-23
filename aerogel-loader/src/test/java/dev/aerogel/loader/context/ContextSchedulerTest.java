@@ -255,6 +255,38 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void reusedNativeFrameDoesNotLeakAttachmentsOrCommits() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            Object key = new Object();
+            AtomicInteger attachmentCreations = new AtomicInteger();
+            AtomicInteger committed = new AtomicInteger();
+
+            for (int value : List.of(1, 10)) {
+                context.submit(0, () -> NativeTickCoordinator.runNative(
+                    List.of(value), ignored -> {
+                        List<Integer> attachment = NativeTickCoordinator.nativeAttachment(
+                            key, () -> {
+                                attachmentCreations.incrementAndGet();
+                                return new ArrayList<>();
+                            });
+                        assertTrue(attachment.isEmpty(),
+                            "attachments must be transaction-local");
+                        attachment.add(value);
+                        NativeTickCoordinator.deferGlobalCommit(
+                            () -> committed.addAndGet(value));
+                    }, () -> { })).get(2, TimeUnit.SECONDS);
+            }
+
+            assertEquals(2, attachmentCreations.get());
+            assertEquals(0, committed.get());
+            NativeTickCoordinator.pumpMainThread();
+            assertEquals(11, committed.get());
+        }
+    }
+
+    @Test
     void entityLaneSubmitsOneOwnedTaskForOneChunkTickBatch() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);

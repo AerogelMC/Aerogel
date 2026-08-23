@@ -12,7 +12,8 @@ import java.util.function.Supplier;
 
 /** Coordinates the server-thread commit boundary around native context work. */
 public final class NativeTickCoordinator {
-    private static final ThreadLocal<NativeFrame> NATIVE_WORK = new ThreadLocal<>();
+    private static final ThreadLocal<NativeFrame> NATIVE_WORK =
+        ThreadLocal.withInitial(NativeFrame::new);
     private static final ConcurrentLinkedQueue<Runnable> GLOBAL_COMMITS =
         new ConcurrentLinkedQueue<>();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
@@ -43,11 +44,10 @@ public final class NativeTickCoordinator {
         Runnable committed,
         boolean commitBeforeContinuation
     ) {
-        if (NATIVE_WORK.get() != null) {
+        NativeFrame frame = NATIVE_WORK.get();
+        if (!frame.enter()) {
             throw new IllegalStateException("Nested native context work");
         }
-        NativeFrame frame = new NativeFrame();
-        NATIVE_WORK.set(frame);
         Throwable failure = null;
         try {
             for (T item : items) {
@@ -67,9 +67,16 @@ public final class NativeTickCoordinator {
         } finally {
             try {
                 for (Runnable completion : frame.nativeCompletions) completion.run();
+            } catch (Throwable error) {
+                // Match the old one-frame-per-transaction lifetime: a failed native
+                // completion must not leak this transaction's publications into the
+                // next transaction that happens to use the same worker.
+                frame.discard();
+                throw error;
             } finally {
-                NATIVE_WORK.remove();
+                frame.leaveNativePhase();
             }
+            FramePublication publication = frame.detachPublication();
             Runnable completion = () -> {
                 try {
                     committed.run();
@@ -77,16 +84,16 @@ public final class NativeTickCoordinator {
                     OUTSTANDING.decrementAndGet();
                 }
             };
-            if (frame.commits.isEmpty()) {
-                for (Runnable published : frame.afterGlobalCommits) published.run();
+            if (publication.commits.length == 0) {
+                for (Runnable published : publication.afterGlobalCommits) published.run();
                 completion.run();
             } else {
                 GLOBAL_COMMITS.add(() -> {
                     try {
-                        for (Runnable commit : frame.commits) commit.run();
+                        for (Runnable commit : publication.commits) commit.run();
                     } finally {
                         try {
-                            for (Runnable published : frame.afterGlobalCommits) {
+                            for (Runnable published : publication.afterGlobalCommits) {
                                 published.run();
                             }
                         } finally {
@@ -105,7 +112,7 @@ public final class NativeTickCoordinator {
         // off the ThreadLocal path while the frame check still rejects unrelated
         // ForkJoin pools exactly.
         return Thread.currentThread() instanceof ForkJoinWorkerThread
-            && NATIVE_WORK.get() != null;
+            && NATIVE_WORK.get().active;
     }
 
     public static void beginServerTick() {
@@ -130,7 +137,7 @@ public final class NativeTickCoordinator {
 
     public static boolean deferGlobalCommit(Runnable commit) {
         NativeFrame frame = NATIVE_WORK.get();
-        if (frame == null) return false;
+        if (!frame.active) return false;
         frame.commits.add(commit);
         return true;
     }
@@ -138,7 +145,7 @@ public final class NativeTickCoordinator {
     /** Runs after every global publication produced by the current native task. */
     static boolean afterGlobalCommit(Runnable completion) {
         NativeFrame frame = NATIVE_WORK.get();
-        if (frame == null) return false;
+        if (!frame.active) return false;
         frame.afterGlobalCommits.add(completion);
         return true;
     }
@@ -146,7 +153,7 @@ public final class NativeTickCoordinator {
     /** Adds owner-local work to the end of the current native transaction. */
     public static boolean deferNativeCompletion(Runnable completion) {
         NativeFrame frame = NATIVE_WORK.get();
-        if (frame == null) return false;
+        if (!frame.active) return false;
         frame.nativeCompletions.add(completion);
         return true;
     }
@@ -159,7 +166,7 @@ public final class NativeTickCoordinator {
     @SuppressWarnings("unchecked")
     public static <T> T nativeAttachment(Object key, Supplier<? extends T> factory) {
         NativeFrame frame = NATIVE_WORK.get();
-        if (frame == null) return null;
+        if (!frame.active) return null;
         Object existing = frame.attachments.get(key);
         if (existing != null) return (T) existing;
         T created = factory.get();
@@ -203,9 +210,51 @@ public final class NativeTickCoordinator {
     }
 
     private static final class NativeFrame {
+        private static final Runnable[] NO_ACTIONS = new Runnable[0];
+
+        private boolean active;
         private final List<Runnable> commits = new ArrayList<>();
         private final List<Runnable> afterGlobalCommits = new ArrayList<>();
         private final List<Runnable> nativeCompletions = new ArrayList<>();
         private final Map<Object, Object> attachments = new IdentityHashMap<>();
+
+        private boolean enter() {
+            if (active) return false;
+            active = true;
+            return true;
+        }
+
+        private void leaveNativePhase() {
+            active = false;
+            nativeCompletions.clear();
+            attachments.clear();
+        }
+
+        private FramePublication detachPublication() {
+            Runnable[] detachedCommits = commits.isEmpty()
+                ? NO_ACTIONS : commits.toArray(NO_ACTIONS);
+            Runnable[] detachedAfterCommits = afterGlobalCommits.isEmpty()
+                ? NO_ACTIONS : afterGlobalCommits.toArray(NO_ACTIONS);
+            commits.clear();
+            afterGlobalCommits.clear();
+            if (detachedCommits.length == 0 && detachedAfterCommits.length == 0) {
+                return FramePublication.EMPTY;
+            }
+            return new FramePublication(detachedCommits, detachedAfterCommits);
+        }
+
+        private void discard() {
+            commits.clear();
+            afterGlobalCommits.clear();
+            nativeCompletions.clear();
+            attachments.clear();
+        }
+    }
+
+    private record FramePublication(
+        Runnable[] commits, Runnable[] afterGlobalCommits
+    ) {
+        private static final FramePublication EMPTY =
+            new FramePublication(NativeFrame.NO_ACTIONS, NativeFrame.NO_ACTIONS);
     }
 }

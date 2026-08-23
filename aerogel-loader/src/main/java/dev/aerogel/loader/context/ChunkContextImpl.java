@@ -8,6 +8,8 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 import net.minecraft.util.RandomSource;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -16,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
+import jdk.internal.vm.annotation.Contended;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -439,7 +442,7 @@ final class ChunkContextImpl implements ChunkContext {
 
     void completeTickTask(TickState state) {
         if (state == null) return;
-        int remaining = state.tasks.decrementAndGet();
+        int remaining = state.decrementTasks();
         if (remaining < 0) {
             throw new IllegalStateException("Native tick task completed twice");
         }
@@ -447,7 +450,7 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     void closeTickInput(TickState state) {
-        state.inputClosed.set(true);
+        state.closeInput();
         tryFinishTick(state);
     }
 
@@ -457,8 +460,8 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private void tryFinishTick(TickState state) {
-        if (state.lifecycle.get() != TickLifecycle.ACTIVE || !state.inputClosed.get()
-            || state.tasks.get() != 0 || ownership.get() != null
+        if (state.lifecycle() != TickLifecycle.ACTIVE || !state.inputClosed()
+            || state.tasks() != 0 || ownership.get() != null
             || scheduled.get() || hasTasks()) return;
         while (true) {
             TickWindow observed = tickWindow.get();
@@ -468,7 +471,7 @@ final class ChunkContextImpl implements ChunkContext {
                 ? TickWindow.EMPTY : new TickWindow(next, null);
             if (!tickWindow.compareAndSet(observed, updated)) continue;
             finishMeasurement(state.token.serverTick());
-            state.lifecycle.set(TickLifecycle.CLOSED);
+            state.lifecycle(TickLifecycle.CLOSED);
             settledTick.accumulate(state.token.serverTick());
             if (next != null) next.activate();
             return;
@@ -648,23 +651,74 @@ final class ChunkContextImpl implements ChunkContext {
         return current != null && current.primary() == primary;
     }
 
+    /**
+     * One short-lived Context tick admission state.
+     *
+     * Keep the independently atomic fields in this single contended object. The
+     * previous representation allocated four separately padded wrapper objects per
+     * state, even though these fields belong to the same coherence domain and are
+     * normally read together while closing a local tick. Class-level contention
+     * padding still prevents two unrelated Context states from sharing a cache line.
+     */
+    @Contended
     static final class TickState {
+        private static final VarHandle TASKS;
+        private static final VarHandle INPUT_CLOSED;
+        private static final VarHandle LIFECYCLE;
+        private static final VarHandle DRAINING_ACTIONS;
+
+        static {
+            try {
+                MethodHandles.Lookup lookup = MethodHandles.lookup();
+                TASKS = lookup.findVarHandle(TickState.class, "tasks", int.class);
+                INPUT_CLOSED = lookup.findVarHandle(
+                    TickState.class, "inputClosed", int.class);
+                LIFECYCLE = lookup.findVarHandle(
+                    TickState.class, "lifecycle", TickLifecycle.class);
+                DRAINING_ACTIONS = lookup.findVarHandle(
+                    TickState.class, "drainingActions", int.class);
+            } catch (ReflectiveOperationException error) {
+                throw new ExceptionInInitializerError(error);
+            }
+        }
+
         private final ChunkContextImpl context;
         private final NativeTickToken token;
-        private final PaddedAtomicInteger tasks = new PaddedAtomicInteger();
-        private final PaddedAtomicBoolean inputClosed = new PaddedAtomicBoolean();
-        private final PaddedAtomicReference<TickLifecycle> lifecycle;
+        private volatile int tasks;
+        private volatile int inputClosed;
+        private volatile TickLifecycle lifecycle;
         private final ConcurrentLinkedQueue<TickAction> actions =
             new ConcurrentLinkedQueue<>();
-        private final PaddedAtomicBoolean drainingActions = new PaddedAtomicBoolean();
+        private volatile int drainingActions;
 
         private TickState(
             ChunkContextImpl context, NativeTickToken token, TickLifecycle lifecycle
         ) {
             this.context = context;
             this.token = token;
-            this.lifecycle = new PaddedAtomicReference<>(lifecycle);
+            this.lifecycle = lifecycle;
         }
+
+        private int tasks() { return (int) TASKS.getVolatile(this); }
+        private void incrementTasks() { TASKS.getAndAdd(this, 1); }
+        private int decrementTasks() { return (int) TASKS.getAndAdd(this, -1) - 1; }
+        private boolean inputClosed() {
+            return (int) INPUT_CLOSED.getVolatile(this) != 0;
+        }
+        private void closeInput() { INPUT_CLOSED.setVolatile(this, 1); }
+        private TickLifecycle lifecycle() {
+            return (TickLifecycle) LIFECYCLE.getVolatile(this);
+        }
+        private void lifecycle(TickLifecycle next) {
+            LIFECYCLE.setVolatile(this, next);
+        }
+        private boolean changeLifecycle(TickLifecycle expected, TickLifecycle next) {
+            return LIFECYCLE.compareAndSet(this, expected, next);
+        }
+        private boolean startDraining() {
+            return DRAINING_ACTIONS.compareAndSet(this, 0, 1);
+        }
+        private void stopDraining() { DRAINING_ACTIONS.setVolatile(this, 0); }
 
         private void add(TickAction action) {
             actions.add(action);
@@ -672,7 +726,7 @@ final class ChunkContextImpl implements ChunkContext {
         }
 
         private void activate() {
-            if (!lifecycle.compareAndSet(TickLifecycle.PENDING, TickLifecycle.ACTIVE)) {
+            if (!changeLifecycle(TickLifecycle.PENDING, TickLifecycle.ACTIVE)) {
                 return;
             }
             drainActions();
@@ -680,25 +734,25 @@ final class ChunkContextImpl implements ChunkContext {
         }
 
         private void cancel() {
-            TickLifecycle current = lifecycle.get();
+            TickLifecycle current = lifecycle();
             while (current != TickLifecycle.CANCELLED
                 && current != TickLifecycle.CLOSED) {
-                if (lifecycle.compareAndSet(current, TickLifecycle.CANCELLED)) break;
-                current = lifecycle.get();
+                if (changeLifecycle(current, TickLifecycle.CANCELLED)) break;
+                current = lifecycle();
             }
             drainActions();
         }
 
         private void drainActions() {
-            TickLifecycle current = lifecycle.get();
+            TickLifecycle current = lifecycle();
             if (current == TickLifecycle.PENDING
-                || !drainingActions.compareAndSet(false, true)) return;
+                || !startDraining()) return;
             try {
                 TickAction action;
                 while ((action = actions.poll()) != null) {
-                    current = lifecycle.get();
+                    current = lifecycle();
                     if (current == TickLifecycle.ACTIVE) {
-                        tasks.incrementAndGet();
+                        incrementTasks();
                         try {
                             action.admit(this);
                         } catch (Throwable error) {
@@ -710,7 +764,7 @@ final class ChunkContextImpl implements ChunkContext {
                     }
                 }
             } finally {
-                drainingActions.set(false);
+                stopDraining();
                 if (!actions.isEmpty()) drainActions();
             }
         }
