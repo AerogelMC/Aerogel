@@ -5,6 +5,7 @@ import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkLevel;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ChunkResult;
+import net.minecraft.server.level.GenerationChunkHolder;
 import net.minecraft.server.level.Ticket;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.core.SectionPos;
@@ -22,6 +23,7 @@ import dev.aerogel.loader.internal.ChunkMapTrackingBridge;
 import dev.aerogel.loader.internal.DistanceManagerBridge;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.gen.Invoker;
@@ -30,8 +32,11 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.util.profiling.ProfilerFiller;
 
 import java.util.function.Consumer;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,6 +56,8 @@ abstract class ServerChunkCacheMixin {
     @Unique private final AtomicBoolean aerogel$distanceUpdateQueued = new AtomicBoolean();
     @Unique private boolean aerogel$distanceUpdateRunning;
     @Unique private boolean aerogel$distanceUpdateRequested;
+    @Unique private final List<Runnable> aerogel$afterDistanceUpdates =
+        new ArrayList<>();
     @Unique private final AtomicBoolean aerogel$distancePublicationFollowUp =
         new AtomicBoolean();
     @Shadow public abstract ChunkAccess getChunk(
@@ -87,6 +94,92 @@ abstract class ServerChunkCacheMixin {
     protected abstract void aerogel$removeTicketWithRadius(
         TicketType type, ChunkPos position, int radius);
 
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void aerogel$registerMainServerBeforeInitialChunkLoads(
+        CallbackInfo callback
+    ) {
+        // Initial-spawn discovery performs synchronous chunk requests before the
+        // first tickServer invocation. Register here so an asynchronous distance
+        // generation can wake the server task pump during that bootstrap phase.
+        NativeTickCoordinator.registerMainServer(level.getServer());
+    }
+
+    /**
+     * @author Aerogel
+     * @reason Preserve vanilla's ticket and holder semantics while allowing the
+     * exact distance graph to publish asynchronously. The method itself never
+     * waits: callers that requested a future receive it immediately, while
+     * vanilla's synchronous getChunk caller retains its own managedBlock.
+     */
+    @Overwrite
+    private CompletableFuture<ChunkResult<ChunkAccess>> getChunkFutureMainThread(
+        int chunkX, int chunkZ, ChunkStatus targetStatus, boolean create
+    ) {
+        ChunkPos position = new ChunkPos(chunkX, chunkZ);
+        long key = position.pack();
+        int requiredLevel = ChunkLevel.byStatus(targetStatus);
+        ChunkHolder holder = aerogel$getVisibleChunk(key);
+
+        if (create) {
+            aerogel$addTicket(new Ticket(TicketType.UNKNOWN, requiredLevel), position);
+            if (aerogel$chunkAbsent(holder, requiredLevel)) {
+                ProfilerFiller profiler = Profiler.get();
+                profiler.push("chunkLoad");
+                try {
+                    aerogel$runDistanceManagerUpdates();
+                } finally {
+                    profiler.pop();
+                }
+
+                CompletableFuture<Void> publication =
+                    ((DistanceManagerBridge) distanceManager)
+                        .aerogel$loadingDistancePublication();
+                if (!publication.isDone()) {
+                    return publication.thenComposeAsync(ignored ->
+                        aerogel$schedulePublishedChunk(key, requiredLevel, targetStatus),
+                        level.getServer());
+                }
+                publication.join();
+                return aerogel$schedulePublishedChunk(
+                    key, requiredLevel, targetStatus);
+            }
+        }
+
+        if (aerogel$chunkAbsent(holder, requiredLevel)) {
+            return GenerationChunkHolder.UNLOADED_CHUNK_FUTURE;
+        }
+        return ((GenerationChunkHolderInvoker) (Object) holder)
+            .aerogel$scheduleChunkGenerationTask(targetStatus, chunkMap);
+    }
+
+    @Unique
+    private CompletableFuture<ChunkResult<ChunkAccess>> aerogel$schedulePublishedChunk(
+        long key, int requiredLevel, ChunkStatus targetStatus
+    ) {
+        if (aerogel$distanceUpdateRunning) {
+            CompletableFuture<Void> settled = new CompletableFuture<>();
+            aerogel$afterDistanceUpdates.add(() -> settled.complete(null));
+            aerogel$distanceUpdateRequested = true;
+            return settled.thenCompose(ignored ->
+                aerogel$schedulePublishedChunk(key, requiredLevel, targetStatus));
+        }
+        aerogel$runDistanceManagerUpdates();
+        ChunkHolder holder = aerogel$getVisibleChunk(key);
+        if (aerogel$chunkAbsent(holder, requiredLevel)) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "No chunk holder after ticket distance publication"));
+        }
+        return ((GenerationChunkHolderInvoker) (Object) holder)
+            .aerogel$scheduleChunkGenerationTask(targetStatus, chunkMap);
+    }
+
+    @Unique
+    private boolean aerogel$chunkAbsent(ChunkHolder holder, int requiredLevel) {
+        return holder == null
+            || ((GenerationChunkHolderInvoker) (Object) holder)
+                .aerogel$getTicketLevel() > requiredLevel;
+    }
+
     /**
      * DistanceManager owns several fastutil collections that vanilla deliberately
      * leaves non-concurrent, including chunksToUpdateFutures. Keep their mutation
@@ -113,9 +206,19 @@ abstract class ServerChunkCacheMixin {
             return;
         }
         aerogel$distanceUpdateRunning = true;
+        // ServerChunkCache's synchronous getChunk path pumps its private
+        // MainThreadExecutor rather than MinecraftServer's task queue. Treat
+        // distance publication as the same owner boundary so an asynchronously
+        // completed exact-distance generation cannot remain stranded in the
+        // global commit queue during initial-spawn discovery.
+        NativeTickCoordinator.pumpMainThread();
     }
 
-    @Inject(method = "runDistanceManagerUpdates", at = @At("RETURN"))
+    @Inject(
+        method = "runDistanceManagerUpdates",
+        at = @At("RETURN"),
+        cancellable = true
+    )
     private void aerogel$finishDistanceManagerUpdates(
         CallbackInfoReturnable<Boolean> callback
     ) {
@@ -124,6 +227,12 @@ abstract class ServerChunkCacheMixin {
             aerogel$distanceUpdateRequested = false;
             boolean followUpChangedChunks = aerogel$runDistanceManagerUpdates();
             callback.setReturnValue(callback.getReturnValueZ() || followUpChangedChunks);
+        }
+        if (!aerogel$distanceUpdateRunning && !aerogel$afterDistanceUpdates.isEmpty()) {
+            Runnable[] completions =
+                aerogel$afterDistanceUpdates.toArray(Runnable[]::new);
+            aerogel$afterDistanceUpdates.clear();
+            for (Runnable completion : completions) completion.run();
         }
         aerogel$scheduleDistancePublicationFollowUp();
     }

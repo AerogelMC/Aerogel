@@ -4,6 +4,7 @@ package net.minecraft.server.level;
 public class TicketType {
     public static final long NO_TIMEOUT = 0L;
     public static final int FLAG_LOADING = 2;
+    public static final TicketType UNKNOWN = null;
     public TicketType(long timeout, int flags) { }
     public boolean shouldKeepDimensionActive() { return false; }
     public boolean hasTimeout() { return false; }
