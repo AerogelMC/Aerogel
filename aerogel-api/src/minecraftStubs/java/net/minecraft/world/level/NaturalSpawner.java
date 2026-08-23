@@ -10,6 +10,10 @@ import java.util.function.Consumer;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public final class NaturalSpawner {
+    // Deliberately non-final in the compile stub so javac emits GETSTATIC and
+    // reads the Minecraft version's real constant instead of inlining a stub value.
+    public static int INSCRIBED_SQUARE_SPAWN_DISTANCE_CHUNK;
+
     private NaturalSpawner() { }
 
     public static SpawnState createState(

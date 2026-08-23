@@ -16,7 +16,10 @@ import java.util.function.BooleanSupplier;
  * the sole consumer of the segment queues, so prioritisation needs no lock.
  * Exactly one send is executed per event-loop turn: queued interactive traffic
  * can pass bulk chunk traffic without a large drain monopolising Netty itself.
- * Barriers split the queue into ordered segments and can never be crossed.</p>
+ * Barriers split the queue into ordered segments and can never be crossed.
+ * After the apparent last send, ownership is retained through one event-loop
+ * turn. A producer racing that turn reuses the existing wakeup instead of
+ * waking the selector again; no packet is combined with another packet.</p>
  */
 public final class ConnectionSendScheduler {
     private final Executor eventLoop;
@@ -73,9 +76,24 @@ public final class ConnectionSendScheduler {
             return;
         }
 
+        // Do not release ownership in the same turn that consumed the apparent
+        // tail. Server/context producers commonly publish the next packet while
+        // Netty is finishing this turn. An event-loop confirmation absorbs that
+        // race without a timer, a packet batch, or an external selector wakeup.
+        eventLoop.execute(this::confirmIdle);
+    }
+
+    private void confirmIdle() {
+        importSubmissions();
+        if (!pending.isEmpty()) {
+            drainTurn();
+            return;
+        }
         scheduled.set(false);
         if (inbox.isEmpty() || !scheduled.compareAndSet(false, true)) return;
-        eventLoop.execute(this::drainTurn);
+        // We are already in the connection's event loop. If publication raced
+        // the release above, claim and process it without scheduling a wakeup.
+        drainTurn();
     }
 
     private void importSubmissions() {

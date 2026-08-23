@@ -68,7 +68,32 @@ class ConnectionSendSchedulerTest {
             scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(1)));
 
         assertEquals(List.of(1), order);
-        assertEquals(0, eventLoop.queuedTasks());
+        // The queued task only confirms that no concurrent producer arrived;
+        // the packet itself was still sent synchronously in this turn.
+        assertEquals(1, eventLoop.queuedTasks());
+        eventLoop.runAll();
+        assertEquals(List.of(1), order);
+    }
+
+    @Test
+    void submissionBeforeIdleConfirmationReusesExistingWakeup() {
+        TestEventLoop eventLoop = new TestEventLoop();
+        ConnectionSendScheduler scheduler =
+            new ConnectionSendScheduler(eventLoop, eventLoop::inEventLoop);
+        List<Integer> order = new ArrayList<>();
+
+        scheduler.submit(PacketPriority.BULK, () -> order.add(1));
+        assertEquals(1, eventLoop.queuedTasks());
+        eventLoop.runOne();
+        assertEquals(List.of(1), order);
+        assertEquals(1, eventLoop.queuedTasks());
+
+        scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(2));
+        // Still just the idle-confirmation turn: the second producer did not
+        // enqueue another cross-thread event-loop wakeup.
+        assertEquals(1, eventLoop.queuedTasks());
+        eventLoop.runOne();
+        assertEquals(List.of(1, 2), order);
     }
 
     private static final class TestEventLoop implements java.util.concurrent.Executor {

@@ -56,6 +56,12 @@ public final class ExactChunkDistanceGraph {
     /** Applies every queued source delta and returns only destinations that changed. */
     public ChangeBatch apply(ParallelDispatcher dispatcher) {
         Objects.requireNonNull(dispatcher, "dispatcher");
+        // DistanceManager may ask several trackers for their already-published
+        // state during one server tick. Avoid allocating a primitive map for
+        // those overwhelmingly common empty drains. A producer racing after
+        // this observation is handled by the next drain, exactly as it was
+        // when poll() observed an empty queue below.
+        if (updates.peek() == null) return ChangeBatch.EMPTY;
         Long2IntOpenHashMap latest = new Long2IntOpenHashMap();
         latest.defaultReturnValue(maximumLevel);
         SourceUpdate update;

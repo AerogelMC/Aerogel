@@ -5,10 +5,12 @@ import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.network.AsyncCompressionEncoder;
 import dev.aerogel.loader.network.ConnectionSendScheduler;
 import dev.aerogel.loader.network.OutboundPacketPriority;
+import dev.aerogel.loader.network.PendingActionDrainGate;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelPipeline;
 import net.minecraft.network.CompressionDecoder;
+import net.minecraft.network.Connection;
 import net.minecraft.network.TickablePacketListener;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import org.spongepowered.asm.mixin.Mixin;
@@ -23,14 +25,52 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.Packet;
 
+import java.util.Queue;
+
 @Mixin(targets = "net.minecraft.network.Connection")
 abstract class ConnectionMixin {
     @Shadow private Channel channel;
     @Unique private ConnectionSendScheduler aerogel$sendScheduler;
+    @Unique private final PendingActionDrainGate aerogel$pendingDrain =
+        new PendingActionDrainGate();
 
     @Invoker("doSendPacket")
     protected abstract void aerogel$doSendPacket(
         Packet<?> packet, ChannelFutureListener listener, boolean flush);
+
+    @Invoker("flushQueue")
+    protected abstract void aerogel$flushPendingActions();
+
+    @Redirect(
+        method = {
+            "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;Z)V",
+            "runOnceConnected(Ljava/util/function/Consumer;)V",
+            "tick()V"
+        },
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/network/Connection;flushQueue()V")
+    )
+    private void aerogel$drainPendingActionsWhenChanged(Connection connection) {
+        long generation = aerogel$pendingDrain.requiredGeneration();
+        if (generation == PendingActionDrainGate.NONE) return;
+        aerogel$flushPendingActions();
+        if (channel != null && channel.isOpen()) {
+            aerogel$pendingDrain.drained(generation);
+        }
+    }
+
+    @Redirect(
+        method = {
+            "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;Z)V",
+            "runOnceConnected(Ljava/util/function/Consumer;)V",
+            "flushChannel()V"
+        },
+        at = @At(value = "INVOKE", target = "Ljava/util/Queue;add(Ljava/lang/Object;)Z")
+    )
+    private boolean aerogel$publishPendingAction(Queue<Object> queue, Object action) {
+        boolean added = queue.add(action);
+        if (added) aerogel$pendingDrain.published();
+        return added;
+    }
 
     @Inject(
         method = "setupCompression",

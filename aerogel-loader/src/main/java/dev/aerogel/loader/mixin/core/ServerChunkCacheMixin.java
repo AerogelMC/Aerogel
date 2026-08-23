@@ -304,6 +304,21 @@ abstract class ServerChunkCacheMixin {
 
     @Redirect(
         method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;J)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "getAllEntities()Ljava/lang/Iterable;")
+    )
+    private Iterable<Entity> aerogel$deferNaturalSpawnEntitySnapshot(
+        ServerLevel level
+    ) {
+        // The createState redirect below deliberately prepares the exact entity
+        // image after the preceding Context wave completes. Java evaluates the
+        // original argument before entering that redirect, so allowing this call
+        // to proceed would build and immediately discard a second full snapshot.
+        return List.of();
+    }
+
+    @Redirect(
+        method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;J)V",
         at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/NaturalSpawner;"
             + "createState(ILjava/lang/Iterable;"
             + "Lnet/minecraft/world/level/NaturalSpawner$ChunkGetter;"
