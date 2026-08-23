@@ -3,18 +3,21 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.restart.RestartCoordinator;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.network.AsyncCompressionEncoder;
+import dev.aerogel.loader.network.ConnectionSendScheduler;
 import dev.aerogel.loader.network.OutboundPacketPriority;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelPipeline;
 import net.minecraft.network.CompressionDecoder;
 import net.minecraft.network.TickablePacketListener;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.network.PacketListener;
@@ -23,6 +26,11 @@ import net.minecraft.network.protocol.Packet;
 @Mixin(targets = "net.minecraft.network.Connection")
 abstract class ConnectionMixin {
     @Shadow private Channel channel;
+    @Unique private ConnectionSendScheduler aerogel$sendScheduler;
+
+    @Invoker("doSendPacket")
+    protected abstract void aerogel$doSendPacket(
+        Packet<?> packet, ChannelFutureListener listener, boolean flush);
 
     @Inject(
         method = "setupCompression",
@@ -96,15 +104,27 @@ abstract class ConnectionMixin {
         }
     }
 
-    @ModifyArg(
+    @Inject(
         method = "sendPacket",
         at = @At(
-            value = "INVOKE",
-            target = "Lio/netty/channel/EventLoop;execute(Ljava/lang/Runnable;)V"
+            value = "FIELD",
+            target = "Lnet/minecraft/network/Connection;sentPackets:I",
+            opcode = org.objectweb.asm.Opcodes.PUTFIELD,
+            shift = At.Shift.AFTER
         ),
-        index = 0
+        cancellable = true
     )
-    private Runnable aerogel$carryPacketPriority(Runnable action) {
-        return OutboundPacketPriority.carry(action);
+    private void aerogel$scheduleBeforeNetty(
+        Packet<?> packet, ChannelFutureListener listener, boolean flush,
+        CallbackInfo callbackInfo
+    ) {
+        ConnectionSendScheduler scheduler = aerogel$sendScheduler;
+        if (scheduler == null) {
+            scheduler = new ConnectionSendScheduler(channel.eventLoop());
+            aerogel$sendScheduler = scheduler;
+        }
+        scheduler.submit(OutboundPacketPriority.classify(packet),
+            () -> aerogel$doSendPacket(packet, listener, flush));
+        callbackInfo.cancel();
     }
 }

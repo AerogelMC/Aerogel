@@ -7,9 +7,6 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import net.minecraft.network.protocol.BundleDelimiterPacket;
 import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.game.ClientboundChunkBatchFinishedPacket;
-import net.minecraft.network.protocol.game.ClientboundChunkBatchStartPacket;
-import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
@@ -37,13 +34,8 @@ abstract class PacketEncoderMixin {
         PacketPriority priority;
         if (delimiter || aerogel$insideBundle || packet.isTerminal()) {
             priority = PacketPriority.BARRIER;
-        } else if (OutboundPacketPriority.current() == PacketPriority.BULK
-            || packet instanceof ClientboundLevelChunkWithLightPacket
-            || packet instanceof ClientboundChunkBatchStartPacket
-            || packet instanceof ClientboundChunkBatchFinishedPacket) {
-            priority = PacketPriority.BULK;
         } else {
-            priority = PacketPriority.INTERACTIVE;
+            priority = OutboundPacketPriority.classify(packet);
         }
         encoder.markNextWrite(priority);
         if (delimiter) aerogel$insideBundle = !aerogel$insideBundle;
