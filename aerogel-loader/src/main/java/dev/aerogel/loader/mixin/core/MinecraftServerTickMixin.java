@@ -38,7 +38,16 @@ abstract class MinecraftServerTickMixin {
 
     @Inject(method = "stopServer", at = @At("HEAD"))
     private void aerogel$drainContextsBeforeStop(CallbackInfo callbackInfo) {
+        NativeTickCoordinator.beginShutdownDrain();
         NativeTickCoordinator.drainForShutdown();
+    }
+
+    @Inject(method = "stopServer", at = @At("RETURN"))
+    private void aerogel$closeContextsAfterStop(CallbackInfo callbackInfo) {
+        // Vanilla still pumps server tasks while saving and closing worlds. Keep
+        // Context producers alive until those futures can publish their terminal
+        // completion; closing them at HEAD leaves waitForTasks with no producer.
         AerogelRuntime.stopContextDispatch();
+        NativeTickCoordinator.finishShutdownDrain();
     }
 }

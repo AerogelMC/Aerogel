@@ -21,6 +21,7 @@ public final class NativeTickCoordinator {
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
     private static final AtomicBoolean MAIN_WAKE_SCHEDULED = new AtomicBoolean();
     private static volatile MinecraftServer mainServer;
+    private static volatile boolean shutdownDraining;
     private static final PaddedAtomicLong SERVER_TICK = new PaddedAtomicLong();
     private static final PaddedAtomicReference<NativeTickToken> CURRENT_TICK =
         new PaddedAtomicReference<>();
@@ -128,6 +129,21 @@ public final class NativeTickCoordinator {
 
     public static void registerMainServer(MinecraftServer server) {
         mainServer = server;
+        shutdownDraining = false;
+    }
+
+    /**
+     * Prevents MinecraftServer.execute from becoming a foreign-thread inline
+     * executor after vanilla has stopped accepting ordinary server tasks.
+     * The server thread explicitly pumps GLOBAL_COMMITS during shutdown.
+     */
+    public static void beginShutdownDrain() {
+        shutdownDraining = true;
+    }
+
+    public static void finishShutdownDrain() {
+        mainServer = null;
+        MAIN_WAKE_SCHEDULED.set(false);
     }
 
     public static void endServerTick() {
@@ -220,7 +236,7 @@ public final class NativeTickCoordinator {
 
     private static void wakeMainThread() {
         MinecraftServer server = mainServer;
-        if (server == null || server.isSameThread()
+        if (server == null || shutdownDraining || server.isSameThread()
             || !MAIN_WAKE_SCHEDULED.compareAndSet(false, true)) return;
         server.execute(() -> {
             MAIN_WAKE_SCHEDULED.set(false);

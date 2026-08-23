@@ -285,20 +285,32 @@ abstract class ServerChunkCacheMixin {
         TicketType leaseType = new TicketType(
             TicketType.NO_TIMEOUT, TicketType.FLAG_LOADING);
         Ticket lease = new Ticket(leaseType, ChunkLevel.byStatus(targetStatus));
-        TicketStorage tickets = ((DistanceManagerBridge)
-            chunkMap.getDistanceManager()).aerogel$ticketStorage();
+        DistanceManagerBridge distance = (DistanceManagerBridge)
+            chunkMap.getDistanceManager();
+        TicketStorage tickets = distance.aerogel$ticketStorage();
         CompletableFuture<ChunkResult<ChunkAccess>> loaded = new CompletableFuture<>();
 
         NativeTickCoordinator.submitGlobalCommit(() -> {
             try {
                 tickets.addTicket(lease, position);
                 aerogel$runDistanceManagerUpdates();
-                aerogel$getChunkFutureMainThread(
-                    chunkX, chunkZ, targetStatus, false
-                ).whenComplete((result, error) -> {
-                    if (error == null) loaded.complete(result);
-                    else loaded.completeExceptionally(error);
-                });
+                CompletableFuture<Void> publication =
+                    distance.aerogel$loadingDistancePublication();
+                if (publication.isDone()) {
+                    publication.join();
+                    aerogel$requestNativeChunkAfterDistancePublication(
+                        position, targetStatus, tickets, loaded);
+                } else {
+                    publication.whenComplete((ignored, publicationError) -> {
+                        if (publicationError != null) {
+                            loaded.completeExceptionally(publicationError);
+                            return;
+                        }
+                        NativeTickCoordinator.submitGlobalCommit(() ->
+                            aerogel$requestNativeChunkAfterDistancePublication(
+                                position, targetStatus, tickets, loaded));
+                    });
+                }
             } catch (Throwable error) {
                 loaded.completeExceptionally(error);
             }
@@ -312,6 +324,67 @@ abstract class ServerChunkCacheMixin {
                 aerogel$runDistanceManagerUpdates();
             });
             if (!NativeTickCoordinator.deferNativeCompletion(release)) release.run();
+        }
+    }
+
+    @Unique
+    private void aerogel$requestNativeChunkAfterDistancePublication(
+        ChunkPos position, ChunkStatus targetStatus, TicketStorage tickets,
+        CompletableFuture<ChunkResult<ChunkAccess>> loaded
+    ) {
+        try {
+            // The explicit request lease already owns the exact generation
+            // level. Publish the dependent holder state, then schedule on that
+            // holder directly. Calling vanilla getChunkFutureMainThread with
+            // create=true here would add a second, one-tick UNKNOWN ticket and
+            // start another asynchronous distance wave that this request does
+            // not own.
+            aerogel$runDistanceManagerUpdates();
+            long key = position.pack();
+            int requiredLevel = ChunkLevel.byStatus(targetStatus);
+            int publishedTicketLevel = tickets.getTicketLevelAt(key, false);
+            ChunkHolder holder = aerogel$getVisibleChunk(key);
+            GenerationChunkHolderInvoker holderInvoker = holder == null ? null
+                : (GenerationChunkHolderInvoker) (Object) holder;
+            int holderLevel = holderInvoker == null
+                ? Integer.MAX_VALUE : holderInvoker.aerogel$getTicketLevel();
+            if (holder == null || holderLevel > requiredLevel) {
+                throw new IllegalStateException(
+                    "Native chunk lease was published without an eligible holder at "
+                        + position + " (requiredLevel=" + requiredLevel
+                        + ", ticketStorageLevel=" + publishedTicketLevel
+                        + ", holderLevel="
+                        + (holder == null ? "missing" : holderLevel) + ")");
+            }
+
+            int scheduledHolderLevel = holderLevel;
+            CompletableFuture<ChunkResult<ChunkAccess>> generation =
+                holderInvoker.aerogel$scheduleChunkGenerationTask(targetStatus, chunkMap);
+            boolean completedAtSubmission = generation.isDone();
+            generation.whenComplete((result, error) -> {
+                if (error != null) {
+                    loaded.completeExceptionally(error);
+                    return;
+                }
+                if (result.orElse(null) != null) {
+                    loaded.complete(result);
+                    return;
+                }
+                ChunkHolder current = aerogel$getVisibleChunk(key);
+                loaded.complete(ChunkResult.error(
+                    result.getError() + " (position=" + position
+                        + ", requiredLevel=" + requiredLevel
+                        + ", completedAtSubmission=" + completedAtSubmission
+                        + ", scheduledHolderLevel=" + scheduledHolderLevel
+                        + ", currentHolderLevel="
+                        + (current == null ? "missing"
+                            : ((GenerationChunkHolderInvoker) (Object) current)
+                                .aerogel$getTicketLevel())
+                        + ", currentTicketStorageLevel="
+                        + tickets.getTicketLevelAt(key, false) + ")"));
+            });
+        } catch (Throwable error) {
+            loaded.completeExceptionally(error);
         }
     }
 

@@ -53,6 +53,12 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
     }
 
     @Override
+    public void aerogel$spawnDistanceListener(LongConsumer listener) {
+        ((NaturalSpawnDistanceBridge) naturalSpawnChunkCounter)
+            .aerogel$spawnDistanceListener(listener);
+    }
+
+    @Override
     public TicketStorage aerogel$ticketStorage() {
         return ticketStorage;
     }
@@ -63,18 +69,25 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
             .aerogel$publicationAfterQueuedUpdates();
     }
 
+    /**
+     * Holder status updates in chunksToUpdateFutures describe generations that
+     * are already published and must never be starved by a newer distance wave.
+     * Player-loading ticket release is different: vanilla requires the holder
+     * materialized by that wave to exist before releasing its throttling token.
+     * Defer only that dependent tail.
+     */
     @Inject(
         method = "runAllUpdates",
         at = @At(
             value = "FIELD",
             target = "Lnet/minecraft/server/level/DistanceManager;"
-                + "chunksToUpdateFutures:Ljava/util/Set;",
+                + "ticketsToRelease:Lit/unimi/dsi/fastutil/longs/LongSet;",
             opcode = Opcodes.GETFIELD,
             ordinal = 0
         ),
         cancellable = true
     )
-    private void aerogel$deferLoadingDependentTail(
+    private void aerogel$deferTicketReleaseUntilLoadingPublication(
         ChunkMap chunkMap, CallbackInfoReturnable<Boolean> callback
     ) {
         if (!aerogel$loadingDistancePublication().isDone()) {

@@ -10,6 +10,7 @@ public interface DistanceManagerBridge {
     void aerogel$blockTickingListener(LongConsumer listener);
     TriState aerogel$publishedPlayersNearby(long chunkKey);
     long aerogel$spawnDistanceVersion();
+    void aerogel$spawnDistanceListener(LongConsumer listener);
     TicketStorage aerogel$ticketStorage();
     CompletableFuture<Void> aerogel$loadingDistancePublication();
 }
