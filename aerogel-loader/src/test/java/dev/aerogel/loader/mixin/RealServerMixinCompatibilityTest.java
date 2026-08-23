@@ -364,7 +364,8 @@ final class RealServerMixinCompatibilityTest {
         if (!(boolean) add.invoke(storage, firstKey, first)) {
             throw new AssertionError("Simulation ticket was not added");
         }
-        runAllUpdates.invoke(tracker);
+        awaitExactLevel(runAllUpdates, getLevel, tracker, chunkPos,
+            firstX, firstZ, firstLevel);
         assertChebyshevField(
             getLevel, tracker, chunkPos, firstX, firstZ, firstLevel);
 
@@ -376,7 +377,8 @@ final class RealServerMixinCompatibilityTest {
         if (!(boolean) add.invoke(storage, secondKey, second)) {
             throw new AssertionError("Overlapping simulation ticket was not added");
         }
-        runAllUpdates.invoke(tracker);
+        awaitExactLevel(runAllUpdates, getLevel, tracker, chunkPos,
+            secondX, secondZ, secondLevel);
         for (int x = -12; x <= 1; x++) {
             for (int z = 4; z <= 16; z++) {
                 int firstDistance = Math.max(Math.abs(x - firstX), Math.abs(z - firstZ));
@@ -392,7 +394,9 @@ final class RealServerMixinCompatibilityTest {
         if (!(boolean) remove.invoke(storage, firstKey, equivalentFirst)) {
             throw new AssertionError("Simulation ticket was not removed");
         }
-        runAllUpdates.invoke(tracker);
+        awaitExactLevel(runAllUpdates, getLevel, tracker, chunkPos,
+            firstX, firstZ, Math.min(33, secondLevel
+                + Math.max(Math.abs(firstX - secondX), Math.abs(firstZ - secondZ))));
         assertChebyshevField(
             getLevel, tracker, chunkPos, secondX, secondZ, secondLevel);
 
@@ -401,12 +405,36 @@ final class RealServerMixinCompatibilityTest {
         if (!(boolean) remove.invoke(storage, secondKey, equivalentSecond)) {
             throw new AssertionError("Second simulation ticket was not removed");
         }
-        runAllUpdates.invoke(tracker);
+        awaitExactLevel(runAllUpdates, getLevel, tracker, chunkPos,
+            secondX, secondZ, 33);
         for (int x = -12; x <= 1; x++) {
             for (int z = 4; z <= 16; z++) {
                 assertChunkLevel(getLevel, tracker, chunkPos, x, z, 33);
             }
         }
+    }
+
+    private static void awaitExactLevel(
+        Method runAllUpdates,
+        Method getLevel,
+        Object tracker,
+        Constructor<?> chunkPos,
+        int x,
+        int z,
+        int expected
+    ) throws Exception {
+        Object position = chunkPos.newInstance(x, z);
+        Method pumpMainThread = tracker.getClass().getClassLoader()
+            .loadClass("dev.aerogel.loader.context.NativeTickCoordinator")
+            .getMethod("pumpMainThread");
+        long deadline = System.nanoTime() + 5_000_000_000L;
+        do {
+            runAllUpdates.invoke(tracker);
+            pumpMainThread.invoke(null);
+            if ((int) getLevel.invoke(tracker, position) == expected) return;
+            Thread.onSpinWait();
+        } while (System.nanoTime() < deadline);
+        assertChunkLevel(getLevel, tracker, chunkPos, x, z, expected);
     }
 
     private static void assertChebyshevField(

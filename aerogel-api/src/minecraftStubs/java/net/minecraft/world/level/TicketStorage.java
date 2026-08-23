@@ -11,4 +11,6 @@ public class TicketStorage {
 
     public void addTicket(Ticket ticket, ChunkPos position) { }
     public void removeTicket(Ticket ticket, ChunkPos position) { }
+    public boolean removeTicket(long chunkKey, Ticket ticket) { return false; }
+    public void setDirty() { }
 }

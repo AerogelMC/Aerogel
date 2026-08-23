@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
+import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -44,6 +46,22 @@ final class ConcurrentLongSortedSetTest {
         assertEquals(7L, iterator.nextLong());
         assertTrue(iterator.hasPrevious());
         assertEquals(7L, iterator.previousLong());
+    }
+
+    @Test
+    void persistentAvlMatchesAReferenceSetAcrossMutations() {
+        ConcurrentLongSortedSet actual = new ConcurrentLongSortedSet();
+        TreeSet<Long> expected = new TreeSet<>();
+        SplittableRandom random = new SplittableRandom(0xA3E0_26_02L);
+        for (int operation = 0; operation < 20_000; operation++) {
+            long value = random.nextLong(-2_000, 2_000);
+            if (random.nextBoolean()) assertEquals(expected.add(value), actual.add(value));
+            else assertEquals(expected.remove(value), actual.remove(value));
+            if ((operation & 255) == 0) {
+                assertEquals(new ArrayList<>(expected), collect(actual.iterator()));
+            }
+        }
+        assertEquals(new ArrayList<>(expected), collect(actual.iterator()));
     }
 
     private static List<Long> collect(LongBidirectionalIterator iterator) {

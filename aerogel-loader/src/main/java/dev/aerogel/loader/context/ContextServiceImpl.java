@@ -33,7 +33,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -86,13 +85,13 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     private final AtomicLong nextEpoch = new AtomicLong(1L);
     private final AtomicLong nextLease = new AtomicLong(1L);
     private final AtomicInteger workerIds = new AtomicInteger();
-    private final ThreadLocal<EntityBuffers> entityBuffers =
-        ThreadLocal.withInitial(EntityBuffers::new);
-    private final ThreadLocal<BlockEntityBuffers> blockEntityBuffers =
-        ThreadLocal.withInitial(BlockEntityBuffers::new);
-    private final ThreadLocal<OwnedTaskBuffers> ownedTaskBuffers =
-        ThreadLocal.withInitial(OwnedTaskBuffers::new);
-    private final ThreadLocal<List<Runnable>> dispatchBatch = new ThreadLocal<>();
+    private final ContextWorkerLocal<EntityBuffers> entityBuffers =
+        ContextWorkerLocal.withInitial(EntityBuffers::new);
+    private final ContextWorkerLocal<BlockEntityBuffers> blockEntityBuffers =
+        ContextWorkerLocal.withInitial(BlockEntityBuffers::new);
+    private final ContextWorkerLocal<OwnedTaskBuffers> ownedTaskBuffers =
+        ContextWorkerLocal.withInitial(OwnedTaskBuffers::new);
+    private final ContextWorkerLocal<List<Runnable>> dispatchBatch = ContextWorkerLocal.create();
     private final int workerCount;
     private final ForkJoinPool workers;
     private volatile boolean closed;
@@ -105,8 +104,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         if (workerCount < 1) throw new IllegalArgumentException("workerCount must be positive");
         this.workerCount = workerCount;
         ForkJoinPool.ForkJoinWorkerThreadFactory factory = pool -> {
-            ForkJoinWorkerThread worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory
-                .newThread(pool);
+            ContextWorkerThread worker = new ContextWorkerThread(pool);
             worker.setName("Aerogel-Context-" + workerIds.incrementAndGet());
             worker.setDaemon(true);
             worker.setUncaughtExceptionHandler((thread, error) ->
@@ -188,6 +186,12 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         if (batch == null) workers.execute(task);
         else batch.add(task);
         return true;
+    }
+
+    /** Submits non-Context producer work to the same work-stealing pool without joining it. */
+    public boolean executeComputation(Runnable task) {
+        Objects.requireNonNull(task, "task");
+        return dispatch(task);
     }
 
     private void dispatchBatched(Runnable producer) {

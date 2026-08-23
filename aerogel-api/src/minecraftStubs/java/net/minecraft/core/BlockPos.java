@@ -28,4 +28,7 @@ public class BlockPos {
         };
     }
     public BlockPos immutable() { return this; }
+    public static BlockPos containing(double x, double y, double z) {
+        return new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+    }
 }

@@ -3,20 +3,24 @@ package dev.aerogel.loader.context;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import net.minecraft.server.MinecraftServer;
 
 /** Coordinates the server-thread commit boundary around native context work. */
 public final class NativeTickCoordinator {
-    private static final ThreadLocal<NativeFrame> NATIVE_WORK =
-        ThreadLocal.withInitial(NativeFrame::new);
+    private static final ContextWorkerLocal<NativeFrame> NATIVE_WORK =
+        ContextWorkerLocal.withInitial(NativeFrame::new);
     private static final ConcurrentLinkedQueue<Runnable> GLOBAL_COMMITS =
         new ConcurrentLinkedQueue<>();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
+    private static final AtomicBoolean MAIN_WAKE_SCHEDULED = new AtomicBoolean();
+    private static volatile MinecraftServer mainServer;
     private static final PaddedAtomicLong SERVER_TICK = new PaddedAtomicLong();
     private static final PaddedAtomicReference<NativeTickToken> CURRENT_TICK =
         new PaddedAtomicReference<>();
@@ -111,7 +115,7 @@ public final class NativeTickCoordinator {
         // The type guard keeps ordinary server-thread block operations completely
         // off the ThreadLocal path while the frame check still rejects unrelated
         // ForkJoin pools exactly.
-        return Thread.currentThread() instanceof ForkJoinWorkerThread
+        return Thread.currentThread() instanceof ContextWorkerThread
             && NATIVE_WORK.get().active;
     }
 
@@ -120,6 +124,10 @@ public final class NativeTickCoordinator {
         NativeTickToken token = new NativeTickToken(serverTick);
         NativeTickToken previous = CURRENT_TICK.getAndSet(token);
         if (previous != null) previous.seal();
+    }
+
+    public static void registerMainServer(MinecraftServer server) {
+        mainServer = server;
     }
 
     public static void endServerTick() {
@@ -182,6 +190,7 @@ public final class NativeTickCoordinator {
     /** Publishes a completed immutable result for the server-thread commit phase. */
     public static void submitGlobalCommit(Runnable action) {
         GLOBAL_COMMITS.add(action);
+        wakeMainThread();
     }
 
     static void taskSubmitted() {
@@ -207,6 +216,16 @@ public final class NativeTickCoordinator {
     private static void drainGlobalCommits() {
         Runnable commit;
         while ((commit = GLOBAL_COMMITS.poll()) != null) commit.run();
+    }
+
+    private static void wakeMainThread() {
+        MinecraftServer server = mainServer;
+        if (server == null || server.isSameThread()
+            || !MAIN_WAKE_SCHEDULED.compareAndSet(false, true)) return;
+        server.execute(() -> {
+            MAIN_WAKE_SCHEDULED.set(false);
+            drainGlobalCommits();
+        });
     }
 
     private static final class NativeFrame {

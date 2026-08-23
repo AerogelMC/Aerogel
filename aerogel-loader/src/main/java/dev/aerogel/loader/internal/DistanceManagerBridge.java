@@ -3,6 +3,7 @@ package dev.aerogel.loader.internal;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
 import net.minecraft.util.TriState;
 import net.minecraft.world.level.TicketStorage;
+import java.util.concurrent.CompletableFuture;
 
 public interface DistanceManagerBridge {
     void aerogel$forEachPublishedEntityTickingChunk(LongConsumer consumer);
@@ -10,4 +11,5 @@ public interface DistanceManagerBridge {
     TriState aerogel$publishedPlayersNearby(long chunkKey);
     long aerogel$spawnDistanceVersion();
     TicketStorage aerogel$ticketStorage();
+    CompletableFuture<Void> aerogel$loadingDistancePublication();
 }

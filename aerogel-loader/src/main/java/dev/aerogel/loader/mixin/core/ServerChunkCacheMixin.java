@@ -10,6 +10,7 @@ import net.minecraft.server.level.TicketType;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.DistanceManager;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.TicketStorage;
 import net.minecraft.core.BlockPos;
@@ -34,6 +35,7 @@ import java.util.function.Consumer;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Objects;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.NaturalSpawner;
 import net.minecraft.world.level.LocalMobCapCalculator;
@@ -44,10 +46,13 @@ abstract class ServerChunkCacheMixin {
     @Shadow @Final private Thread mainThread;
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private ChunkMap chunkMap;
+    @Shadow @Final private DistanceManager distanceManager;
     @Unique private NaturalSpawner.SpawnState aerogel$currentSpawnState;
     @Unique private final AtomicBoolean aerogel$distanceUpdateQueued = new AtomicBoolean();
     @Unique private boolean aerogel$distanceUpdateRunning;
     @Unique private boolean aerogel$distanceUpdateRequested;
+    @Unique private final AtomicBoolean aerogel$distancePublicationFollowUp =
+        new AtomicBoolean();
     @Shadow public abstract ChunkAccess getChunk(
         int chunkX, int chunkZ, ChunkStatus targetStatus, boolean create);
 
@@ -115,10 +120,25 @@ abstract class ServerChunkCacheMixin {
         CallbackInfoReturnable<Boolean> callback
     ) {
         aerogel$distanceUpdateRunning = false;
-        if (!aerogel$distanceUpdateRequested) return;
-        aerogel$distanceUpdateRequested = false;
-        boolean followUpChangedChunks = aerogel$runDistanceManagerUpdates();
-        callback.setReturnValue(callback.getReturnValueZ() || followUpChangedChunks);
+        if (aerogel$distanceUpdateRequested) {
+            aerogel$distanceUpdateRequested = false;
+            boolean followUpChangedChunks = aerogel$runDistanceManagerUpdates();
+            callback.setReturnValue(callback.getReturnValueZ() || followUpChangedChunks);
+        }
+        aerogel$scheduleDistancePublicationFollowUp();
+    }
+
+    @Unique
+    private void aerogel$scheduleDistancePublicationFollowUp() {
+        CompletableFuture<Void> publication = ((DistanceManagerBridge) distanceManager)
+            .aerogel$loadingDistancePublication();
+        if (publication.isDone()
+            || !aerogel$distancePublicationFollowUp.compareAndSet(false, true)) return;
+        publication.whenComplete((ignored, error) ->
+            NativeTickCoordinator.submitGlobalCommit(() -> {
+                aerogel$distancePublicationFollowUp.set(false);
+                if (error == null) aerogel$runDistanceManagerUpdates();
+            }));
     }
 
     @Inject(
@@ -130,20 +150,41 @@ abstract class ServerChunkCacheMixin {
         TicketType type, ChunkPos position, int radius,
         CallbackInfoReturnable<CompletableFuture<?>> callback
     ) {
-        if (!NativeTickCoordinator.isNativeWorker()) return;
-        CompletableFuture<Object> published = new CompletableFuture<>();
-        NativeTickCoordinator.submitGlobalCommit(() -> {
-            try {
-                aerogel$addTicketAndLoadWithRadius(type, position, radius)
-                    .whenComplete((result, error) -> {
-                        if (error == null) published.complete(result);
-                        else published.completeExceptionally(error);
-                    });
-            } catch (Throwable error) {
-                published.completeExceptionally(error);
-            }
-        });
-        callback.setReturnValue(published);
+        if (NativeTickCoordinator.isNativeWorker()) {
+            CompletableFuture<Object> published = new CompletableFuture<>();
+            NativeTickCoordinator.submitGlobalCommit(() -> {
+                try {
+                    aerogel$addTicketAndLoadWithRadius(type, position, radius)
+                        .whenComplete((result, error) -> {
+                            if (error == null) published.complete(result);
+                            else published.completeExceptionally(error);
+                        });
+                } catch (Throwable error) {
+                    published.completeExceptionally(error);
+                }
+            });
+            callback.setReturnValue(published);
+            return;
+        }
+
+        if (!type.doesLoad()) {
+            throw new IllegalStateException("Ticket type does not load chunks: " + type);
+        }
+        if (type.canExpireIfUnloaded()) {
+            throw new IllegalStateException("Ticket type can expire while unloaded: " + type);
+        }
+        aerogel$addTicketWithRadius(type, position, radius);
+        aerogel$runDistanceManagerUpdates();
+        CompletableFuture<Void> publication = ((DistanceManagerBridge) distanceManager)
+            .aerogel$loadingDistancePublication();
+        callback.setReturnValue(publication.thenComposeAsync(ignored -> {
+            aerogel$runDistanceManagerUpdates();
+            ChunkHolder holder = Objects.requireNonNull(
+                aerogel$getVisibleChunk(position.pack()),
+                "No chunk was scheduled for loading after distance publication");
+            return chunkMap.getChunkRangeFuture(holder, radius,
+                unused -> ChunkStatus.FULL);
+        }, level.getServer()));
     }
 
     @Inject(

@@ -17,6 +17,7 @@ import java.util.function.BooleanSupplier;
 abstract class MinecraftServerTickMixin {
     @Inject(method = "tickServer", at = @At("HEAD"))
     private void aerogel$sampleTps(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
+        NativeTickCoordinator.registerMainServer((net.minecraft.server.MinecraftServer) (Object) this);
         NativeTickCoordinator.beginServerTick();
         NativeTickCoordinator.pumpMainThread();
         TpsMonitor.tick(System.nanoTime());

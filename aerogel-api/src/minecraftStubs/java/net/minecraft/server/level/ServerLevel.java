@@ -99,6 +99,7 @@ public class ServerLevel extends Level {
     public void close() throws IOException { }
     public boolean setChunkForced(int chunkX, int chunkZ, boolean forced) { return false; }
     public WorldBorder getWorldBorder() { return null; }
+    public net.minecraft.world.level.gamerules.GameRules getGameRules() { return null; }
     public float getRainLevel(float partialTick) { return 0; }
     public float getThunderLevel(float partialTick) { return 0; }
     public Holder<DimensionType> dimensionTypeRegistration() { return null; }

@@ -6,9 +6,13 @@ import org.junit.jupiter.api.Test;
 import java.util.Random;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.RecursiveAction;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.IntConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ExactChunkDistanceGraphTest {
     @Test
@@ -74,6 +78,27 @@ final class ExactChunkDistanceGraphTest {
         graph.updateSource(key(0, 0), Integer.MAX_VALUE);
         assertEquals(0, graph.apply(ExactChunkDistanceGraphTest::sequential)
             .publish((key, level) -> { throw new AssertionError("unexpected change"); }));
+    }
+
+    @Test
+    void asynchronousProducerPublishesOnlyACompletedGenerationWithoutCallerJoin()
+        throws Exception {
+        CountDownLatch completed = new CountDownLatch(1);
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            ExactChunkDistanceGraph graph = new ExactChunkDistanceGraph(
+                6, 4,
+                task -> executor.execute(() -> { try { task.run(); } finally { completed.countDown(); } }),
+                ExactChunkDistanceGraphTest::sequential,
+                Runnable::run);
+            Long2IntOpenHashMap published = levels(5);
+
+            graph.updateSource(key(0, 0), 0);
+            assertEquals(0, graph.publishCompleted(published::put));
+            assertTrue(completed.await(10, TimeUnit.SECONDS));
+            graph.publishCompleted(published::put);
+            assertEquals(0, published.get(key(0, 0)));
+            assertEquals(2, published.get(key(2, 1)));
+        }
     }
 
     private static int bruteForce(

@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /** One exact global/local mob-cap permit for the current natural-spawn attempt. */
 public final class NaturalSpawnReservation {
-    private static final ThreadLocal<Reservation> CURRENT = new ThreadLocal<>();
+    private static final ContextWorkerLocal<Reservation> CURRENT = ContextWorkerLocal.create();
 
     private NaturalSpawnReservation() { }
 

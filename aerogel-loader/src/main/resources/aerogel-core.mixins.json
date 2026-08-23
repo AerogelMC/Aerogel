@@ -43,6 +43,7 @@
     "ServerCommonConnectionMixin",
     "ServerHandshakePacketListenerMixin",
     "ServerPlayerMixin",
+    "ServerWaypointManagerMixin",
     "PlayerInfoEntryMixin",
     "ServerEntityMixin",
     "ServerPlayerGameModeMixin",

@@ -98,6 +98,11 @@ public final class AerogelRuntime {
         current.contexts().invokeOwnedStripes(ownerCount, task);
     }
 
+    public static void submitContextComputation(Runnable task) {
+        AerogelApiRuntime current = apiRuntime;
+        if (current == null || !current.contexts().executeComputation(task)) task.run();
+    }
+
     public static void worldLoaded(ServerLevel level) {
         AerogelApiRuntime current = apiRuntime;
         if (current != null) current.contexts().worldLoaded(level);

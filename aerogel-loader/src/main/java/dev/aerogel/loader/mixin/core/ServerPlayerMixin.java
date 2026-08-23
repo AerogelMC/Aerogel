@@ -23,6 +23,7 @@ import dev.aerogel.loader.internal.PersistentDataHolderBridge;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -61,6 +62,7 @@ import net.minecraft.network.protocol.game.ClientboundStopSoundPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.PlayerSpawnFinder;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -90,6 +92,7 @@ import net.minecraft.world.damagesource.DamageSource;
 import java.util.Set;
 import java.util.Collection;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
 abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
@@ -119,6 +122,22 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     @Unique private boolean aerogel$experienceOverride;
     @Unique private boolean aerogel$teleportOverride;
     @Unique private boolean aerogel$dropOverride;
+
+    /**
+     * Keeps vanilla's spawn search and result exactly, but prevents a Context worker from
+     * draining the server thread's task queue while it waits for asynchronous chunk generation.
+     * ForkJoin's CompletableFuture join compensates a blocked worker without stealing main-loop
+     * ownership; the server thread retains vanilla managedBlock behaviour.
+     */
+    @Overwrite
+    public BlockPos adjustSpawnLocation(ServerLevel level, BlockPos position) {
+        CompletableFuture<Vec3> result = PlayerSpawnFinder.findSpawn(level, position);
+        if (server.isSameThread()) {
+            server.managedBlock(result::isDone);
+        }
+        Vec3 spawn = result.join();
+        return BlockPos.containing(spawn.x, spawn.y, spawn.z);
+    }
 
     @Unique
     public void setDisplayName(Component displayName) {

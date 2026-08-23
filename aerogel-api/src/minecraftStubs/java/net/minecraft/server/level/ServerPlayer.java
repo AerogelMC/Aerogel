@@ -31,7 +31,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
-public class ServerPlayer extends Player {
+public class ServerPlayer extends Player implements net.minecraft.world.waypoints.WaypointTransmitter {
     public ServerGamePacketListenerImpl connection;
     public AbstractContainerMenu containerMenu;
     @Override public ServerLevel level() { return null; }
@@ -62,6 +62,12 @@ public class ServerPlayer extends Player {
     public void clearInventory() { }
     public ServerPlayer respawn() { return null; }
     public ServerPlayer respawn(boolean keepEverything) { return null; }
+    public boolean isTransmittingWaypoint() { return false; }
+    @Override
+    public java.util.Optional<net.minecraft.world.waypoints.WaypointTransmitter.Connection>
+        makeWaypointConnectionWith(ServerPlayer player) {
+        return java.util.Optional.empty();
+    }
 
     /** Shows a client-side block without changing the server level. */
     public void setBlock(BlockPos position, BlockState state) { }

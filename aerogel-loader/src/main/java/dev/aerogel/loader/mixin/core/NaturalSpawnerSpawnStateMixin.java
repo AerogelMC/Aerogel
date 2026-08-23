@@ -29,6 +29,7 @@ import java.util.function.BiConsumer;
 import dev.aerogel.loader.internal.PreparedSpawnStateBridge;
 import dev.aerogel.loader.context.NaturalSpawnWave;
 import dev.aerogel.loader.context.NaturalSpawnReservation;
+import dev.aerogel.loader.context.ContextWorkerLocal;
 
 @Mixin(targets = "net.minecraft.world.level.NaturalSpawner$SpawnState")
 abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge {
@@ -37,7 +38,8 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
     @Shadow @Final private LocalMobCapCalculator localMobCapCalculator;
 
     @Unique
-    private ThreadLocal<CheckedSpawn> aerogel$lastChecked;
+    private static final ContextWorkerLocal<CheckedSpawn> aerogel$lastChecked =
+        ContextWorkerLocal.withInitial(CheckedSpawn::new);
     @Unique
     private AtomicIntegerArray aerogel$categoryCounts;
     @Unique
@@ -55,7 +57,6 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         PotentialCalculator potential, LocalMobCapCalculator localCaps,
         org.spongepowered.asm.mixin.injection.callback.CallbackInfo callback
     ) {
-        aerogel$lastChecked = ThreadLocal.withInitial(CheckedSpawn::new);
         aerogel$categoryCounts = new AtomicIntegerArray(MobCategory.values().length);
         for (MobCategory category : MobCategory.values()) {
             aerogel$categoryCounts.set(

@@ -41,6 +41,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
 import java.util.ArrayList;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import dev.aerogel.loader.internal.LevelTicksBridge;
 
 @Mixin(targets = "net.minecraft.server.level.ChunkMap")
@@ -55,8 +57,9 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Shadow @Final private ChunkTaskDispatcher worldgenTaskDispatcher;
     @Shadow @Final private Long2ObjectLinkedOpenHashMap<ChunkHolder> visibleChunkMap;
     @Shadow public abstract DistanceManager getDistanceManager();
-    @Invoker("anyPlayerCloseEnoughForSpawningInternal")
-    protected abstract boolean aerogel$exactPlayerSpawnDistance(ChunkPos position);
+    @Invoker("playerIsCloseEnoughForSpawning")
+    protected abstract boolean aerogel$exactPlayerSpawnDistance(
+        ServerPlayer player, ChunkPos position);
     private static final SpawnCandidate[] AEROGEL_NO_SPAWN_CANDIDATES =
         new SpawnCandidate[0];
     @Unique private final PaddedAtomicLong aerogel$fullStatusVersion =
@@ -65,6 +68,12 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Unique private long aerogel$cachedFullStatusVersion = Long.MIN_VALUE;
     @Unique private SpawnCandidate[] aerogel$spawnCandidates =
         AEROGEL_NO_SPAWN_CANDIDATES;
+    /* Vanilla's exact squared spawning radius is 16384, hence an exact 128-block bucket. */
+    @Unique private static final int AEROGEL_SPAWN_BUCKET_WIDTH = 128;
+    @Unique private final ConcurrentHashMap<Long, Set<ServerPlayer>> aerogel$spawnPlayers =
+        new ConcurrentHashMap<>();
+    @Unique private final ConcurrentHashMap<ServerPlayer, Long> aerogel$spawnPlayerBuckets =
+        new ConcurrentHashMap<>();
 
     /**
      * Vanilla already maintains the exact natural-spawn distance field as
@@ -105,11 +114,71 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
         for (SpawnCandidate candidate : aerogel$spawnCandidates) {
             LevelChunk chunk = candidate.holder.getTickingChunk();
             if (chunk != null && (!candidate.exactPlayerDistance
-                || aerogel$exactPlayerSpawnDistance(candidate.position))) {
+                || aerogel$hasIndexedPlayerNear(candidate.position))) {
                 output.add(chunk);
             }
         }
         callback.cancel();
+    }
+
+    @Inject(method = "updatePlayerStatus", at = @At("RETURN"))
+    private void aerogel$publishSpawnPlayerStatus(
+        ServerPlayer player, boolean tracked, CallbackInfo callback
+    ) {
+        if (tracked) aerogel$publishSpawnPlayer(player);
+        else aerogel$removeSpawnPlayer(player);
+    }
+
+    @Inject(method = "move(Lnet/minecraft/server/level/ServerPlayer;)V", at = @At("RETURN"))
+    private void aerogel$publishSpawnPlayerMove(ServerPlayer player, CallbackInfo callback) {
+        if (aerogel$spawnPlayerBuckets.containsKey(player)) aerogel$publishSpawnPlayer(player);
+    }
+
+    @Unique
+    private void aerogel$publishSpawnPlayer(ServerPlayer player) {
+        long next = aerogel$spawnBucket(player.position().x, player.position().z);
+        Long previous = aerogel$spawnPlayerBuckets.put(player, next);
+        if (previous != null && previous.longValue() == next) return;
+        if (previous != null) {
+            Set<ServerPlayer> old = aerogel$spawnPlayers.get(previous);
+            if (old != null) old.remove(player);
+        }
+        aerogel$spawnPlayers.computeIfAbsent(next, ignored -> ConcurrentHashMap.newKeySet())
+            .add(player);
+    }
+
+    @Unique
+    private void aerogel$removeSpawnPlayer(ServerPlayer player) {
+        Long previous = aerogel$spawnPlayerBuckets.remove(player);
+        if (previous == null) return;
+        Set<ServerPlayer> old = aerogel$spawnPlayers.get(previous);
+        if (old != null) old.remove(player);
+    }
+
+    @Unique
+    private boolean aerogel$hasIndexedPlayerNear(ChunkPos position) {
+        double centerX = position.x() * 16.0D + 8.0D;
+        double centerZ = position.z() * 16.0D + 8.0D;
+        int bucketX = Math.floorDiv((int) Math.floor(centerX), AEROGEL_SPAWN_BUCKET_WIDTH);
+        int bucketZ = Math.floorDiv((int) Math.floor(centerZ), AEROGEL_SPAWN_BUCKET_WIDTH);
+        // A circle whose radius equals one bucket width can intersect only these 3x3 buckets.
+        for (int x = bucketX - 1; x <= bucketX + 1; x++) {
+            for (int z = bucketZ - 1; z <= bucketZ + 1; z++) {
+                Set<ServerPlayer> players = aerogel$spawnPlayers.get(ChunkPos.pack(x, z));
+                if (players == null) continue;
+                for (ServerPlayer player : players) {
+                    if (aerogel$exactPlayerSpawnDistance(player, position)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    @Unique
+    private static long aerogel$spawnBucket(double x, double z) {
+        return ChunkPos.pack(
+            Math.floorDiv((int) Math.floor(x), AEROGEL_SPAWN_BUCKET_WIDTH),
+            Math.floorDiv((int) Math.floor(z), AEROGEL_SPAWN_BUCKET_WIDTH));
     }
 
     @Inject(method = "onFullChunkStatusChange", at = @At("RETURN"))

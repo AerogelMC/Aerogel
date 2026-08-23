@@ -34,6 +34,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Coordinates a full JVM restart while the retiring JVM temporarily holds player connections. */
 public final class RestartCoordinator {
@@ -54,9 +55,9 @@ public final class RestartCoordinator {
     private static final Set<UUID> RETURNING_PLAYERS = new HashSet<>();
     private static final Set<String> RETURNING_ADDRESSES = new HashSet<>();
     private static final Set<Object> FROZEN_CONNECTIONS =
-        Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+        ConcurrentHashMap.newKeySet();
     private static final Set<Object> FROZEN_LISTENERS =
-        Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+        ConcurrentHashMap.newKeySet();
     private static volatile RestartState state;
     private static volatile String completedSeconds;
     private static volatile long readyAt;

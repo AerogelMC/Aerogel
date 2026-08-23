@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import java.util.concurrent.CompletableFuture;
 
 @Mixin(targets = "net.minecraft.server.level.ChunkTracker")
 abstract class ChunkTrackerMixin implements ExactChunkTrackerBridge {
@@ -19,7 +20,10 @@ abstract class ChunkTrackerMixin implements ExactChunkTrackerBridge {
         CallbackInfo callback
     ) {
         aerogel$exactDistances = new ExactChunkDistanceGraph(
-            levelCount, AerogelRuntime.contextWorkerCount());
+            levelCount,
+            AerogelRuntime.contextWorkerCount(),
+            AerogelRuntime::submitContextComputation,
+            AerogelRuntime::invokeContextOwners);
     }
 
     @Inject(method = "update(JIZ)V", at = @At("HEAD"), cancellable = true)
@@ -39,9 +43,12 @@ abstract class ChunkTrackerMixin implements ExactChunkTrackerBridge {
     public int aerogel$runExactUpdates(
         int maximumUpdates, ExactChunkDistanceGraph.LevelPublisher publisher
     ) {
-        ExactChunkDistanceGraph.ChangeBatch changes = aerogel$exactDistances.apply(
-            AerogelRuntime::invokeContextOwners);
-        int published = changes.publish(publisher);
+        int published = aerogel$exactDistances.publishCompleted(publisher);
         return maximumUpdates - Math.min(maximumUpdates, published);
+    }
+
+    @Override
+    public CompletableFuture<Void> aerogel$publicationAfterQueuedUpdates() {
+        return aerogel$exactDistances.publicationAfterQueuedUpdates();
     }
 }

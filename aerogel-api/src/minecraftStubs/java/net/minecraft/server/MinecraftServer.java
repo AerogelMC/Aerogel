@@ -10,13 +10,14 @@ import net.minecraft.server.players.PlayerList;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.WorldGenSettings;
 import net.minecraft.world.level.storage.WorldData;
 import net.minecraft.commands.Commands;
 
-public abstract class MinecraftServer {
+public abstract class MinecraftServer implements java.util.concurrent.Executor {
     public Collection<ServerPlayer> onlinePlayers() { return null; }
     public Optional<ServerPlayer> findPlayer(String name) { return Optional.empty(); }
     public Optional<ServerPlayer> findPlayer(UUID uniqueId) { return Optional.empty(); }
@@ -45,6 +46,7 @@ public abstract class MinecraftServer {
     public ServerScoreboard getScoreboard() { return null; }
     public void halt(boolean waitForShutdown) { }
     public void execute(Runnable task) { task.run(); }
+    public void managedBlock(BooleanSupplier done) { }
 
     public boolean acceptsTransfers() {
         return false;

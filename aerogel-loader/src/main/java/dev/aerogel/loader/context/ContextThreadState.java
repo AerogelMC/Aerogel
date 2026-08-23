@@ -3,24 +3,41 @@ package dev.aerogel.loader.context;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 final class ContextThreadState {
-    private static final ThreadLocal<AccessScope> CURRENT = new ThreadLocal<>();
+    /* Only non-context workers (principally deterministic scheduler tests) use this path. */
+    private static final ThreadLocal<AccessScope> FALLBACK = new ThreadLocal<>();
 
     private ContextThreadState() {
     }
 
     static AccessScope current() {
-        return CURRENT.get();
+        Thread thread = Thread.currentThread();
+        return thread instanceof ContextWorkerThread worker
+            ? worker.accessScope
+            : FALLBACK.get();
     }
 
     static void enter(AccessScope scope) {
-        if (CURRENT.get() != null) {
-            throw new IllegalStateException("Nested chunk ownership scope");
+        Thread thread = Thread.currentThread();
+        if (thread instanceof ContextWorkerThread worker) {
+            if (worker.accessScope != null) {
+                throw new IllegalStateException("Nested chunk ownership scope");
+            }
+            worker.accessScope = scope;
+        } else {
+            if (FALLBACK.get() != null) {
+                throw new IllegalStateException("Nested chunk ownership scope");
+            }
+            FALLBACK.set(scope);
         }
-        CURRENT.set(scope);
     }
 
     static void leave() {
-        CURRENT.remove();
+        Thread thread = Thread.currentThread();
+        if (thread instanceof ContextWorkerThread worker) {
+            worker.accessScope = null;
+        } else {
+            FALLBACK.remove();
+        }
     }
 
     record AccessScope(

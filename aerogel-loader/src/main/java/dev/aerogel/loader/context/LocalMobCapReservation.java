@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /** Atomic, rollback-capable reservation of vanilla's per-player local mob cap. */
 public final class LocalMobCapReservation {
-    private static final ThreadLocal<Capture> CAPTURE = new ThreadLocal<>();
+    private static final ContextWorkerLocal<Capture> CAPTURE = ContextWorkerLocal.create();
 
     private final List<AtomicIntegerArray> counts;
     private final int category;

@@ -8,7 +8,11 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 /**
@@ -28,8 +32,39 @@ public final class ExactChunkDistanceGraph {
     private final ConcurrentLinkedQueue<SourceUpdate> updates =
         new ConcurrentLinkedQueue<>();
     private final Long2IntOpenHashMap sources = new Long2IntOpenHashMap();
+    private final Consumer<Runnable> asynchronousExecutor;
+    private final ParallelDispatcher asynchronousDispatcher;
+    private final Consumer<Runnable> completionExecutor;
+    private final ConcurrentLinkedQueue<CompletedGeneration> completed =
+        new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<PublicationWaiter> publicationWaiters =
+        new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean producerScheduled = new AtomicBoolean();
+    private final AtomicLong submittedSequence = new AtomicLong();
+    private volatile long publishedSequence;
+    private volatile LevelPublisher asynchronousPublisher;
 
     public ExactChunkDistanceGraph(int levelCount, int ownerCount) {
+        this(levelCount, ownerCount, null, null, null);
+    }
+
+    public ExactChunkDistanceGraph(
+        int levelCount,
+        int ownerCount,
+        Consumer<Runnable> asynchronousExecutor,
+        ParallelDispatcher asynchronousDispatcher
+    ) {
+        this(levelCount, ownerCount, asynchronousExecutor, asynchronousDispatcher,
+            NativeTickCoordinator::submitGlobalCommit);
+    }
+
+    ExactChunkDistanceGraph(
+        int levelCount,
+        int ownerCount,
+        Consumer<Runnable> asynchronousExecutor,
+        ParallelDispatcher asynchronousDispatcher,
+        Consumer<Runnable> completionExecutor
+    ) {
         if (levelCount < 2 || levelCount > 256) {
             throw new IllegalArgumentException("levelCount must be in [2, 256]");
         }
@@ -42,6 +77,9 @@ public final class ExactChunkDistanceGraph {
         for (int index = 0; index < ownerCount; index++) {
             stripes[index] = new Stripe(maximumLevel);
         }
+        this.asynchronousExecutor = asynchronousExecutor;
+        this.asynchronousDispatcher = asynchronousDispatcher;
+        this.completionExecutor = completionExecutor;
     }
 
     /**
@@ -50,25 +88,33 @@ public final class ExactChunkDistanceGraph {
      * vanilla priority queue coalesces an unobserved intermediate edge value.
      */
     public void updateSource(long chunkKey, int level) {
-        updates.offer(new SourceUpdate(chunkKey, clamp(level)));
+        long sequence = submittedSequence.incrementAndGet();
+        updates.offer(new SourceUpdate(chunkKey, clamp(level), sequence));
+        scheduleProducer();
     }
 
     /** Applies every queued source delta and returns only destinations that changed. */
     public ChangeBatch apply(ParallelDispatcher dispatcher) {
+        return applyGeneration(dispatcher).changes;
+    }
+
+    private CompletedGeneration applyGeneration(ParallelDispatcher dispatcher) {
         Objects.requireNonNull(dispatcher, "dispatcher");
         // DistanceManager may ask several trackers for their already-published
         // state during one server tick. Avoid allocating a primitive map for
         // those overwhelmingly common empty drains. A producer racing after
         // this observation is handled by the next drain, exactly as it was
         // when poll() observed an empty queue below.
-        if (updates.peek() == null) return ChangeBatch.EMPTY;
+        if (updates.peek() == null) return CompletedGeneration.EMPTY;
         Long2IntOpenHashMap latest = new Long2IntOpenHashMap();
         latest.defaultReturnValue(maximumLevel);
+        long sequence = 0L;
         SourceUpdate update;
         while ((update = updates.poll()) != null) {
             latest.put(update.chunkKey, update.level);
+            sequence = Math.max(sequence, update.sequence);
         }
-        if (latest.isEmpty()) return ChangeBatch.EMPTY;
+        if (latest.isEmpty()) return CompletedGeneration.EMPTY;
 
         LongArrayList keys = new LongArrayList(latest.size());
         IntArrayList previousLevels = new IntArrayList(latest.size());
@@ -82,7 +128,7 @@ public final class ExactChunkDistanceGraph {
             previousLevels.add(previous);
             nextLevels.add(next);
         }
-        if (keys.isEmpty()) return ChangeBatch.EMPTY;
+        if (keys.isEmpty()) return new CompletedGeneration(ChangeBatch.EMPTY, sequence);
 
         StripeChanges[] changes = new StripeChanges[stripes.length];
         dispatcher.invoke(stripes.length, stripe -> changes[stripe] = stripes[stripe].apply(
@@ -94,7 +140,90 @@ public final class ExactChunkDistanceGraph {
             if (next == maximumLevel) sources.remove(key);
             else sources.put(key, next);
         }
-        return new ChangeBatch(changes);
+        return new CompletedGeneration(new ChangeBatch(changes), sequence);
+    }
+
+    /** Publishes only fully completed immutable generations; this method never waits. */
+    public int publishCompleted(LevelPublisher publisher) {
+        asynchronousPublisher = Objects.requireNonNull(publisher, "publisher");
+        int published = 0;
+        CompletedGeneration generation;
+        while ((generation = completed.poll()) != null) {
+            published += publishGeneration(generation, publisher);
+        }
+        return published;
+    }
+
+    /** Completes on the publication thread after every update submitted so far is visible. */
+    public CompletableFuture<Void> publicationAfterQueuedUpdates() {
+        long target = submittedSequence.get();
+        if (publishedSequence >= target) return CompletableFuture.completedFuture(null);
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        PublicationWaiter waiter = new PublicationWaiter(target, completion);
+        publicationWaiters.offer(waiter);
+        if (publishedSequence >= target && publicationWaiters.remove(waiter)) {
+            completion.complete(null);
+        }
+        return completion;
+    }
+
+    private void scheduleProducer() {
+        if (asynchronousExecutor == null || !producerScheduled.compareAndSet(false, true)) return;
+        asynchronousExecutor.accept(this::runProducer);
+    }
+
+    private void runProducer() {
+        try {
+            do {
+                CompletedGeneration generation = applyGeneration(asynchronousDispatcher);
+                if (generation.sequence != 0L) publishOrQueue(generation);
+            } while (updates.peek() != null);
+        } catch (Throwable error) {
+            failPublicationWaiters(error);
+            throw error;
+        } finally {
+            producerScheduled.set(false);
+            if (updates.peek() != null) scheduleProducer();
+        }
+    }
+
+    private void publishOrQueue(CompletedGeneration generation) {
+        LevelPublisher publisher = asynchronousPublisher;
+        if (publisher != null) {
+            LevelPublisher ready = publisher;
+            completionExecutor.accept(() -> publishGeneration(generation, ready));
+            return;
+        }
+        completed.offer(generation);
+        publisher = asynchronousPublisher;
+        if (publisher != null && completed.remove(generation)) {
+            LevelPublisher ready = publisher;
+            completionExecutor.accept(() -> publishGeneration(generation, ready));
+        }
+    }
+
+    private int publishGeneration(CompletedGeneration generation, LevelPublisher publisher) {
+        int count = generation.changes.publish(publisher);
+        publishedSequence = Math.max(publishedSequence, generation.sequence);
+        completePublicationWaiters();
+        return count;
+    }
+
+    private void completePublicationWaiters() {
+        int candidates = publicationWaiters.size();
+        for (int index = 0; index < candidates; index++) {
+            PublicationWaiter waiter = publicationWaiters.poll();
+            if (waiter == null) return;
+            if (waiter.sequence <= publishedSequence) waiter.completion.complete(null);
+            else publicationWaiters.offer(waiter);
+        }
+    }
+
+    private void failPublicationWaiters(Throwable error) {
+        PublicationWaiter waiter;
+        while ((waiter = publicationWaiters.poll()) != null) {
+            waiter.completion.completeExceptionally(error);
+        }
     }
 
     public int maximumLevel() {
@@ -259,7 +388,14 @@ public final class ExactChunkDistanceGraph {
         }
     }
 
-    private record SourceUpdate(long chunkKey, int level) { }
+    private record SourceUpdate(long chunkKey, int level, long sequence) { }
+
+    private record CompletedGeneration(ChangeBatch changes, long sequence) {
+        private static final CompletedGeneration EMPTY =
+            new CompletedGeneration(ChangeBatch.EMPTY, 0L);
+    }
+
+    private record PublicationWaiter(long sequence, CompletableFuture<Void> completion) { }
 
     private record StripeChanges(LongArrayList keys, ByteArrayList levels) { }
 

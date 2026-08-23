@@ -35,13 +35,16 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /** Persistent, per-viewer state used by the ServerPlayer view API. */
 public final class PlayerViewService {
     private static final byte ON_FIRE = 0x01;
     private static final byte INVISIBLE = 0x20;
     private static final byte GLOWING = 0x40;
-    private static final Map<ServerPlayer, ViewState> STATES = new WeakHashMap<>();
+    private static final ConcurrentHashMap<ServerPlayer, ViewState> STATES =
+        new ConcurrentHashMap<>();
 
     private PlayerViewService() {
     }
@@ -59,10 +62,8 @@ public final class PlayerViewService {
     }
 
     public static boolean isVisible(ServerPlayer viewer, Entity entity) {
-        synchronized (STATES) {
-            ViewState state = STATES.get(viewer);
-            return state == null || !state.hidden.contains(entity.getUUID());
-        }
+        ViewState state = STATES.get(viewer);
+        return state == null || !state.hidden.contains(entity.getUUID());
     }
 
     public static boolean isHidden(ServerPlayer viewer, Entity entity) {
@@ -123,7 +124,7 @@ public final class PlayerViewService {
         Objects.requireNonNull(slot, "slot");
         ItemStack snapshot = Objects.requireNonNull(item, "item").copy();
         state(viewer).equipment
-            .computeIfAbsent(entity.getUUID(), ignored -> new EnumMap<>(EquipmentSlot.class))
+            .computeIfAbsent(entity.getUUID(), ignored -> new ConcurrentHashMap<>())
             .put(slot, snapshot);
         viewer.connection.send(new ClientboundSetEquipmentPacket(
             entity.getId(), List.of(Pair.of(slot, snapshot))));
@@ -135,7 +136,7 @@ public final class PlayerViewService {
         requireSameLevel(viewer, entity);
         Objects.requireNonNull(slot, "slot");
         ViewState state = state(viewer);
-        EnumMap<EquipmentSlot, ItemStack> overrides = state.equipment.get(entity.getUUID());
+        ConcurrentMap<EquipmentSlot, ItemStack> overrides = state.equipment.get(entity.getUUID());
         if (overrides != null) {
             overrides.remove(slot);
             if (overrides.isEmpty()) state.equipment.remove(entity.getUUID());
@@ -145,10 +146,7 @@ public final class PlayerViewService {
     }
 
     public static Packet<?> transform(ServerPlayer viewer, Packet<?> packet) {
-        ViewState state;
-        synchronized (STATES) {
-            state = STATES.get(viewer);
-        }
+        ViewState state = STATES.get(viewer);
         if (state == null) return packet;
 
         if (packet instanceof ClientboundSetEntityDataPacket metadata) {
@@ -184,10 +182,7 @@ public final class PlayerViewService {
     }
 
     public static void clear(ServerPlayer viewer) {
-        ViewState state;
-        synchronized (STATES) {
-            state = STATES.remove(viewer);
-        }
+        ViewState state = STATES.remove(viewer);
         if (state == null) return;
 
         ServerLevel level = viewer.level();
@@ -213,7 +208,7 @@ public final class PlayerViewService {
             Optional.ofNullable(level.getEntityInAnyDimension(entry.getKey())).ifPresent(entity ->
                 restoreGlowTeam(viewer, entity, entry.getValue()));
         }
-        for (Map.Entry<UUID, EnumMap<EquipmentSlot, ItemStack>> entry
+        for (Map.Entry<UUID, ConcurrentMap<EquipmentSlot, ItemStack>> entry
             : state.equipment.entrySet()) {
             Optional.ofNullable(level.getEntityInAnyDimension(entry.getKey()))
                 .filter(LivingEntity.class::isInstance)
@@ -238,10 +233,8 @@ public final class PlayerViewService {
 
     /** Moves viewer-owned overrides to Minecraft's replacement player instance after respawn. */
     public static void transfer(ServerPlayer previous, ServerPlayer replacement) {
-        synchronized (STATES) {
-            ViewState state = STATES.remove(previous);
-            if (state != null) STATES.put(replacement, state);
-        }
+        ViewState state = STATES.remove(previous);
+        if (state != null) STATES.put(replacement, state);
     }
 
     public static int breakId(BlockPos position) {
@@ -317,7 +310,7 @@ public final class PlayerViewService {
     ) {
         Entity entity = viewer.level().getEntity(packet.getEntity());
         if (entity == null) return packet;
-        EnumMap<EquipmentSlot, ItemStack> overrides = state.equipment.get(entity.getUUID());
+        ConcurrentMap<EquipmentSlot, ItemStack> overrides = state.equipment.get(entity.getUUID());
         if (overrides == null || overrides.isEmpty()) return packet;
 
         List<Pair<EquipmentSlot, ItemStack>> values = new ArrayList<>(packet.getSlots().size());
@@ -399,9 +392,7 @@ public final class PlayerViewService {
     }
 
     private static ViewState state(ServerPlayer viewer) {
-        synchronized (STATES) {
-            return STATES.computeIfAbsent(viewer, ignored -> new ViewState());
-        }
+        return STATES.computeIfAbsent(viewer, ignored -> new ViewState());
     }
 
     private record FlagOverride(byte mask, byte values) {
@@ -413,11 +404,12 @@ public final class PlayerViewService {
     }
 
     private static final class ViewState {
-        private final Set<UUID> hidden = new HashSet<>();
-        private final Map<UUID, FlagOverride> flags = new HashMap<>();
-        private final Map<UUID, TeamColor> glowColors = new HashMap<>();
-        private final Map<UUID, EnumMap<EquipmentSlot, ItemStack>> equipment = new HashMap<>();
-        private final Set<BlockPos> blocks = new HashSet<>();
-        private final Set<BlockPos> breaks = new HashSet<>();
+        private final Set<UUID> hidden = ConcurrentHashMap.newKeySet();
+        private final ConcurrentMap<UUID, FlagOverride> flags = new ConcurrentHashMap<>();
+        private final ConcurrentMap<UUID, TeamColor> glowColors = new ConcurrentHashMap<>();
+        private final ConcurrentMap<UUID, ConcurrentMap<EquipmentSlot, ItemStack>> equipment =
+            new ConcurrentHashMap<>();
+        private final Set<BlockPos> blocks = ConcurrentHashMap.newKeySet();
+        private final Set<BlockPos> breaks = ConcurrentHashMap.newKeySet();
     }
 }
