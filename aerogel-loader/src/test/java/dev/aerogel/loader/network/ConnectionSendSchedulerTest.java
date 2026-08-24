@@ -10,6 +10,47 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ConnectionSendSchedulerTest {
     @Test
+    void inlineCompletionSchedulesExactlyOneContinuation() {
+        TestEventLoop eventLoop = new TestEventLoop();
+        ConnectionSendScheduler scheduler =
+            new ConnectionSendScheduler(eventLoop, eventLoop::inEventLoop);
+        List<Integer> order = new ArrayList<>();
+
+        eventLoop.runInEventLoop(() -> scheduler.submit(
+            PacketPriority.INTERACTIVE,
+            () -> {
+                order.add(1);
+                scheduler.complete();
+            },
+            true));
+
+        assertEquals(List.of(1), order);
+        assertEquals(1, eventLoop.queuedTasks());
+        eventLoop.runAll();
+        assertEquals(List.of(1), order);
+    }
+
+    @Test
+    void completionBarrierWaitsForCausalCallback() {
+        TestEventLoop eventLoop = new TestEventLoop();
+        ConnectionSendScheduler scheduler =
+            new ConnectionSendScheduler(eventLoop, eventLoop::inEventLoop);
+        List<Integer> order = new ArrayList<>();
+
+        scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(1), true);
+        scheduler.submit(PacketPriority.BARRIER, () -> order.add(2));
+
+        eventLoop.runOne();
+        assertEquals(List.of(1), order);
+        eventLoop.runAll();
+        assertEquals(List.of(1), order);
+
+        eventLoop.runInEventLoop(scheduler::complete);
+        eventLoop.runAll();
+        assertEquals(List.of(1, 2), order);
+    }
+
+    @Test
     void interactiveSendPassesQueuedBulkBeforeEnteringNetty() {
         TestEventLoop eventLoop = new TestEventLoop();
         ConnectionSendScheduler scheduler =

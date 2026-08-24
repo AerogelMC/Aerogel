@@ -2,6 +2,7 @@ package dev.aerogel.loader.context;
 
 import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -33,8 +34,26 @@ final class WorldCommitLane implements AutoCloseable {
         schedule();
     }
 
+    CompletableFuture<Void> submit(Runnable action) {
+        Objects.requireNonNull(action, "action");
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        offer(new Runnable[] { () -> {
+            try {
+                action.run();
+                completion.complete(null);
+            } catch (Throwable error) {
+                completion.completeExceptionally(error);
+            }
+        } });
+        return completion;
+    }
+
     private void schedule() {
         if (!scheduled.compareAndSet(false, true)) return;
+        // A native owner publishes its world commits before releasing its own
+        // shutdown permit. Claim this generation first, so shutdown observes a
+        // continuous unfinished-work chain through the final world mutation.
+        NativeTickCoordinator.beginAsynchronousWork();
         if (!scheduler.dispatchWorldCommit(this::drainGeneration)) {
             if (closing) {
                 // An already-running Context may publish after pool shutdown has
@@ -44,6 +63,7 @@ final class WorldCommitLane implements AutoCloseable {
                 return;
             }
             scheduled.set(false);
+            NativeTickCoordinator.endAsynchronousWork();
             throw new IllegalStateException("Context scheduler rejected a world commit");
         }
     }
@@ -61,7 +81,14 @@ final class WorldCommitLane implements AutoCloseable {
             } while (closing && !queue.isEmpty());
         } finally {
             scheduled.set(false);
-            if (!queue.isEmpty()) schedule();
+            try {
+                // Claim a following generation before releasing this one. This
+                // prevents a transient zero in the shutdown counter while work
+                // accepted by this world is still queued.
+                if (!queue.isEmpty()) schedule();
+            } finally {
+                NativeTickCoordinator.endAsynchronousWork();
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.network.AsyncCompressionEncoder;
 import dev.aerogel.loader.network.ConnectionSendScheduler;
 import dev.aerogel.loader.network.OutboundPacketPriority;
+import dev.aerogel.loader.network.PacketPriority;
 import dev.aerogel.loader.network.PendingActionDrainGate;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
@@ -163,8 +164,22 @@ abstract class ConnectionMixin {
             scheduler = new ConnectionSendScheduler(channel.eventLoop());
             aerogel$sendScheduler = scheduler;
         }
-        scheduler.submit(OutboundPacketPriority.classify(packet),
-            () -> aerogel$doSendPacket(packet, listener, flush));
+        PacketPriority priority = OutboundPacketPriority.classify(packet);
+        if (listener == null) {
+            scheduler.submit(priority,
+                () -> aerogel$doSendPacket(packet, null, flush));
+        } else {
+            ConnectionSendScheduler owner = scheduler;
+            ChannelFutureListener causalListener = future -> {
+                try {
+                    listener.operationComplete(future);
+                } finally {
+                    owner.complete();
+                }
+            };
+            scheduler.submit(priority,
+                () -> aerogel$doSendPacket(packet, causalListener, flush), true);
+        }
         callbackInfo.cancel();
     }
 }

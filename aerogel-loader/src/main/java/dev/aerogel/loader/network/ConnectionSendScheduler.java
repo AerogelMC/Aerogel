@@ -30,6 +30,8 @@ public final class ConnectionSendScheduler {
 
     // Accessed only by the connection's event-loop thread.
     private final ArrayDeque<PendingSegment> pending = new ArrayDeque<>();
+    private boolean waitingForCompletion;
+    private boolean draining;
 
     public ConnectionSendScheduler(EventLoop eventLoop) {
         this(eventLoop, eventLoop::inEventLoop);
@@ -41,9 +43,21 @@ public final class ConnectionSendScheduler {
     }
 
     public void submit(PacketPriority priority, Runnable action) {
+        submit(priority, action, false);
+    }
+
+    /**
+     * Publishes a send whose completion callback is a causal protocol boundary.
+     * The next send is not invoked until {@link #complete()} is called from that
+     * callback. This preserves vanilla's pipeline-transition ordering without
+     * blocking the event loop or any producer.
+     */
+    public void submit(
+        PacketPriority priority, Runnable action, boolean awaitCompletion
+    ) {
         Objects.requireNonNull(priority, "priority");
         Objects.requireNonNull(action, "action");
-        inbox.add(new Submission(priority, action));
+        inbox.add(new Submission(priority, action, awaitCompletion));
         if (!scheduled.compareAndSet(false, true)) return;
         try {
             if (inEventLoop.getAsBoolean()) {
@@ -58,18 +72,41 @@ public final class ConnectionSendScheduler {
     }
 
     private void drainTurn() {
+        draining = true;
         try {
             importSubmissions();
             Submission submission = pollNext();
             if (submission != null) {
-                OutboundPacketPriority.run(submission.priority, submission.action);
+                waitingForCompletion = submission.awaitCompletion;
+                try {
+                    OutboundPacketPriority.run(submission.priority, submission.action);
+                } catch (Throwable failure) {
+                    waitingForCompletion = false;
+                    throw failure;
+                }
             }
         } finally {
+            draining = false;
             scheduleContinuation();
         }
     }
 
+    /** Completes the causal send currently owning this connection lane. */
+    public void complete() {
+        if (!inEventLoop.getAsBoolean()) {
+            eventLoop.execute(this::complete);
+            return;
+        }
+        if (!waitingForCompletion) return;
+        waitingForCompletion = false;
+        // A completed ChannelFuture may invoke its listener inline from the
+        // send action. drainTurn's finally block owns continuation in that
+        // case, avoiding two event-loop tasks for the same lane transition.
+        if (!draining) scheduleContinuation();
+    }
+
     private void scheduleContinuation() {
+        if (waitingForCompletion) return;
         importSubmissions();
         if (!pending.isEmpty()) {
             eventLoop.execute(this::drainTurn);
@@ -146,7 +183,9 @@ public final class ConnectionSendScheduler {
         return segment;
     }
 
-    private record Submission(PacketPriority priority, Runnable action) {
+    private record Submission(
+        PacketPriority priority, Runnable action, boolean awaitCompletion
+    ) {
     }
 
     private static final class PendingSegment {

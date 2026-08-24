@@ -208,9 +208,12 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     /**
-     * Preserves vanilla's all-holders status barrier while assigning each holder
-     * mutation to its exact chunk Context. Phase two cannot start until every
-     * phase-one owner has published; the server thread never joins either phase.
+     * Preserves vanilla's world-owned all-holders status barrier off the server
+     * thread. Holder lifecycle publication must not enter a ChunkContext lane:
+     * a native tick may be waiting for the exact holder publication that makes
+     * its requested chunk available, so assigning both sides to that lane would
+     * form an owner cycle. The per-world commit lane is the single owner of this
+     * DistanceManager generation, while unrelated dimensions remain independent.
      */
     public CompletableFuture<Void> runChunkHolderPhases(
         ServerLevel level,
@@ -224,41 +227,26 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(futurePhase, "futurePhase");
         if (holders.isEmpty()) return CompletableFuture.completedFuture(null);
         WorldContextImpl world = worldImpl(level);
-        CompletableFuture<?>[] status = new CompletableFuture<?>[holders.size()];
-        for (int index = 0; index < holders.size(); index++) {
-            ChunkHolder holder = holders.get(index);
-            ChunkPos position = holder.getPos();
-            status[index] = world.context(position.x(), position.z())
-                .submit(0, () -> statusPhase.accept(holder));
-        }
-        return CompletableFuture.allOf(status).thenCompose(ignored -> {
-            CompletableFuture<?>[] futures = new CompletableFuture<?>[holders.size()];
-            for (int index = 0; index < holders.size(); index++) {
-                ChunkHolder holder = holders.get(index);
-                ChunkPos position = holder.getPos();
+        return world.commitLane().submit(() -> holders.forEach(statusPhase))
+            .thenCompose(ignored -> {
                 CompletableFuture<Void> settled = new CompletableFuture<>();
-                CompletableFuture<Void> submitted =
-                    world.context(position.x(), position.z()).submit(0, () -> {
-                        CompletableFuture<Void> publication;
-                        try {
-                            publication = Objects.requireNonNull(
-                                futurePhase.apply(holder), "futurePhase result");
-                        } catch (Throwable error) {
-                            settled.completeExceptionally(error);
-                            return;
-                        }
-                        publication.whenComplete((unused, error) -> {
-                            if (error == null) settled.complete(null);
-                            else settled.completeExceptionally(error);
-                        });
+                world.commitLane().submit(() -> {
+                    CompletableFuture<?>[] futures =
+                        new CompletableFuture<?>[holders.size()];
+                    for (int index = 0; index < holders.size(); index++) {
+                        ChunkHolder holder = holders.get(index);
+                        futures[index] = Objects.requireNonNull(
+                            futurePhase.apply(holder), "futurePhase result");
+                    }
+                    CompletableFuture.allOf(futures).whenComplete((unused, error) -> {
+                        if (error == null) settled.complete(null);
+                        else settled.completeExceptionally(error);
                     });
-                submitted.whenComplete((unused, error) -> {
+                }).whenComplete((unused, error) -> {
                     if (error != null) settled.completeExceptionally(error);
                 });
-                futures[index] = settled;
-            }
-            return CompletableFuture.allOf(futures);
-        });
+                return settled;
+            });
     }
 
     private void dispatchBatched(Runnable producer) {
