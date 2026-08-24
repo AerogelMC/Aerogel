@@ -87,6 +87,7 @@
     "EntityContextCallbackMixin",
     "EntityLookupMixin",
     "EntitySectionStorageMixin",
+    "EntityTickListMixin",
     "EntityStorageMixin",
     "PersistentEntitySectionManagerMixin",
     "ServerLevelEntityCallbacksMixin",

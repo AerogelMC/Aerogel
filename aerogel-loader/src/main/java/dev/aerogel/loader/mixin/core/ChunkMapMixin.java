@@ -8,11 +8,14 @@ import dev.aerogel.loader.internal.TrackedEntityBridge;
 import dev.aerogel.loader.internal.GenerationNodeExecutorBridge;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.context.DenseLongObjectList;
+import dev.aerogel.loader.context.ConcurrentLongSet;
+import dev.aerogel.loader.context.CommitScope;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectCollection;
 import net.minecraft.core.SectionPos;
@@ -33,6 +36,7 @@ import it.unimi.dsi.fastutil.longs.LongConsumer;
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.Coerce;
@@ -51,6 +55,8 @@ import dev.aerogel.loader.internal.LevelTicksBridge;
 abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeExecutorBridge {
     private static final ThreadLocal<MoveSnapshot> AEROGEL_MOVE_SNAPSHOT =
         new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> AEROGEL_REPLAYING_UNSAVED =
+        ThreadLocal.withInitial(() -> false);
     private static final ObjectCollection<Object> AEROGEL_EMPTY_TRACKED_ENTITIES =
         new ObjectArrayList<>(java.util.List.of());
 
@@ -58,6 +64,7 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Shadow @Final private Int2ObjectMap<Object> entityMap;
     @Shadow @Final private ChunkTaskDispatcher worldgenTaskDispatcher;
     @Shadow @Final private Long2ObjectLinkedOpenHashMap<ChunkHolder> visibleChunkMap;
+    @Shadow @Final @Mutable private LongSet chunksToEagerlySave;
     @Shadow public abstract DistanceManager getDistanceManager();
     @Invoker("playerIsCloseEnoughForSpawning")
     protected abstract boolean aerogel$exactPlayerSpawnDistance(
@@ -79,6 +86,9 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$listenForSpawnDistanceChanges(CallbackInfo callback) {
+        // Each key is an independent chunk-owned publication. Vanilla's save
+        // pass may enumerate concurrently without sharing a mutable iterator.
+        chunksToEagerlySave = new ConcurrentLongSet();
         ((DistanceManagerBridge) getDistanceManager())
             .aerogel$spawnDistanceListener(this::aerogel$updateSpawnCandidate);
     }
@@ -430,9 +440,19 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Inject(method = "setChunkUnsaved(Lnet/minecraft/world/level/ChunkPos;)V",
         at = @At("HEAD"), cancellable = true)
     private void aerogel$commitUnsavedChunk(ChunkPos position, CallbackInfo callback) {
+        if (AEROGEL_REPLAYING_UNSAVED.get()) return;
         if (!NativeTickCoordinator.isNativeWorker()) return;
-        if (NativeTickCoordinator.deferGlobalCommit(
-            () -> aerogel$setChunkUnsaved(position))) callback.cancel();
+        if (NativeTickCoordinator.deferCommit(
+            CommitScope.CONTEXT, () -> {
+                AEROGEL_REPLAYING_UNSAVED.set(true);
+                try {
+                    aerogel$setChunkUnsaved(position);
+                } finally {
+                    AEROGEL_REPLAYING_UNSAVED.remove();
+                }
+            })) {
+            callback.cancel();
+        }
     }
 
     private record MoveSnapshot(

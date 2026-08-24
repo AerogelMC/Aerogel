@@ -23,6 +23,7 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     private final LatestTickTaskLane trackingTickProducer;
     private final LatestTickTaskLane chunkTickProducer;
     private final LatestTickTaskLane blockEntityTickProducer;
+    private final WorldCommitLane commitLane;
     private volatile boolean closed;
     private final PositionalRandomFactory chunkRandoms;
 
@@ -33,6 +34,7 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
         this.trackingTickProducer = new LatestTickTaskLane(scheduler);
         this.chunkTickProducer = new LatestTickTaskLane(scheduler);
         this.blockEntityTickProducer = new LatestTickTaskLane(scheduler);
+        this.commitLane = new WorldCommitLane(scheduler);
         this.chunkRandoms = level == null ? null : RandomSource.create(level.getSeed())
             .forkPositional()
             .fromHashOf(level.dimension().identifier())
@@ -110,6 +112,7 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
     LatestTickTaskLane trackingTickProducer() { return trackingTickProducer; }
     LatestTickTaskLane chunkTickProducer() { return chunkTickProducer; }
     LatestTickTaskLane blockEntityTickProducer() { return blockEntityTickProducer; }
+    WorldCommitLane commitLane() { return commitLane; }
 
     NaturalSpawnWave beginNaturalSpawnWave(NativeTickToken tickToken) {
         CompletableFuture<Void> completion = new CompletableFuture<>();
@@ -161,6 +164,7 @@ final class WorldContextImpl implements WorldContext, AutoCloseable {
         trackingTickProducer.close();
         chunkTickProducer.close();
         blockEntityTickProducer.close();
+        commitLane.close();
         NaturalSpawnWindow waves = naturalSpawnWindow.getAndSet(NaturalSpawnWindow.EMPTY);
         if (waves.active != null) waves.active.cancel();
         if (waves.pending != null) waves.pending.cancel();

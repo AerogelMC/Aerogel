@@ -195,6 +195,118 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void contextCommitPublishesInsideTheExactOwnerTransaction() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            AtomicInteger contextCommit = new AtomicInteger();
+            AtomicInteger serverCommit = new AtomicInteger();
+
+            context.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> {
+                    assertTrue(NativeTickCoordinator.deferCommit(
+                        CommitScope.CONTEXT, contextCommit::incrementAndGet));
+                    assertTrue(NativeTickCoordinator.deferCommit(
+                        CommitScope.SERVER, serverCommit::incrementAndGet));
+                }, () -> { })).get(2, TimeUnit.SECONDS);
+
+            assertEquals(1, contextCommit.get(),
+                "the Context publication must finish before its owner task completes");
+            assertEquals(0, serverCommit.get(),
+                "a true server publication must still wait for the server boundary");
+            NativeTickCoordinator.pumpMainThread();
+            assertEquals(1, serverCommit.get());
+        }
+    }
+
+    @Test
+    void failedNativeCompletionReturnsItsOutstandingPermit() throws Exception {
+        java.lang.reflect.Field outstandingField =
+            NativeTickCoordinator.class.getDeclaredField("OUTSTANDING");
+        outstandingField.setAccessible(true);
+        AtomicInteger outstanding = (AtomicInteger) outstandingField.get(null);
+        int before = outstanding.get();
+        AtomicInteger laneCompletions = new AtomicInteger();
+
+        NativeTickCoordinator.taskSubmitted();
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+            () -> NativeTickCoordinator.runNative(List.of(1), ignored ->
+                NativeTickCoordinator.deferNativeCompletion(() -> {
+                    throw new IllegalStateException("failed publication");
+                }), laneCompletions::incrementAndGet));
+
+        assertEquals("failed publication", failure.getMessage());
+        assertEquals(1, laneCompletions.get(),
+            "the failed owner transaction must still release its lane");
+        assertEquals(before, outstanding.get(),
+            "the failed owner transaction must not strand shutdown");
+    }
+
+    @Test
+    void slowContextCommitDoesNotBlockAnUnrelatedChunk() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl slow = world.context(0, 0);
+            ChunkContextImpl fast = world.context(1, 0);
+            CountDownLatch slowStarted = new CountDownLatch(1);
+            CountDownLatch releaseSlow = new CountDownLatch(1);
+            CountDownLatch fastFinished = new CountDownLatch(1);
+
+            slow.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> NativeTickCoordinator.deferCommit(
+                    CommitScope.CONTEXT, () -> {
+                        slowStarted.countDown();
+                        await(releaseSlow);
+                    }), () -> { }));
+            assertTrue(slowStarted.await(2, TimeUnit.SECONDS));
+
+            fast.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> NativeTickCoordinator.deferCommit(
+                    CommitScope.CONTEXT, fastFinished::countDown), () -> { }));
+
+            assertTrue(fastFinished.await(1, TimeUnit.SECONDS));
+            releaseSlow.countDown();
+        }
+    }
+
+    @Test
+    void worldCommitLanesSerializeOneWorldButNotDifferentWorlds() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(3)) {
+            WorldContextImpl firstWorld = new WorldContextImpl(scheduler, null);
+            WorldContextImpl secondWorld = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl first = firstWorld.context(0, 0);
+            ChunkContextImpl sameWorld = firstWorld.context(1, 0);
+            ChunkContextImpl otherWorld = secondWorld.context(0, 0);
+            CountDownLatch firstStarted = new CountDownLatch(1);
+            CountDownLatch releaseFirst = new CountDownLatch(1);
+            CountDownLatch sameWorldFinished = new CountDownLatch(1);
+            CountDownLatch otherWorldFinished = new CountDownLatch(1);
+
+            first.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> NativeTickCoordinator.deferCommit(
+                    CommitScope.WORLD, () -> {
+                        firstStarted.countDown();
+                        await(releaseFirst);
+                    }), () -> { })).get(2, TimeUnit.SECONDS);
+            assertTrue(firstStarted.await(2, TimeUnit.SECONDS));
+
+            sameWorld.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> NativeTickCoordinator.deferCommit(
+                    CommitScope.WORLD, sameWorldFinished::countDown), () -> { }));
+            otherWorld.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(1), ignored -> NativeTickCoordinator.deferCommit(
+                    CommitScope.WORLD, otherWorldFinished::countDown), () -> { }));
+
+            assertFalse(sameWorldFinished.await(50, TimeUnit.MILLISECONDS),
+                "one world's owner sequence must remain serial");
+            assertTrue(otherWorldFinished.await(1, TimeUnit.SECONDS),
+                "another world's lane must remain independent");
+            releaseFirst.countDown();
+            assertTrue(sameWorldFinished.await(2, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void nextEntityBatchWaitsForPreviousGlobalIndexCommit() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
@@ -284,6 +396,40 @@ final class ContextSchedulerTest {
             NativeTickCoordinator.pumpMainThread();
             assertEquals(11, committed.get());
         }
+    }
+
+    @Test
+    void globalCommitPumpStopsAtItsLinearizedGenerationBoundary() {
+        List<Integer> committed = new ArrayList<>();
+        NativeTickCoordinator.submitMainThread(() -> {
+            committed.add(1);
+            NativeTickCoordinator.submitMainThread(() -> committed.add(2));
+        });
+
+        NativeTickCoordinator.pumpMainThread();
+        assertEquals(List.of(1), committed,
+            "a producer running during a drain must publish into the next generation");
+
+        NativeTickCoordinator.pumpMainThread();
+        assertEquals(List.of(1, 2), committed);
+    }
+
+    @Test
+    void reentrantGlobalCommitPumpCannotCrossTheOuterGenerationBoundary() {
+        List<Integer> committed = new ArrayList<>();
+        NativeTickCoordinator.submitMainThread(() -> {
+            committed.add(1);
+            NativeTickCoordinator.submitMainThread(() -> committed.add(2));
+            NativeTickCoordinator.pumpMainThread();
+            committed.add(3);
+        });
+
+        NativeTickCoordinator.pumpMainThread();
+        assertEquals(List.of(1, 3), committed,
+            "a nested distance-manager pump must not consume the next generation");
+
+        NativeTickCoordinator.pumpMainThread();
+        assertEquals(List.of(1, 3, 2), committed);
     }
 
     @Test
@@ -616,6 +762,33 @@ final class ContextSchedulerTest {
 
             assertTrue(nextTickAdmitted.await(2, TimeUnit.SECONDS),
                 "a late registration must observe an already-closed token");
+        }
+    }
+
+    @Test
+    void sealingATickDoesNotSettleItsContextsOnTheProducerThread() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            ChunkContextImpl context =
+                new WorldContextImpl(scheduler, null).context(0, 0);
+            NativeTickToken active = new NativeTickToken(1L);
+            NativeTickToken pending = new NativeTickToken(2L);
+            CountDownLatch pendingActivated = new CountDownLatch(1);
+            AtomicReference<Thread> settlementThread = new AtomicReference<>();
+
+            context.offerTickTask(active, context::completeTickTask, () -> { });
+            context.offerTickTask(pending, state -> {
+                settlementThread.set(Thread.currentThread());
+                context.completeTickTask(state);
+                pendingActivated.countDown();
+            }, () -> { });
+            pending.seal();
+
+            Thread producerThread = Thread.currentThread();
+            active.seal();
+
+            assertTrue(pendingActivated.await(2, TimeUnit.SECONDS));
+            assertTrue(settlementThread.get() != producerThread,
+                "the producer must publish token closure without scanning Contexts");
         }
     }
 

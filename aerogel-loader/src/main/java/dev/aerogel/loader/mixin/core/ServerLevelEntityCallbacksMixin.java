@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.CommitScope;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -37,10 +38,11 @@ abstract class ServerLevelEntityCallbacksMixin {
 
     @Inject(method = "onTickingStart", at = @At("HEAD"), cancellable = true)
     private void aerogel$deferTickingStart(Entity entity, CallbackInfo callback) {
+        if (AEROGEL$REPLAYING_TICKING_CALLBACK.get()) return;
         if (NativeTickCoordinator.isNativeWorker()
             && entity.level() instanceof ServerLevel level) {
-            // Publish Context scheduling eligibility in the same owner transaction.
-            // The vanilla EntityTickList mutation remains a server-thread commit.
+            // Publish both Context scheduling eligibility and vanilla ticking
+            // membership in the same owner transaction.
             AerogelRuntime.registerTickingEntity(level, entity);
         }
         defer("onTickingStart", entity, callback);
@@ -48,6 +50,7 @@ abstract class ServerLevelEntityCallbacksMixin {
 
     @Inject(method = "onTickingEnd", at = @At("HEAD"), cancellable = true)
     private void aerogel$deferTickingEnd(Entity entity, CallbackInfo callback) {
+        if (AEROGEL$REPLAYING_TICKING_CALLBACK.get()) return;
         if (NativeTickCoordinator.isNativeWorker()) {
             // Prevent already queued later logical ticks from running after this
             // exact vanilla ticking-membership generation has ended.
@@ -89,7 +92,10 @@ abstract class ServerLevelEntityCallbacksMixin {
 
     private void defer(String method, Entity entity, CallbackInfo callback) {
         if (!NativeTickCoordinator.isNativeWorker()) return;
-        if (NativeTickCoordinator.deferGlobalCommit(() -> invoke(method, entity))) {
+        CommitScope scope = method.equals("onTickingStart")
+            || method.equals("onTickingEnd")
+            ? CommitScope.CONTEXT : CommitScope.SERVER;
+        if (NativeTickCoordinator.deferCommit(scope, () -> invoke(method, entity))) {
             callback.cancel();
         }
     }

@@ -12,6 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
 final class NativeTickToken {
     private final long serverTick;
     private final PaddedAtomicInteger producers = new PaddedAtomicInteger(1);
+    private final PaddedAtomicReference<ContextServiceImpl> scheduler =
+        new PaddedAtomicReference<>();
     private final ConcurrentHashMap<ChunkContextImpl.TickState, ChunkContextImpl> contexts =
         new ConcurrentHashMap<>();
 
@@ -44,6 +46,17 @@ final class NativeTickToken {
             context.closeTickInput(state);
             return;
         }
+        ContextServiceImpl contextScheduler = context.scheduler();
+        ContextServiceImpl selected = scheduler.get();
+        if (selected == null) {
+            scheduler.compareAndSet(null, contextScheduler);
+            selected = scheduler.get();
+        }
+        if (selected != contextScheduler) {
+            releaseProducer();
+            throw new IllegalArgumentException(
+                "One native tick token cannot span Context schedulers");
+        }
         contexts.putIfAbsent(state, context);
         releaseProducer();
     }
@@ -54,6 +67,12 @@ final class NativeTickToken {
             throw new IllegalStateException("Native tick producer released twice");
         }
         if (remaining != 0) return;
+        ContextServiceImpl owner = scheduler.get();
+        if (owner != null && owner.executeComputation(this::closeInputs)) return;
+        closeInputs();
+    }
+
+    private void closeInputs() {
         contexts.forEach((state, context) -> {
             if (contexts.remove(state, context)) context.closeTickInput(state);
         });

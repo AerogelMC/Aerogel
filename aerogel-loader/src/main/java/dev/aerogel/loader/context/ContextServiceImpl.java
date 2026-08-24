@@ -188,6 +188,17 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return true;
     }
 
+    /** Accepts an already-published owner commit while shutdown drains the pool. */
+    boolean dispatchWorldCommit(Runnable task) {
+        if (workers.isShutdown()) return false;
+        try {
+            workers.execute(task);
+            return true;
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            return false;
+        }
+    }
+
     /** Submits non-Context producer work to the same work-stealing pool without joining it. */
     public boolean executeComputation(Runnable task) {
         Objects.requireNonNull(task, "task");

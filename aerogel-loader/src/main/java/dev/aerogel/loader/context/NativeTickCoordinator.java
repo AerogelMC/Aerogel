@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.Objects;
 import net.minecraft.server.MinecraftServer;
 
 /** Coordinates the server-thread commit boundary around native context work. */
@@ -18,6 +19,12 @@ public final class NativeTickCoordinator {
         ContextWorkerLocal.withInitial(NativeFrame::new);
     private static final ConcurrentLinkedQueue<Runnable> GLOBAL_COMMITS =
         new ConcurrentLinkedQueue<>();
+    /**
+     * A queue marker linearized after every commit visible when a drain begins.
+     * Producers that publish after this marker belong to the next commit generation.
+     */
+    private static final Runnable COMMIT_GENERATION_END = () -> { };
+    private static final AtomicBoolean GLOBAL_DRAINING = new AtomicBoolean();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
     private static final AtomicBoolean MAIN_WAKE_SCHEDULED = new AtomicBoolean();
     private static volatile MinecraftServer mainServer;
@@ -49,65 +56,82 @@ public final class NativeTickCoordinator {
         Runnable committed,
         boolean commitBeforeContinuation
     ) {
-        NativeFrame frame = NATIVE_WORK.get();
-        if (!frame.enter()) {
-            throw new IllegalStateException("Nested native context work");
-        }
-        Throwable failure = null;
-        try {
-            for (T item : items) {
-                try {
-                    action.accept(item);
-                } catch (Throwable error) {
-                    if (failure == null) {
-                        failure = error;
-                    } else {
-                        failure.addSuppressed(error);
-                    }
-                }
-            }
-            if (failure instanceof RuntimeException runtime) throw runtime;
-            if (failure instanceof Error error) throw error;
-            if (failure != null) throw new RuntimeException(failure);
-        } finally {
+        Runnable completion = () -> {
             try {
-                for (Runnable completion : frame.nativeCompletions) completion.run();
-            } catch (Throwable error) {
-                // Match the old one-frame-per-transaction lifetime: a failed native
-                // completion must not leak this transaction's publications into the
-                // next transaction that happens to use the same worker.
-                frame.discard();
-                throw error;
+                committed.run();
             } finally {
-                frame.leaveNativePhase();
+                OUTSTANDING.decrementAndGet();
             }
-            FramePublication publication = frame.detachPublication();
-            Runnable completion = () -> {
-                try {
-                    committed.run();
-                } finally {
-                    OUTSTANDING.decrementAndGet();
-                }
-            };
-            if (publication.commits.length == 0) {
-                for (Runnable published : publication.afterGlobalCommits) published.run();
-                completion.run();
-            } else {
-                GLOBAL_COMMITS.add(() -> {
+        };
+        boolean completionTransferred = false;
+        try {
+            NativeFrame frame = NATIVE_WORK.get();
+            if (!frame.enter()) {
+                throw new IllegalStateException("Nested native context work");
+            }
+            Throwable failure = null;
+            try {
+                for (T item : items) {
                     try {
-                        for (Runnable commit : publication.commits) commit.run();
-                    } finally {
-                        try {
-                            for (Runnable published : publication.afterGlobalCommits) {
-                                published.run();
-                            }
-                        } finally {
-                            if (commitBeforeContinuation) completion.run();
+                        action.accept(item);
+                    } catch (Throwable error) {
+                        if (failure == null) {
+                            failure = error;
+                        } else {
+                            failure.addSuppressed(error);
                         }
                     }
-                });
-                if (!commitBeforeContinuation) completion.run();
+                }
+                if (failure instanceof RuntimeException runtime) throw runtime;
+                if (failure instanceof Error error) throw error;
+                if (failure != null) throw new RuntimeException(failure);
+            } finally {
+                try {
+                    for (Runnable nativeCompletion : frame.nativeCompletions) {
+                        nativeCompletion.run();
+                    }
+                } catch (Throwable error) {
+                    // Match the old one-frame-per-transaction lifetime: a failed native
+                    // completion must not leak this transaction's publications into the
+                    // next transaction that happens to use the same worker.
+                    frame.discard();
+                    throw error;
+                } finally {
+                    frame.leaveNativePhase();
+                }
+                frame.publishWorldCommits();
+                FramePublication publication = frame.detachPublication();
+                if (publication.commits.length == 0) {
+                    for (Runnable published : publication.afterGlobalCommits) published.run();
+                    completionTransferred = true;
+                    completion.run();
+                } else {
+                    GLOBAL_COMMITS.add(() -> {
+                        try {
+                            for (Runnable commit : publication.commits) commit.run();
+                        } finally {
+                            try {
+                                for (Runnable published : publication.afterGlobalCommits) {
+                                    published.run();
+                                }
+                            } finally {
+                                if (commitBeforeContinuation) completion.run();
+                            }
+                        }
+                    });
+                    if (commitBeforeContinuation) {
+                        completionTransferred = true;
+                    } else {
+                        completionTransferred = true;
+                        completion.run();
+                    }
+                }
             }
+        } finally {
+            // A Context failure may occur before its publication is handed to any
+            // owner lane. Always release that lane and its OUTSTANDING permit once;
+            // otherwise stopServer can spin forever before vanilla saves the world.
+            if (!completionTransferred) completion.run();
         }
     }
 
@@ -160,9 +184,31 @@ public final class NativeTickCoordinator {
     }
 
     public static boolean deferGlobalCommit(Runnable commit) {
+        return deferCommit(CommitScope.SERVER, commit);
+    }
+
+    /**
+     * Publishes at the smallest proven owner boundary without changing owner
+     * order or making the server thread wait for a worker.
+     */
+    public static boolean deferCommit(CommitScope scope, Runnable commit) {
+        Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(commit, "commit");
         NativeFrame frame = NATIVE_WORK.get();
         if (!frame.active) return false;
-        frame.commits.add(commit);
+        switch (scope) {
+            case CONTEXT -> frame.nativeCompletions.add(commit);
+            case WORLD -> {
+                ContextThreadState.AccessScope access = ContextThreadState.current();
+                if (access == null) {
+                    throw new IllegalStateException(
+                        "World commit requires an active Context ownership scope");
+                }
+                frame.worldCommits.computeIfAbsent(
+                    access.primary().world(), ignored -> new ArrayList<>()).add(commit);
+            }
+            case SERVER -> frame.commits.add(commit);
+        }
         return true;
     }
 
@@ -230,8 +276,30 @@ public final class NativeTickCoordinator {
     }
 
     private static void drainGlobalCommits() {
-        Runnable commit;
-        while ((commit = GLOBAL_COMMITS.poll()) != null) commit.run();
+        // runDistanceManagerUpdates can re-enter the commit pump. Only the outer
+        // owner is allowed to establish and consume a generation boundary.
+        if (!GLOBAL_DRAINING.compareAndSet(false, true)) return;
+
+        boolean boundaryConsumed = false;
+        try {
+            // ConcurrentLinkedQueue.add/poll are linearizable. Everything published
+            // before this marker is this drain's immutable generation; work arriving
+            // while commits execute stays behind it for the next safe owner boundary.
+            GLOBAL_COMMITS.add(COMMIT_GENERATION_END);
+            Runnable commit;
+            while ((commit = GLOBAL_COMMITS.poll()) != null) {
+                if (commit == COMMIT_GENERATION_END) {
+                    boundaryConsumed = true;
+                    break;
+                }
+                commit.run();
+            }
+        } finally {
+            // Preserve queued work if a commit throws. The private marker must not
+            // become a false boundary for the next pump.
+            if (!boundaryConsumed) GLOBAL_COMMITS.remove(COMMIT_GENERATION_END);
+            GLOBAL_DRAINING.set(false);
+        }
     }
 
     private static void wakeMainThread() {
@@ -251,6 +319,8 @@ public final class NativeTickCoordinator {
         private final List<Runnable> commits = new ArrayList<>();
         private final List<Runnable> afterGlobalCommits = new ArrayList<>();
         private final List<Runnable> nativeCompletions = new ArrayList<>();
+        private final Map<WorldContextImpl, List<Runnable>> worldCommits =
+            new IdentityHashMap<>();
         private final Map<Object, Object> attachments = new IdentityHashMap<>();
 
         private boolean enter() {
@@ -263,6 +333,18 @@ public final class NativeTickCoordinator {
             active = false;
             nativeCompletions.clear();
             attachments.clear();
+        }
+
+        private void publishWorldCommits() {
+            if (worldCommits.isEmpty()) return;
+            try {
+                worldCommits.forEach((world, commits) -> {
+                    Runnable[] publication = commits.toArray(NO_ACTIONS);
+                    world.commitLane().offer(publication);
+                });
+            } finally {
+                worldCommits.clear();
+            }
         }
 
         private FramePublication detachPublication() {
@@ -282,6 +364,7 @@ public final class NativeTickCoordinator {
             commits.clear();
             afterGlobalCommits.clear();
             nativeCompletions.clear();
+            worldCommits.clear();
             attachments.clear();
         }
     }
