@@ -145,18 +145,22 @@ abstract class ServerChunkCacheMixin {
         DistanceManagerBridge distance = (DistanceManagerBridge) distanceManager;
         distance.aerogel$mainThreadExecutor().execute(() -> {
             try {
-                List<ChunkHolder> holders = distance.aerogel$applyLoadingGeneration(
+                DistanceManagerBridge.LoadingGeneration generation =
+                    distance.aerogel$applyLoadingGeneration(
                     publication.changes, chunkMap);
-                ((ChunkMapTrackingBridge) chunkMap)
-                    .aerogel$publishGenerationHolders(publication.changes);
-                AerogelRuntime.runChunkHolderPhases(
-                    level,
-                    holders,
-                    holder -> distance.aerogel$updateHighestAllowedStatus(
-                        holder, chunkMap),
-                    holder -> distance.aerogel$updateHolderFutures(holder, chunkMap)
-                ).whenComplete((ignored, error) ->
-                    aerogel$finishDistancePublication(publication, error));
+                CompletableFuture.runAsync(() ->
+                    ((ChunkMapTrackingBridge) chunkMap)
+                        .aerogel$publishGenerationHolders(
+                            generation.chunkKeys(), generation.publishedHolders()),
+                    AerogelRuntime::submitContextComputation
+                ).thenCompose(ignored -> AerogelRuntime.runChunkHolderPhases(
+                        level,
+                        generation.holders(),
+                        holder -> distance.aerogel$updateHighestAllowedStatus(
+                            holder, chunkMap),
+                        holder -> distance.aerogel$updateHolderFutures(holder, chunkMap)
+                    )).whenComplete((ignored, error) ->
+                        aerogel$finishDistancePublication(publication, error));
             } catch (Throwable error) {
                 aerogel$finishDistancePublication(publication, error);
             }

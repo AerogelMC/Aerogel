@@ -2,7 +2,6 @@ package dev.aerogel.loader.context;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.server.level.ChunkHolder;
 
 /**
@@ -32,33 +31,35 @@ public final class PublishedChunkHolderIndex {
         return stripes[owner(chunkKey)].get().get(chunkKey);
     }
 
-    /** Publishes every holder transition in one immutable distance generation. */
+    /** Publishes holders captured by the control-plane owner in one generation. */
     @SuppressWarnings("unchecked")
-    public void publish(
-        ExactChunkDistanceGraph.ChangeBatch changes, HolderResolver resolver
-    ) {
+    public void publish(long[] chunkKeys, ChunkHolder[] publishedHolders) {
+        if (chunkKeys.length != publishedHolders.length) {
+            throw new IllegalArgumentException("holder publication arrays differ in length");
+        }
         LongArrayList[] keys = new LongArrayList[stripes.length];
-        ObjectArrayList<ChunkHolder>[] holders =
-            (ObjectArrayList<ChunkHolder>[]) new ObjectArrayList<?>[stripes.length];
-        changes.publish((chunkKey, level) -> {
+        java.util.ArrayList<ChunkHolder>[] holders =
+            (java.util.ArrayList<ChunkHolder>[]) new java.util.ArrayList<?>[stripes.length];
+        for (int index = 0; index < chunkKeys.length; index++) {
+            long chunkKey = chunkKeys[index];
             int owner = owner(chunkKey);
             LongArrayList ownerKeys = keys[owner];
-            ObjectArrayList<ChunkHolder> ownerHolders = holders[owner];
+            java.util.ArrayList<ChunkHolder> ownerHolders = holders[owner];
             if (ownerKeys == null) {
                 ownerKeys = new LongArrayList();
-                ownerHolders = new ObjectArrayList<>();
+                ownerHolders = new java.util.ArrayList<>();
                 keys[owner] = ownerKeys;
                 holders[owner] = ownerHolders;
             }
             ownerKeys.add(chunkKey);
-            ownerHolders.add(resolver.resolve(chunkKey, level));
-        });
+            ownerHolders.add(publishedHolders[index]);
+        }
 
         for (int owner = 0; owner < stripes.length; owner++) {
             LongArrayList ownerKeys = keys[owner];
             if (ownerKeys == null) continue;
             Long2ObjectOpenHashMap<ChunkHolder> next = stripes[owner].get().clone();
-            ObjectArrayList<ChunkHolder> ownerHolders = holders[owner];
+            java.util.ArrayList<ChunkHolder> ownerHolders = holders[owner];
             for (int index = 0; index < ownerKeys.size(); index++) {
                 long chunkKey = ownerKeys.getLong(index);
                 ChunkHolder holder = ownerHolders.get(index);
@@ -73,8 +74,4 @@ public final class PublishedChunkHolderIndex {
         return (int) ConcurrentLong2ObjectMap.spread(key) & mask;
     }
 
-    @FunctionalInterface
-    public interface HolderResolver {
-        ChunkHolder resolve(long chunkKey, int level);
-    }
 }

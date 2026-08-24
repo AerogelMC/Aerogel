@@ -21,9 +21,15 @@ public interface DistanceManagerBridge {
     CompletableFuture<Void> aerogel$loadingDistancePublication();
     void aerogel$bindLoadingGenerationPublisher(
         ExactChunkDistanceGraph.GenerationPublisher publisher);
-    List<ChunkHolder> aerogel$applyLoadingGeneration(
+    LoadingGeneration aerogel$applyLoadingGeneration(
         ExactChunkDistanceGraph.ChangeBatch changes, ChunkMap chunkMap);
     void aerogel$updateHighestAllowedStatus(ChunkHolder holder, ChunkMap chunkMap);
     CompletableFuture<Void> aerogel$updateHolderFutures(
         ChunkHolder holder, ChunkMap chunkMap);
+
+    record LoadingGeneration(
+        List<ChunkHolder> holders,
+        long[] chunkKeys,
+        ChunkHolder[] publishedHolders
+    ) { }
 }

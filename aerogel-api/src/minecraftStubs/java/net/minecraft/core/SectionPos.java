@@ -6,6 +6,7 @@ import net.minecraft.world.level.entity.EntityAccess;
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public final class SectionPos {
     public static SectionPos of(long packed) { return null; }
+    public static SectionPos of(BlockPos position) { return null; }
     public static SectionPos of(EntityAccess entity) { return null; }
     public static int x(long packed) { return (int) (packed >> 42); }
     public static int y(long packed) { return (int) (packed << 44 >> 44); }
@@ -23,5 +24,8 @@ public final class SectionPos {
     }
     public static short sectionRelativePos(BlockPos position) { return 0; }
     public long asLong() { return 0L; }
+    public int x() { return 0; }
+    public int y() { return 0; }
+    public int z() { return 0; }
     public ChunkPos chunk() { return null; }
 }

@@ -10,7 +10,6 @@ import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.context.DenseLongObjectList;
 import dev.aerogel.loader.context.ConcurrentLongSet;
 import dev.aerogel.loader.context.CommitScope;
-import dev.aerogel.loader.context.ExactChunkDistanceGraph;
 import dev.aerogel.loader.context.PublishedChunkHolderIndex;
 import dev.aerogel.loader.context.ConcurrentGenerationTaskList;
 import dev.aerogel.loader.context.OwnerPublicationBarrier;
@@ -397,12 +396,9 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
 
     @Override
     public void aerogel$publishGenerationHolders(
-        ExactChunkDistanceGraph.ChangeBatch changes
+        long[] chunkKeys, ChunkHolder[] holders
     ) {
-        aerogel$generationHolders.publish(changes, (chunkKey, level) -> {
-            if (!net.minecraft.server.level.ChunkLevel.isLoaded(level)) return null;
-            return ((ChunkMap) (Object) this).getUpdatingChunkIfPresent(chunkKey);
-        });
+        aerogel$generationHolders.publish(chunkKeys, holders);
     }
 
     @Inject(method = "acquireGeneration", at = @At("HEAD"), cancellable = true)

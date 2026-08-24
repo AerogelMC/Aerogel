@@ -65,6 +65,7 @@
     "ChunkHolderInvoker",
     "ChunkTrackerMixin",
     "DistanceManagerMixin",
+    "DynamicGameEventListenerMixin",
     "FixedPlayerDistanceChunkTrackerMixin",
     "DynamicGraphMinFixedPointMixin",
     "SimulationChunkTrackerMixin",

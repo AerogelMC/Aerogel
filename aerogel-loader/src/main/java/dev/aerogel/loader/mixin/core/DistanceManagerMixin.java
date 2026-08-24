@@ -23,6 +23,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.List;
 import java.util.Set;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import dev.aerogel.loader.context.ExactChunkDistanceGraph;
 import dev.aerogel.loader.context.OwnerPublicationBarrier;
 
@@ -91,16 +93,32 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
     }
 
     @Override
-    public List<ChunkHolder> aerogel$applyLoadingGeneration(
+    public DistanceManagerBridge.LoadingGeneration aerogel$applyLoadingGeneration(
         ExactChunkDistanceGraph.ChangeBatch changes, ChunkMap chunkMap
     ) {
         LoadingChunkTrackerInvoker invoker =
             (LoadingChunkTrackerInvoker) (Object) loadingChunkTracker;
-        changes.publish(invoker::aerogel$setLevel);
-        if (chunksToUpdateFutures.isEmpty()) return List.of();
-        List<ChunkHolder> holders = List.copyOf(chunksToUpdateFutures);
+        LongArrayList chunkKeys = new LongArrayList();
+        ObjectArrayList<ChunkHolder> publishedHolders = new ObjectArrayList<>();
+        changes.publish((chunkKey, level) -> {
+            invoker.aerogel$setLevel(chunkKey, level);
+            chunkKeys.add(chunkKey);
+            publishedHolders.add(
+                net.minecraft.server.level.ChunkLevel.isLoaded(level)
+                    ? chunkMap.getUpdatingChunkIfPresent(chunkKey)
+                    : null);
+        });
+        List<ChunkHolder> holders = chunksToUpdateFutures.isEmpty()
+            ? List.of() : List.copyOf(chunksToUpdateFutures);
         chunksToUpdateFutures.clear();
-        return holders;
+        long[] publishedChunkKeys = new long[chunkKeys.size()];
+        for (int index = 0; index < publishedChunkKeys.length; index++) {
+            publishedChunkKeys[index] = chunkKeys.getLong(index);
+        }
+        return new DistanceManagerBridge.LoadingGeneration(
+            holders,
+            publishedChunkKeys,
+            publishedHolders.toArray(ChunkHolder[]::new));
     }
 
     @Override

@@ -1265,6 +1265,71 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return true;
     }
 
+    /**
+     * Orders a dynamic game-event listener's old and new registries with event
+     * delivery to those exact chunks. Vanilla's registry protects re-entrancy on
+     * one thread, not concurrent ArrayList mutation, so lifecycle changes must
+     * share the same owner set as dispatch.
+     */
+    public boolean routeGameEventListenerMutation(
+        ServerLevel level, long[] candidateKeys, Runnable action
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(candidateKeys, "candidateKeys");
+        Objects.requireNonNull(action, "action");
+        if (closed || candidateKeys.length == 0) return false;
+        WorldContextImpl world = worlds.get(level);
+        if (world == null) return false;
+
+        LongOpenHashSet loadedScope = new LongOpenHashSet();
+        ChunkContextImpl primary = null;
+        ContextThreadState.AccessScope currentScope = ContextThreadState.current();
+        for (long key : candidateKeys) {
+            int chunkX = ChunkPos.getX(key);
+            int chunkZ = ChunkPos.getZ(key);
+            LevelChunk chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
+            if (chunk == null) continue;
+            ChunkContextImpl context = world.context(chunk);
+            loadedScope.add(key);
+            if (primary == null && context.active()) primary = context;
+        }
+        if (loadedScope.isEmpty() || primary == null) return false;
+        if (currentScope != null && currentScope.primary().world() == world
+            && loadedScope.contains(currentScope.primary().key())) {
+            primary = currentScope.primary();
+        }
+
+        long[] scopeKeys = loadedScope.toLongArray();
+        if (currentScope != null && currentScope.primary().world() == world) {
+            boolean allOwned = true;
+            for (long key : scopeKeys) {
+                if (!currentScope.containsKey(key)) {
+                    allOwned = false;
+                    break;
+                }
+            }
+            if (allOwned) return false;
+        }
+
+        NativeTickCoordinator.taskSubmitted();
+        Runnable rejected = () -> {
+            NativeTickCoordinator.taskRejected();
+            NativeTickCoordinator.submitMainThread(() -> {
+                if (!routeGameEventListenerMutation(level, candidateKeys, action)) {
+                    action.run();
+                }
+            });
+        };
+        boolean accepted = primary.submitNative(scopeKeys,
+            () -> NativeTickCoordinator.runNative(
+                List.of(action), Runnable::run, () -> { }), rejected);
+        if (!accepted) {
+            NativeTickCoordinator.taskRejected();
+            return false;
+        }
+        return true;
+    }
+
     static long[] gameEventScope(int blockX, int blockZ, int notificationRadius) {
         if (notificationRadius < 0) {
             throw new IllegalArgumentException("notification radius must not be negative");
