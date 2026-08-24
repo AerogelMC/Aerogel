@@ -11,6 +11,7 @@
     "MinecraftServerTickMixin",
     "MinecraftServerPacketPumpMixin",
     "MinecraftServerSaveMixin",
+    "RandomSequencesMixin",
     "MinecraftServerWorldMixin",
     "CommandsMixin",
     "CommandsExecutionMixin",
