@@ -10,6 +10,10 @@ import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.context.DenseLongObjectList;
 import dev.aerogel.loader.context.ConcurrentLongSet;
 import dev.aerogel.loader.context.CommitScope;
+import dev.aerogel.loader.context.ExactChunkDistanceGraph;
+import dev.aerogel.loader.context.PublishedChunkHolderIndex;
+import dev.aerogel.loader.context.ConcurrentGenerationTaskList;
+import dev.aerogel.loader.context.OwnerPublicationBarrier;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -26,7 +30,9 @@ import net.minecraft.server.level.ServerEntity;
 import net.minecraft.server.level.DistanceManager;
 import net.minecraft.server.level.ChunkTaskDispatcher;
 import net.minecraft.server.level.ChunkHolder;
+import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.GenerationChunkHolder;
+import net.minecraft.server.level.ChunkGenerationTask;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.util.TriState;
@@ -44,6 +50,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
 import java.util.Set;
@@ -57,6 +64,8 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
         new ThreadLocal<>();
     private static final ThreadLocal<Boolean> AEROGEL_REPLAYING_UNSAVED =
         ThreadLocal.withInitial(() -> false);
+    private static final ThreadLocal<Boolean> AEROGEL_REPLAYING_FULL_STATUS =
+        ThreadLocal.withInitial(() -> false);
     private static final ObjectCollection<Object> AEROGEL_EMPTY_TRACKED_ENTITIES =
         new ObjectArrayList<>(java.util.List.of());
 
@@ -64,8 +73,12 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Shadow @Final private Int2ObjectMap<Object> entityMap;
     @Shadow @Final private ChunkTaskDispatcher worldgenTaskDispatcher;
     @Shadow @Final private Long2ObjectLinkedOpenHashMap<ChunkHolder> visibleChunkMap;
+    @Shadow @Final @Mutable private java.util.List<ChunkGenerationTask>
+        pendingGenerationTasks;
     @Shadow @Final @Mutable private LongSet chunksToEagerlySave;
     @Shadow public abstract DistanceManager getDistanceManager();
+    @Shadow abstract void onFullChunkStatusChange(
+        ChunkPos position, FullChunkStatus status);
     @Invoker("playerIsCloseEnoughForSpawning")
     protected abstract boolean aerogel$exactPlayerSpawnDistance(
         ServerPlayer player, ChunkPos position);
@@ -83,14 +96,40 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Unique private final ConcurrentHashMap<ServerPlayer, Long> aerogel$spawnPlayerBuckets =
         new ConcurrentHashMap<>();
     @Unique private long aerogel$spawnPlayerRefreshEpoch;
+    @Unique private final PublishedChunkHolderIndex aerogel$generationHolders =
+        new PublishedChunkHolderIndex();
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$listenForSpawnDistanceChanges(CallbackInfo callback) {
         // Each key is an independent chunk-owned publication. Vanilla's save
         // pass may enumerate concurrently without sharing a mutable iterator.
         chunksToEagerlySave = new ConcurrentLongSet();
+        pendingGenerationTasks = new ConcurrentGenerationTaskList<>();
         ((DistanceManagerBridge) getDistanceManager())
             .aerogel$spawnDistanceListener(this::aerogel$updateSpawnCandidate);
+    }
+
+    /**
+     * ChunkHolder demotion is prepared by its Chunk Context, but vanilla's
+     * listener mutates the world's shared entity-section and tracking indexes.
+     * Publish only that exact side effect at the server-owner boundary and make
+     * the holder generation wait for its completion.
+     */
+    @Inject(method = "onFullChunkStatusChange", at = @At("HEAD"), cancellable = true)
+    private void aerogel$publishFullChunkStatus(
+        ChunkPos position, FullChunkStatus status, CallbackInfo callback
+    ) {
+        if (AEROGEL_REPLAYING_FULL_STATUS.get()) return;
+        if (OwnerPublicationBarrier.defer(() -> {
+            AEROGEL_REPLAYING_FULL_STATUS.set(true);
+            try {
+                onFullChunkStatusChange(position, status);
+            } finally {
+                AEROGEL_REPLAYING_FULL_STATUS.remove();
+            }
+        })) {
+            callback.cancel();
+        }
     }
 
     /**
@@ -354,6 +393,30 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Override
     public Object aerogel$trackedEntity(int entityId) {
         return entityMap.get(entityId);
+    }
+
+    @Override
+    public void aerogel$publishGenerationHolders(
+        ExactChunkDistanceGraph.ChangeBatch changes
+    ) {
+        aerogel$generationHolders.publish(changes, (chunkKey, level) -> {
+            if (!net.minecraft.server.level.ChunkLevel.isLoaded(level)) return null;
+            return ((ChunkMap) (Object) this).getUpdatingChunkIfPresent(chunkKey);
+        });
+    }
+
+    @Inject(method = "acquireGeneration", at = @At("HEAD"), cancellable = true)
+    private void aerogel$acquirePublishedGenerationHolder(
+        long chunkKey, CallbackInfoReturnable<GenerationChunkHolder> callback
+    ) {
+        if (level.getServer().isSameThread()) return;
+        ChunkHolder holder = aerogel$generationHolders.get(chunkKey);
+        if (holder == null) {
+            throw new IllegalStateException(
+                "No published generation holder for " + ChunkPos.unpack(chunkKey));
+        }
+        holder.increaseGenerationRefCount();
+        callback.setReturnValue(holder);
     }
 
     @Override

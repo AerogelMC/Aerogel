@@ -40,9 +40,12 @@ public final class ExactChunkDistanceGraph {
     private final ConcurrentLinkedQueue<PublicationWaiter> publicationWaiters =
         new ConcurrentLinkedQueue<>();
     private final AtomicBoolean producerScheduled = new AtomicBoolean();
+    private final AtomicBoolean generationPublicationRunning = new AtomicBoolean();
     private final AtomicLong submittedSequence = new AtomicLong();
     private volatile long publishedSequence;
     private volatile LevelPublisher asynchronousPublisher;
+    private volatile GenerationPublisher generationPublisher;
+    private volatile Throwable publicationFailure;
 
     public ExactChunkDistanceGraph(int levelCount, int ownerCount) {
         this(levelCount, ownerCount, null, null, null);
@@ -146,6 +149,10 @@ public final class ExactChunkDistanceGraph {
     /** Publishes only fully completed immutable generations; this method never waits. */
     public int publishCompleted(LevelPublisher publisher) {
         asynchronousPublisher = Objects.requireNonNull(publisher, "publisher");
+        if (generationPublisher != null) {
+            scheduleGenerationPublication();
+            return 0;
+        }
         int published = 0;
         CompletedGeneration generation;
         while ((generation = completed.poll()) != null) {
@@ -154,8 +161,25 @@ public final class ExactChunkDistanceGraph {
         return published;
     }
 
+    /**
+     * Binds the exact holder-publication transaction for this distance field.
+     * Generations stay ordered, but a publisher may complete each generation
+     * asynchronously after its chunk owners have settled. No caller waits.
+     */
+    public void bindGenerationPublisher(GenerationPublisher publisher) {
+        Objects.requireNonNull(publisher, "publisher");
+        GenerationPublisher existing = generationPublisher;
+        if (existing != null && existing != publisher) {
+            throw new IllegalStateException("Distance generation publisher already bound");
+        }
+        generationPublisher = publisher;
+        scheduleGenerationPublication();
+    }
+
     /** Completes on the publication thread after every update submitted so far is visible. */
     public CompletableFuture<Void> publicationAfterQueuedUpdates() {
+        Throwable failed = publicationFailure;
+        if (failed != null) return CompletableFuture.failedFuture(failed);
         long target = submittedSequence.get();
         if (publishedSequence >= target) return CompletableFuture.completedFuture(null);
         CompletableFuture<Void> completion = new CompletableFuture<>();
@@ -188,6 +212,12 @@ public final class ExactChunkDistanceGraph {
     }
 
     private void publishOrQueue(CompletedGeneration generation) {
+        GenerationPublisher bound = generationPublisher;
+        if (bound != null) {
+            completed.offer(generation);
+            scheduleGenerationPublication();
+            return;
+        }
         LevelPublisher publisher = asynchronousPublisher;
         if (publisher != null) {
             LevelPublisher ready = publisher;
@@ -200,6 +230,46 @@ public final class ExactChunkDistanceGraph {
             LevelPublisher ready = publisher;
             completionExecutor.accept(() -> publishGeneration(generation, ready));
         }
+    }
+
+    private void scheduleGenerationPublication() {
+        if (generationPublisher == null
+            || !generationPublicationRunning.compareAndSet(false, true)) return;
+        publishNextGeneration();
+    }
+
+    private void publishNextGeneration() {
+        CompletedGeneration generation = completed.poll();
+        if (generation == null) {
+            generationPublicationRunning.set(false);
+            if (!completed.isEmpty()) scheduleGenerationPublication();
+            return;
+        }
+
+        CompletableFuture<Void> publication;
+        try {
+            publication = Objects.requireNonNull(
+                generationPublisher.publish(generation.changes),
+                "generation publication future");
+        } catch (Throwable error) {
+            failGenerationPublication(error);
+            return;
+        }
+        publication.whenComplete((ignored, error) -> {
+            if (error != null) {
+                failGenerationPublication(error);
+                return;
+            }
+            publishedSequence = Math.max(publishedSequence, generation.sequence);
+            completePublicationWaiters();
+            publishNextGeneration();
+        });
+    }
+
+    private void failGenerationPublication(Throwable error) {
+        publicationFailure = error;
+        generationPublicationRunning.set(false);
+        failPublicationWaiters(error);
     }
 
     private int publishGeneration(CompletedGeneration generation, LevelPublisher publisher) {
@@ -247,6 +317,11 @@ public final class ExactChunkDistanceGraph {
     @FunctionalInterface
     public interface LevelPublisher {
         void publish(long chunkKey, int level);
+    }
+
+    @FunctionalInterface
+    public interface GenerationPublisher {
+        CompletableFuture<Void> publish(ChangeBatch changes);
     }
 
     public static final class ChangeBatch {

@@ -29,4 +29,7 @@ public interface GenerationChunkHolderInvoker {
         GeneratingChunkMap chunkMap,
         StaticCache2D<GenerationChunkHolder> cache
     );
+
+    @Invoker("updateHighestAllowedStatus")
+    void aerogel$updateHighestAllowedStatus(ChunkMap chunkMap);
 }

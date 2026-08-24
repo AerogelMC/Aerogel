@@ -263,6 +263,16 @@ public final class NativeTickCoordinator {
         OUTSTANDING.decrementAndGet();
     }
 
+    /** Registers a non-native asynchronous owner transaction for shutdown drain. */
+    public static void beginAsynchronousWork() {
+        OUTSTANDING.incrementAndGet();
+    }
+
+    /** Completes a transaction registered by {@link #beginAsynchronousWork()}. */
+    public static void endAsynchronousWork() {
+        OUTSTANDING.decrementAndGet();
+    }
+
     public static void pumpMainThread() {
         drainGlobalCommits();
     }

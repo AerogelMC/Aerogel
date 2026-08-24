@@ -9,10 +9,13 @@ import java.util.concurrent.RecursiveAction;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 final class ExactChunkDistanceGraphTest {
     @Test
@@ -83,21 +86,79 @@ final class ExactChunkDistanceGraphTest {
     @Test
     void asynchronousProducerPublishesOnlyACompletedGenerationWithoutCallerJoin()
         throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
         CountDownLatch completed = new CountDownLatch(1);
         try (var executor = Executors.newSingleThreadExecutor()) {
             ExactChunkDistanceGraph graph = new ExactChunkDistanceGraph(
                 6, 4,
-                task -> executor.execute(() -> { try { task.run(); } finally { completed.countDown(); } }),
+                task -> executor.execute(() -> {
+                    started.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("producer was not released");
+                        }
+                        task.run();
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(interrupted);
+                    } finally {
+                        completed.countDown();
+                    }
+                }),
                 ExactChunkDistanceGraphTest::sequential,
                 Runnable::run);
             Long2IntOpenHashMap published = levels(5);
 
             graph.updateSource(key(0, 0), 0);
+            assertTrue(started.await(10, TimeUnit.SECONDS));
             assertEquals(0, graph.publishCompleted(published::put));
+            release.countDown();
             assertTrue(completed.await(10, TimeUnit.SECONDS));
             graph.publishCompleted(published::put);
             assertEquals(0, published.get(key(0, 0)));
             assertEquals(2, published.get(key(2, 1)));
+        }
+    }
+
+    @Test
+    void generationPublisherPreservesOrderAndWaitsForOwnerSettlement()
+        throws Exception {
+        CountDownLatch firstOffered = new CountDownLatch(1);
+        CountDownLatch secondOffered = new CountDownLatch(1);
+        CompletableFuture<Void> firstOwnersSettled = new CompletableFuture<>();
+        AtomicInteger generations = new AtomicInteger();
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            ExactChunkDistanceGraph graph = new ExactChunkDistanceGraph(
+                6, 4, executor::execute, ExactChunkDistanceGraphTest::sequential,
+                Runnable::run);
+            graph.bindGenerationPublisher(changes -> {
+                int generation = generations.incrementAndGet();
+                if (generation == 1) {
+                    firstOffered.countDown();
+                    return firstOwnersSettled;
+                }
+                secondOffered.countDown();
+                return CompletableFuture.completedFuture(null);
+            });
+
+            graph.updateSource(key(0, 0), 0);
+            CompletableFuture<Void> firstPublished =
+                graph.publicationAfterQueuedUpdates();
+            assertTrue(firstOffered.await(2, TimeUnit.SECONDS));
+            assertFalse(firstPublished.isDone());
+
+            graph.updateSource(key(8, 0), 0);
+            CompletableFuture<Void> secondPublished =
+                graph.publicationAfterQueuedUpdates();
+            assertFalse(secondOffered.await(100, TimeUnit.MILLISECONDS),
+                "a later distance generation must not overtake unsettled owners");
+
+            firstOwnersSettled.complete(null);
+            assertTrue(secondOffered.await(2, TimeUnit.SECONDS));
+            firstPublished.get(2, TimeUnit.SECONDS);
+            secondPublished.get(2, TimeUnit.SECONDS);
+            assertEquals(2, generations.get());
         }
     }
 

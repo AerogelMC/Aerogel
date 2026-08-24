@@ -51,4 +51,11 @@ abstract class ChunkTrackerMixin implements ExactChunkTrackerBridge {
     public CompletableFuture<Void> aerogel$publicationAfterQueuedUpdates() {
         return aerogel$exactDistances.publicationAfterQueuedUpdates();
     }
+
+    @Override
+    public void aerogel$bindGenerationPublisher(
+        ExactChunkDistanceGraph.GenerationPublisher publisher
+    ) {
+        aerogel$exactDistances.bindGenerationPublisher(publisher);
+    }
 }

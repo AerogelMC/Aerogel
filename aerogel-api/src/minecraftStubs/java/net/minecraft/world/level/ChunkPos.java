@@ -25,4 +25,8 @@ public record ChunkPos(int x, int z) {
     public static int getZ(long packed) {
         return (int) (packed >>> 32);
     }
+
+    public static ChunkPos unpack(long packed) {
+        return new ChunkPos(getX(packed), getZ(packed));
+    }
 }

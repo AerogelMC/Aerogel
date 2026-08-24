@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.ExactChunkDistanceGraph;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkLevel;
 import net.minecraft.server.level.ChunkMap;
@@ -39,6 +40,7 @@ import java.util.function.Consumer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Objects;
 import net.minecraft.world.entity.MobCategory;
@@ -59,6 +61,10 @@ abstract class ServerChunkCacheMixin {
     @Unique private final List<Runnable> aerogel$afterDistanceUpdates =
         new ArrayList<>();
     @Unique private final AtomicBoolean aerogel$distancePublicationFollowUp =
+        new AtomicBoolean();
+    @Unique private final ConcurrentLinkedQueue<DistancePublication>
+        aerogel$distancePublications = new ConcurrentLinkedQueue<>();
+    @Unique private final AtomicBoolean aerogel$distancePublicationRunning =
         new AtomicBoolean();
     @Shadow public abstract ChunkAccess getChunk(
         int chunkX, int chunkZ, ChunkStatus targetStatus, boolean create);
@@ -102,7 +108,79 @@ abstract class ServerChunkCacheMixin {
         // first tickServer invocation. Register here so an asynchronous distance
         // generation can wake the server task pump during that bootstrap phase.
         NativeTickCoordinator.registerMainServer(level.getServer());
+        ((DistanceManagerBridge) distanceManager)
+            .aerogel$bindLoadingGenerationPublisher(
+                this::aerogel$queueDistancePublication);
     }
+
+    @Unique
+    private CompletableFuture<Void> aerogel$queueDistancePublication(
+        ExactChunkDistanceGraph.ChangeBatch changes
+    ) {
+        CompletableFuture<Void> completion = new CompletableFuture<>();
+        NativeTickCoordinator.beginAsynchronousWork();
+        aerogel$distancePublications.offer(
+            new DistancePublication(changes, completion));
+        aerogel$scheduleDistancePublication();
+        return completion;
+    }
+
+    @Unique
+    private void aerogel$scheduleDistancePublication() {
+        if (!aerogel$distancePublicationRunning.compareAndSet(false, true)) return;
+        aerogel$startNextDistancePublication();
+    }
+
+    @Unique
+    private void aerogel$startNextDistancePublication() {
+        DistancePublication publication = aerogel$distancePublications.poll();
+        if (publication == null) {
+            aerogel$distancePublicationRunning.set(false);
+            if (!aerogel$distancePublications.isEmpty()) {
+                aerogel$scheduleDistancePublication();
+            }
+            return;
+        }
+        NativeTickCoordinator.submitGlobalCommit(() -> {
+            try {
+                DistanceManagerBridge distance =
+                    (DistanceManagerBridge) distanceManager;
+                List<ChunkHolder> holders = distance.aerogel$applyLoadingGeneration(
+                    publication.changes, chunkMap);
+                ((ChunkMapTrackingBridge) chunkMap)
+                    .aerogel$publishGenerationHolders(publication.changes);
+                AerogelRuntime.runChunkHolderPhases(
+                    level,
+                    holders,
+                    holder -> distance.aerogel$updateHighestAllowedStatus(
+                        holder, chunkMap),
+                    holder -> distance.aerogel$updateHolderFutures(holder, chunkMap)
+                ).whenComplete((ignored, error) ->
+                    aerogel$finishDistancePublication(publication, error));
+            } catch (Throwable error) {
+                aerogel$finishDistancePublication(publication, error);
+            }
+        });
+    }
+
+    @Unique
+    private void aerogel$finishDistancePublication(
+        DistancePublication publication, Throwable error
+    ) {
+        try {
+            if (error == null) publication.completion.complete(null);
+            else publication.completion.completeExceptionally(error);
+        } finally {
+            NativeTickCoordinator.endAsynchronousWork();
+            aerogel$startNextDistancePublication();
+        }
+    }
+
+    @Unique
+    private record DistancePublication(
+        ExactChunkDistanceGraph.ChangeBatch changes,
+        CompletableFuture<Void> completion
+    ) { }
 
     /**
      * @author Aerogel

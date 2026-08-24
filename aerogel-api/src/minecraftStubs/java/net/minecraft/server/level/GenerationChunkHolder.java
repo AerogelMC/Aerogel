@@ -13,4 +13,5 @@ public abstract class GenerationChunkHolder {
     public int getQueueLevel() { return 0; }
     public ChunkStatus getPersistedStatus() { return null; }
     public ChunkAccess getLatestChunk() { return null; }
+    public void increaseGenerationRefCount() { }
 }

@@ -8,10 +8,13 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.ChunkHolder;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.entity.Entity;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import dev.aerogel.api.context.ContextSnapshot;
 import net.minecraft.server.level.ServerPlayer;
@@ -101,6 +104,28 @@ public final class AerogelRuntime {
     public static void submitContextComputation(Runnable task) {
         AerogelApiRuntime current = apiRuntime;
         if (current == null || !current.contexts().executeComputation(task)) task.run();
+    }
+
+    public static CompletableFuture<Void> runChunkHolderPhases(
+        ServerLevel level,
+        List<ChunkHolder> holders,
+        Consumer<ChunkHolder> statusPhase,
+        Function<ChunkHolder, CompletableFuture<Void>> futurePhase
+    ) {
+        AerogelApiRuntime current = apiRuntime;
+        if (current != null) {
+            return current.contexts().runChunkHolderPhases(
+                level, holders, statusPhase, futurePhase);
+        }
+        try {
+            holders.forEach(statusPhase);
+            CompletableFuture<?>[] futures = holders.stream()
+                .map(futurePhase)
+                .toArray(CompletableFuture[]::new);
+            return CompletableFuture.allOf(futures);
+        } catch (Throwable error) {
+            return CompletableFuture.failedFuture(error);
+        }
     }
 
     public static void worldLoaded(ServerLevel level) {

@@ -8,4 +8,6 @@ public interface ExactChunkTrackerBridge {
     int aerogel$runExactUpdates(
         int maximumUpdates, ExactChunkDistanceGraph.LevelPublisher publisher);
     CompletableFuture<Void> aerogel$publicationAfterQueuedUpdates();
+    void aerogel$bindGenerationPublisher(
+        ExactChunkDistanceGraph.GenerationPublisher publisher);
 }

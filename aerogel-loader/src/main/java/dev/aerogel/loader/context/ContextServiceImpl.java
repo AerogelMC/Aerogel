@@ -7,6 +7,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ChunkResult;
+import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
@@ -42,6 +43,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Function;
 import dev.aerogel.loader.internal.EntityContextOwnerBridge;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
@@ -203,6 +205,60 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     public boolean executeComputation(Runnable task) {
         Objects.requireNonNull(task, "task");
         return dispatch(task);
+    }
+
+    /**
+     * Preserves vanilla's all-holders status barrier while assigning each holder
+     * mutation to its exact chunk Context. Phase two cannot start until every
+     * phase-one owner has published; the server thread never joins either phase.
+     */
+    public CompletableFuture<Void> runChunkHolderPhases(
+        ServerLevel level,
+        List<ChunkHolder> holders,
+        Consumer<ChunkHolder> statusPhase,
+        Function<ChunkHolder, CompletableFuture<Void>> futurePhase
+    ) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(holders, "holders");
+        Objects.requireNonNull(statusPhase, "statusPhase");
+        Objects.requireNonNull(futurePhase, "futurePhase");
+        if (holders.isEmpty()) return CompletableFuture.completedFuture(null);
+        WorldContextImpl world = worldImpl(level);
+        CompletableFuture<?>[] status = new CompletableFuture<?>[holders.size()];
+        for (int index = 0; index < holders.size(); index++) {
+            ChunkHolder holder = holders.get(index);
+            ChunkPos position = holder.getPos();
+            status[index] = world.context(position.x(), position.z())
+                .submit(0, () -> statusPhase.accept(holder));
+        }
+        return CompletableFuture.allOf(status).thenCompose(ignored -> {
+            CompletableFuture<?>[] futures = new CompletableFuture<?>[holders.size()];
+            for (int index = 0; index < holders.size(); index++) {
+                ChunkHolder holder = holders.get(index);
+                ChunkPos position = holder.getPos();
+                CompletableFuture<Void> settled = new CompletableFuture<>();
+                CompletableFuture<Void> submitted =
+                    world.context(position.x(), position.z()).submit(0, () -> {
+                        CompletableFuture<Void> publication;
+                        try {
+                            publication = Objects.requireNonNull(
+                                futurePhase.apply(holder), "futurePhase result");
+                        } catch (Throwable error) {
+                            settled.completeExceptionally(error);
+                            return;
+                        }
+                        publication.whenComplete((unused, error) -> {
+                            if (error == null) settled.complete(null);
+                            else settled.completeExceptionally(error);
+                        });
+                    });
+                submitted.whenComplete((unused, error) -> {
+                    if (error != null) settled.completeExceptionally(error);
+                });
+                futures[index] = settled;
+            }
+            return CompletableFuture.allOf(futures);
+        });
     }
 
     private void dispatchBatched(Runnable producer) {

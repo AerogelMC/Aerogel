@@ -8,4 +8,5 @@ public final class ChunkLevel {
     ) { return 0; }
     public static boolean isEntityTicking(int level) { return false; }
     public static boolean isBlockTicking(int level) { return false; }
+    public static boolean isLoaded(int level) { return false; }
 }
