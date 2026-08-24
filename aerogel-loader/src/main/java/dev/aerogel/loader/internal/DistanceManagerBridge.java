@@ -8,6 +8,7 @@ import net.minecraft.server.level.ChunkMap;
 import dev.aerogel.loader.context.ExactChunkDistanceGraph;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 public interface DistanceManagerBridge {
     void aerogel$forEachPublishedEntityTickingChunk(LongConsumer consumer);
@@ -16,6 +17,7 @@ public interface DistanceManagerBridge {
     long aerogel$spawnDistanceVersion();
     void aerogel$spawnDistanceListener(LongConsumer listener);
     TicketStorage aerogel$ticketStorage();
+    Executor aerogel$mainThreadExecutor();
     CompletableFuture<Void> aerogel$loadingDistancePublication();
     void aerogel$bindLoadingGenerationPublisher(
         ExactChunkDistanceGraph.GenerationPublisher publisher);

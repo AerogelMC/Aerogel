@@ -72,6 +72,11 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
     }
 
     @Override
+    public Executor aerogel$mainThreadExecutor() {
+        return mainThreadExecutor;
+    }
+
+    @Override
     public CompletableFuture<Void> aerogel$loadingDistancePublication() {
         return ((ExactChunkTrackerBridge) (Object) loadingChunkTracker)
             .aerogel$publicationAfterQueuedUpdates();
@@ -110,9 +115,10 @@ abstract class DistanceManagerMixin implements DistanceManagerBridge {
     public CompletableFuture<Void> aerogel$updateHolderFutures(
         ChunkHolder holder, ChunkMap chunkMap
     ) {
-        return OwnerPublicationBarrier.run(() ->
-            ((ChunkHolderInvoker) (Object) holder)
-                .aerogel$updateFutures(chunkMap, mainThreadExecutor));
+        return OwnerPublicationBarrier.run(
+            () -> ((ChunkHolderInvoker) (Object) holder)
+                .aerogel$updateFutures(chunkMap, mainThreadExecutor),
+            mainThreadExecutor::execute);
     }
 
     /**

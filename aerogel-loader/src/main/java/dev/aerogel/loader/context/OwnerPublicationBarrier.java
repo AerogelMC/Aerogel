@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * Separates chunk-owned preparation from server-owned state publication.
@@ -20,7 +21,14 @@ public final class OwnerPublicationBarrier {
     private OwnerPublicationBarrier() { }
 
     public static CompletableFuture<Void> run(Runnable preparation) {
+        return run(preparation, NativeTickCoordinator::submitGlobalCommit);
+    }
+
+    public static CompletableFuture<Void> run(
+        Runnable preparation, Consumer<Runnable> publicationExecutor
+    ) {
         Objects.requireNonNull(preparation, "preparation");
+        Objects.requireNonNull(publicationExecutor, "publicationExecutor");
         if (CURRENT.get() != null) {
             throw new IllegalStateException("Nested owner publication barrier");
         }
@@ -44,7 +52,7 @@ public final class OwnerPublicationBarrier {
         }
 
         Runnable[] commits = frame.commits.toArray(Runnable[]::new);
-        NativeTickCoordinator.submitGlobalCommit(() -> {
+        publicationExecutor.accept(() -> {
             Throwable failure = capturedFailure;
             for (Runnable commit : commits) {
                 try {

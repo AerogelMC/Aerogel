@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Objects;
 import net.minecraft.world.entity.MobCategory;
@@ -141,10 +142,9 @@ abstract class ServerChunkCacheMixin {
             }
             return;
         }
-        NativeTickCoordinator.submitGlobalCommit(() -> {
+        DistanceManagerBridge distance = (DistanceManagerBridge) distanceManager;
+        distance.aerogel$mainThreadExecutor().execute(() -> {
             try {
-                DistanceManagerBridge distance =
-                    (DistanceManagerBridge) distanceManager;
                 List<ChunkHolder> holders = distance.aerogel$applyLoadingGeneration(
                     publication.changes, chunkMap);
                 ((ChunkMapTrackingBridge) chunkMap)
@@ -215,7 +215,8 @@ abstract class ServerChunkCacheMixin {
                 if (!publication.isDone()) {
                     return publication.thenComposeAsync(ignored ->
                         aerogel$schedulePublishedChunk(key, requiredLevel, targetStatus),
-                        level.getServer());
+                        ((DistanceManagerBridge) distanceManager)
+                            .aerogel$mainThreadExecutor());
                 }
                 publication.join();
                 return aerogel$schedulePublishedChunk(
@@ -371,7 +372,7 @@ abstract class ServerChunkCacheMixin {
                 "No chunk was scheduled for loading after distance publication");
             return chunkMap.getChunkRangeFuture(holder, radius,
                 unused -> ChunkStatus.FULL);
-        }, level.getServer()));
+        }, ((DistanceManagerBridge) distanceManager).aerogel$mainThreadExecutor()));
     }
 
     @Inject(
