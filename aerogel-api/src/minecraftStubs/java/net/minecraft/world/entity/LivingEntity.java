@@ -8,8 +8,10 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.item.ItemStack;
 import java.util.Collection;
+import net.minecraft.world.entity.ai.attributes.Attribute;
 
 public abstract class LivingEntity extends Entity {
+    public double getAttributeValue(Holder<Attribute> attribute) { return 0.0D; }
     public Collection<MobEffectInstance> getActiveEffects() { return null; }
     public boolean hurtServer(ServerLevel level, DamageSource source, float amount) { return false; }
     public void heal(float amount) { }

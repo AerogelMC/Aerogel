@@ -24,6 +24,15 @@ public final class ContextDispatchingRandomSource implements RandomSource {
         return owned != null ? owned : fallback;
     }
 
+    /**
+     * Captures the current owner's source for an operation that cannot change
+     * ownership while it runs. This avoids repeating the owner lookup for every
+     * element of algorithms such as a server-owned chunk shuffle.
+     */
+    public RandomSource snapshotDelegate() {
+        return delegate();
+    }
+
     @Override public RandomSource fork() { return delegate().fork(); }
     @Override public PositionalRandomFactory forkPositional() {
         return delegate().forkPositional();

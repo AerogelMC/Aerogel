@@ -3,6 +3,7 @@ package dev.aerogel.loader.mixin.core;
 import dev.aerogel.loader.context.ConcurrentLong2ObjectMap;
 import dev.aerogel.loader.internal.LocalMobCapSnapshotBridge;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
@@ -27,7 +28,7 @@ abstract class LocalMobCapCalculatorMixin implements LocalMobCapSnapshotBridge {
     private static final double AEROGEL$VANILLA_SPAWN_DISTANCE_SQUARED = 16_384.0D;
     @Shadow @Final @Mutable private Long2ObjectMap<Object> playersNearChunk;
     @Shadow @Final @Mutable private Map<Object, Object> playerMobCounts;
-    @Unique private volatile List<PlayerSample> aerogel$playerSnapshot;
+    @Unique private volatile PlayerSnapshot aerogel$playerSnapshot;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$useConcurrentIndexes(CallbackInfo callback) {
@@ -37,13 +38,24 @@ abstract class LocalMobCapCalculatorMixin implements LocalMobCapSnapshotBridge {
 
     @Override
     public void aerogel$snapshotPlayers(List<ServerPlayer> players) {
-        ArrayList<PlayerSample> snapshot = new ArrayList<>(players.size());
+        Long2ObjectOpenHashMap<ArrayList<PlayerSample>> mutableCells =
+            new Long2ObjectOpenHashMap<>();
         for (ServerPlayer player : players) {
             Vec3 position = player.position();
-            snapshot.add(new PlayerSample(
-                player, player.isSpectator(), position.x, position.z));
+            PlayerSample sample = new PlayerSample(
+                player, player.isSpectator(), position.x, position.z);
+            mutableCells.computeIfAbsent(aerogel$cell(position.x, position.z),
+                ignored -> new ArrayList<>()).add(sample);
         }
-        aerogel$playerSnapshot = List.copyOf(snapshot);
+        Long2ObjectOpenHashMap<PlayerSample[]> cells =
+            new Long2ObjectOpenHashMap<>(mutableCells.size());
+        for (Long2ObjectMap.Entry<ArrayList<PlayerSample>> entry
+            : mutableCells.long2ObjectEntrySet()) {
+            cells.put(entry.getLongKey(), entry.getValue().toArray(PlayerSample[]::new));
+        }
+        // The map and arrays are never mutated after this volatile publication,
+        // so parallel readers need neither a concurrent table nor boxed Long keys.
+        aerogel$playerSnapshot = new PlayerSnapshot(cells);
     }
 
     /**
@@ -55,24 +67,56 @@ abstract class LocalMobCapCalculatorMixin implements LocalMobCapSnapshotBridge {
     private void aerogel$playersNearFromTickSnapshot(
         ChunkPos chunk, CallbackInfoReturnable<List<ServerPlayer>> callback
     ) {
-        List<PlayerSample> snapshot = aerogel$playerSnapshot;
+        PlayerSnapshot snapshot = aerogel$playerSnapshot;
         if (snapshot == null) return;
         double centerX = (double) chunk.x() * 16.0D + 8.0D;
         double centerZ = (double) chunk.z() * 16.0D + 8.0D;
         ArrayList<ServerPlayer> nearby = new ArrayList<>();
-        for (PlayerSample sample : snapshot) {
-            if (sample.spectator) continue;
-            double x = centerX - sample.x;
-            double z = centerZ - sample.z;
-            if (x * x + z * z < AEROGEL$VANILLA_SPAWN_DISTANCE_SQUARED) {
-                nearby.add(sample.player);
+        int cellX = aerogel$cellCoordinate(centerX);
+        int cellZ = aerogel$cellCoordinate(centerZ);
+        for (int xCell = cellX - 1; xCell <= cellX + 1; xCell++) {
+            for (int zCell = cellZ - 1; zCell <= cellZ + 1; zCell++) {
+                PlayerSample[] candidates = snapshot.cells.get(
+                    aerogel$cellKey(xCell, zCell));
+                if (candidates == null) continue;
+                for (PlayerSample sample : candidates) {
+                    if (sample.spectator) continue;
+                    double x = centerX - sample.x;
+                    double z = centerZ - sample.z;
+                    if (x * x + z * z < AEROGEL$VANILLA_SPAWN_DISTANCE_SQUARED) {
+                        nearby.add(sample.player);
+                    }
+                }
             }
         }
-        callback.setReturnValue(List.copyOf(nearby));
+        callback.setReturnValue(nearby.isEmpty() ? List.of() : nearby);
+    }
+
+    @Unique
+    private static long aerogel$cell(double x, double z) {
+        return aerogel$cellKey(aerogel$cellCoordinate(x), aerogel$cellCoordinate(z));
+    }
+
+    @Unique
+    private static int aerogel$cellCoordinate(double coordinate) {
+        // The cell side is the exact vanilla spawning radius. Any point passing
+        // the final squared-distance predicate must be in this cell or a neighbor.
+        double radius = Math.sqrt(AEROGEL$VANILLA_SPAWN_DISTANCE_SQUARED);
+        return (int) Math.floor(coordinate / radius);
+    }
+
+    @Unique
+    private static long aerogel$cellKey(int x, int z) {
+        return (x & 0xffffffffL) | ((z & 0xffffffffL) << 32);
     }
 
     @Unique
     private record PlayerSample(
         ServerPlayer player, boolean spectator, double x, double z
+    ) { }
+
+    @Unique
+    private record PlayerSnapshot(
+        Long2ObjectMap<PlayerSample[]> cells
     ) { }
 }

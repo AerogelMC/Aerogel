@@ -29,6 +29,30 @@ final class SegmentedLong2ObjectMapTest {
     }
 
     @Test
+    void repeatedSnapshotsOnlyCopyMutatedSegmentsAndRemainIndependent() {
+        Long2ObjectOpenHashMap<String> original = new Long2ObjectOpenHashMap<>();
+        original.put(1L, "one");
+        SegmentedLong2ObjectMap<String> updating =
+            new SegmentedLong2ObjectMap<>(original);
+
+        SegmentedLong2ObjectMap<String> first = updating.clone();
+        updating.put(1L, "updated");
+        SegmentedLong2ObjectMap<String> second = updating.clone();
+        updating.put(2L, "two");
+
+        assertEquals("one", first.get(1L));
+        assertNull(first.get(2L));
+        assertEquals("updated", second.get(1L));
+        assertNull(second.get(2L));
+        assertEquals("updated", updating.get(1L));
+        assertEquals("two", updating.get(2L));
+
+        first.put(3L, "snapshot-write");
+        assertFalse(second.containsKey(3L));
+        assertFalse(updating.containsKey(3L));
+    }
+
+    @Test
     void growthSplitsBeforeAnySegmentCrossesTheGcDerivedLimit() {
         int limit = SegmentedLong2ObjectMap.maximumEntriesPerSegment();
         if (limit == Integer.MAX_VALUE) return;

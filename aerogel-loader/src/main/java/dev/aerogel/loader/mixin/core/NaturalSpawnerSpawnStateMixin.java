@@ -22,6 +22,10 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -47,7 +51,17 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
     @Unique
     private volatile NaturalSpawner.SpawnState aerogel$preparedDelegate;
     @Unique
-    private volatile CompletableFuture<List<MobCategory>> aerogel$preparedCategories;
+    private final AtomicReference<CompletableFuture<List<MobCategory>>>
+        aerogel$preparedCategories = new AtomicReference<>();
+    @Unique
+    private final ConcurrentLinkedQueue<PreparedAction> aerogel$preparedActions =
+        new ConcurrentLinkedQueue<>();
+    @Unique
+    private final AtomicBoolean aerogel$preparedDrainInstalled = new AtomicBoolean();
+    @Unique
+    private final AtomicInteger aerogel$preparedDrainWork = new AtomicInteger();
+    @Unique
+    private volatile PreparedResult aerogel$preparedResult;
     @Unique
     private volatile NaturalSpawnWave aerogel$spawnWave;
 
@@ -213,29 +227,54 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         if (wave != null && !wave.register()) {
             throw new IllegalStateException("Natural-spawn wave closed before preparation");
         }
-        CompletableFuture<List<MobCategory>> categories = aerogel$preparedCategories;
+        CompletableFuture<List<MobCategory>> categories = aerogel$preparedCategories.get();
         if (categories == null) {
-            synchronized (this) {
-                categories = aerogel$preparedCategories;
-                if (categories == null) {
-                    List<MobCategory> gate = List.copyOf(gatedCategories);
-                    categories = state.thenApply(prepared -> {
-                        EnumSet<MobCategory> globallyAllowed = EnumSet.noneOf(MobCategory.class);
-                        globallyAllowed.addAll(NaturalSpawner.getFilteredSpawningCategories(
-                            prepared, true, true));
-                        return gate.stream().filter(globallyAllowed::contains).toList();
-                    });
-                    aerogel$preparedCategories = categories;
-                }
+            List<MobCategory> gate = List.copyOf(gatedCategories);
+            CompletableFuture<List<MobCategory>> candidate = state.thenApply(prepared -> {
+                EnumSet<MobCategory> globallyAllowed = EnumSet.noneOf(MobCategory.class);
+                globallyAllowed.addAll(NaturalSpawner.getFilteredSpawningCategories(
+                    prepared, true, true));
+                return gate.stream().filter(globallyAllowed::contains).toList();
+            });
+            if (aerogel$preparedCategories.compareAndSet(null, candidate)) {
+                categories = candidate;
+            } else {
+                categories = aerogel$preparedCategories.get();
             }
         }
-        CompletableFuture<List<MobCategory>> exactCategories = categories;
-        state.thenCombine(exactCategories, (prepared, exact) -> {
-            action.accept(prepared, exact);
-            return null;
-        }).whenComplete((ignored, failure) -> {
-            if (wave != null) wave.taskComplete();
-        });
+        aerogel$preparedActions.add(new PreparedAction(action, wave));
+        if (aerogel$preparedDrainInstalled.compareAndSet(false, true)) {
+            state.thenCombine(categories, PreparedResult::success)
+                .whenComplete((result, failure) -> {
+                    aerogel$preparedResult = failure == null
+                        ? result : PreparedResult.failure();
+                    aerogel$drainPreparedActions();
+                });
+        } else if (aerogel$preparedResult != null) {
+            aerogel$drainPreparedActions();
+        }
+    }
+
+    @Unique
+    private void aerogel$drainPreparedActions() {
+        if (aerogel$preparedDrainWork.getAndIncrement() != 0) return;
+        int work = 1;
+        do {
+            PreparedResult result = aerogel$preparedResult;
+            if (result != null) {
+                PreparedAction pending;
+                while ((pending = aerogel$preparedActions.poll()) != null) {
+                    try {
+                        if (result.prepared != null) {
+                            pending.action.accept(result.prepared, result.categories);
+                        }
+                    } finally {
+                        if (pending.wave != null) pending.wave.taskComplete();
+                    }
+                }
+            }
+            work = aerogel$preparedDrainWork.addAndGet(-work);
+        } while (work != 0);
     }
 
     @Inject(method = "getSpawnableChunkCount", at = @At("HEAD"), cancellable = true)
@@ -251,5 +290,26 @@ abstract class NaturalSpawnerSpawnStateMixin implements PreparedSpawnStateBridge
         private BlockPos position;
         private EntityType<?> type;
         private double charge;
+    }
+
+    @Unique
+    private record PreparedAction(
+        BiConsumer<NaturalSpawner.SpawnState, List<MobCategory>> action,
+        NaturalSpawnWave wave
+    ) { }
+
+    @Unique
+    private record PreparedResult(
+        NaturalSpawner.SpawnState prepared, List<MobCategory> categories
+    ) {
+        private static PreparedResult success(
+            NaturalSpawner.SpawnState prepared, List<MobCategory> categories
+        ) {
+            return new PreparedResult(prepared, categories);
+        }
+
+        private static PreparedResult failure() {
+            return new PreparedResult(null, List.of());
+        }
     }
 }

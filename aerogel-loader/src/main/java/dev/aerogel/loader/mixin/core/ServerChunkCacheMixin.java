@@ -2,6 +2,7 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.context.ExactChunkDistanceGraph;
+import dev.aerogel.loader.context.ContextDispatchingRandomSource;
 import net.minecraft.server.level.ChunkHolder;
 import net.minecraft.server.level.ChunkLevel;
 import net.minecraft.server.level.ChunkMap;
@@ -35,6 +36,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.util.profiling.Profiler;
 import net.minecraft.util.profiling.ProfilerFiller;
+import net.minecraft.util.RandomSource;
 
 import java.util.function.Consumer;
 import java.util.ArrayList;
@@ -682,5 +684,23 @@ abstract class ServerChunkCacheMixin {
                 AerogelRuntime.tickSpawningChunk(level, chunk, spawnState, () ->
                     aerogel$invokeTickSpawningChunk(
                         chunk, inhabitedTimeDelta, exactCategories, prepared)));
+    }
+
+    @Redirect(
+        method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;J)V",
+        at = @At(value = "INVOKE", target = "Lnet/minecraft/util/Util;"
+            + "shuffle(Ljava/util/List;Lnet/minecraft/util/RandomSource;)V")
+    )
+    private static <T> void aerogel$shuffleWithStableOwner(
+        List<T> values, RandomSource random
+    ) {
+        RandomSource stable = random instanceof ContextDispatchingRandomSource routed
+            ? routed.snapshotDelegate() : random;
+        // Exact Fisher-Yates operation used by vanilla Util.shuffle, with the
+        // selected owner captured once for the duration of this operation.
+        for (int remaining = values.size(); remaining > 1; remaining--) {
+            int selected = stable.nextInt(remaining);
+            values.set(remaining - 1, values.set(selected, values.get(remaining - 1)));
+        }
     }
 }

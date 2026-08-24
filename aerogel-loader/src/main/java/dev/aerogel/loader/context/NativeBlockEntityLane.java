@@ -25,12 +25,13 @@ final class NativeBlockEntityLane {
         Consumer<TickingBlockEntity> action,
         NativeTickToken token
     ) {
+        List<TickingBlockEntity> snapshot = List.copyOf(blockEntities);
         if (token == null) {
-            enqueue(blockEntities, action, null);
+            enqueue(snapshot, action, null);
             return;
         }
         context.offerTickTask(token,
-            tickState -> enqueue(blockEntities, action, tickState), () -> { });
+            tickState -> enqueue(snapshot, action, tickState), () -> { });
     }
 
     private void enqueue(
@@ -38,7 +39,7 @@ final class NativeBlockEntityLane {
         Consumer<TickingBlockEntity> action,
         ChunkContextImpl.TickState tickState
     ) {
-        pending.add(new Request(List.copyOf(blockEntities), action, tickState));
+        pending.add(new Request(blockEntities, action, tickState));
         if (active.compareAndSet(false, true)) scheduleNext();
     }
 

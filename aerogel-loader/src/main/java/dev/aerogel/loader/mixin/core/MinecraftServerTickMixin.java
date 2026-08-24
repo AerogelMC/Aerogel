@@ -6,7 +6,9 @@ import dev.aerogel.loader.command.TpsMonitor;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.jfr.ServerTickTimingEvent;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -15,8 +17,17 @@ import java.util.function.BooleanSupplier;
 
 @Mixin(targets = "net.minecraft.server.MinecraftServer")
 abstract class MinecraftServerTickMixin {
+    @Unique private ServerTickTimingEvent aerogel$tickTiming;
+
     @Inject(method = "tickServer", at = @At("HEAD"))
     private void aerogel$sampleTps(BooleanSupplier hasTimeLeft, CallbackInfo callbackInfo) {
+        if (ServerTickTimingEvent.enabled()) {
+            ServerTickTimingEvent timing = new ServerTickTimingEvent();
+            timing.serverTick = ((net.minecraft.server.MinecraftServer) (Object) this)
+                .getTickCount();
+            timing.begin();
+            aerogel$tickTiming = timing;
+        }
         NativeTickCoordinator.registerMainServer((net.minecraft.server.MinecraftServer) (Object) this);
         NativeTickCoordinator.beginServerTick();
         NativeTickCoordinator.pumpMainThread();
@@ -34,6 +45,12 @@ abstract class MinecraftServerTickMixin {
         }
         NativeTickCoordinator.endServerTick();
         NativeTickCoordinator.pumpMainThread();
+        ServerTickTimingEvent timing = aerogel$tickTiming;
+        aerogel$tickTiming = null;
+        if (timing != null) {
+            timing.end();
+            timing.commit();
+        }
     }
 
     @Inject(method = "stopServer", at = @At("HEAD"))

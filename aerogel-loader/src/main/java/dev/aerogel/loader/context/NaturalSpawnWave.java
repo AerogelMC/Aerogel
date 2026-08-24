@@ -15,51 +15,30 @@ public final class NaturalSpawnWave {
     private final WorldContextImpl owner;
     private final CompletableFuture<Void> activationBarrier;
     private final CompletableFuture<Void> completion;
-    private final NativeTickToken tickToken;
     /* One hold for state preparation and one for synchronous task registration. */
     private final PaddedAtomicInteger pending = new PaddedAtomicInteger(2);
     private final PaddedAtomicBoolean sealed = new PaddedAtomicBoolean();
-    private final PaddedAtomicBoolean preparationFinished = new PaddedAtomicBoolean();
-    private final PaddedAtomicBoolean tickInputReleased = new PaddedAtomicBoolean();
     private final AtomicReference<Lifecycle> lifecycle;
     private final AtomicReference<Runnable> startAction = new AtomicReference<>();
     private final AtomicReference<Runnable> cancellationAction = new AtomicReference<>();
 
     NaturalSpawnWave(
-        WorldContextImpl owner, CompletableFuture<Void> completion,
-        NativeTickToken tickToken
+        WorldContextImpl owner, CompletableFuture<Void> completion
     ) {
         this.owner = Objects.requireNonNull(owner, "owner");
         this.activationBarrier = CompletableFuture.completedFuture(null);
         this.completion = Objects.requireNonNull(completion, "completion");
-        this.tickToken = tickToken;
         this.lifecycle = new AtomicReference<>(Lifecycle.PENDING);
-        retainTickInput();
         completion.whenComplete((ignored, failure) -> owner.naturalSpawnWaveComplete(this));
-    }
-
-    NaturalSpawnWave(
-        CompletableFuture<Void> predecessor, CompletableFuture<Void> completion,
-        NativeTickToken tickToken
-    ) {
-        this.owner = null;
-        this.activationBarrier = Objects.requireNonNull(predecessor, "predecessor");
-        this.completion = Objects.requireNonNull(completion, "completion");
-        this.tickToken = tickToken;
-        this.lifecycle = new AtomicReference<>(Lifecycle.ACTIVE);
-        retainTickInput();
     }
 
     NaturalSpawnWave(
         CompletableFuture<Void> predecessor, CompletableFuture<Void> completion
     ) {
-        this(predecessor, completion, null);
-    }
-
-    private void retainTickInput() {
-        if (tickToken != null && !tickToken.retainProducer()) {
-            throw new IllegalStateException("Native tick closed before spawn wave");
-        }
+        this.owner = null;
+        this.activationBarrier = Objects.requireNonNull(predecessor, "predecessor");
+        this.completion = Objects.requireNonNull(completion, "completion");
+        this.lifecycle = new AtomicReference<>(Lifecycle.ACTIVE);
     }
 
     void whenActive(Runnable action, Runnable cancelled) {
@@ -88,7 +67,6 @@ public final class NaturalSpawnWave {
             if (lifecycle.compareAndSet(current, Lifecycle.CANCELLED)) {
                 pending.set(CLOSED);
                 runLifecycleAction();
-                releaseTickInput();
                 completion.complete(null);
                 return;
             }
@@ -114,10 +92,6 @@ public final class NaturalSpawnWave {
         return completion;
     }
 
-    NativeTickToken tickToken() {
-        return tickToken;
-    }
-
     /** Registers asynchronous work before its parent registration is released. */
     public boolean register() {
         int current = pending.get();
@@ -134,27 +108,11 @@ public final class NaturalSpawnWave {
 
     void preparationComplete() {
         release();
-        preparationFinished.set(true);
-        releaseTickInputWhenRegistered();
     }
 
     public void seal() {
         if (sealed.compareAndSet(false, true)) {
             release();
-            releaseTickInputWhenRegistered();
-        }
-    }
-
-    private void releaseTickInputWhenRegistered() {
-        if (tickToken != null && sealed.get() && preparationFinished.get()
-            && tickInputReleased.compareAndSet(false, true)) {
-            tickToken.releaseProducer();
-        }
-    }
-
-    private void releaseTickInput() {
-        if (tickToken != null && tickInputReleased.compareAndSet(false, true)) {
-            tickToken.releaseProducer();
         }
     }
 

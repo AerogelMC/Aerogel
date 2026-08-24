@@ -137,6 +137,38 @@ class ConnectionSendSchedulerTest {
         assertEquals(List.of(1, 2), order);
     }
 
+    @Test
+    void closeDiscardsQueuedAndFutureSends() {
+        TestEventLoop eventLoop = new TestEventLoop();
+        ConnectionSendScheduler scheduler =
+            new ConnectionSendScheduler(eventLoop, eventLoop::inEventLoop);
+        List<Integer> order = new ArrayList<>();
+
+        scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(1));
+        scheduler.submit(PacketPriority.BULK, () -> order.add(2));
+        scheduler.close();
+        scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(3));
+
+        eventLoop.runAll();
+        assertEquals(List.of(), order);
+    }
+
+    @Test
+    void closeReleasesCausalWaitWithoutRunningItsSuccessor() {
+        TestEventLoop eventLoop = new TestEventLoop();
+        ConnectionSendScheduler scheduler =
+            new ConnectionSendScheduler(eventLoop, eventLoop::inEventLoop);
+        List<Integer> order = new ArrayList<>();
+
+        scheduler.submit(PacketPriority.INTERACTIVE, () -> order.add(1), true);
+        scheduler.submit(PacketPriority.BARRIER, () -> order.add(2));
+        eventLoop.runOne();
+        scheduler.close();
+        eventLoop.runAll();
+
+        assertEquals(List.of(1), order);
+    }
+
     private static final class TestEventLoop implements java.util.concurrent.Executor {
         private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
         private boolean running;

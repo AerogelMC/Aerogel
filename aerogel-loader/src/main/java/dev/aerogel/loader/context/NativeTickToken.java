@@ -1,7 +1,5 @@
 package dev.aerogel.loader.context;
 
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
  * Lifetime of one server-produced tick request.
  *
@@ -14,8 +12,14 @@ final class NativeTickToken {
     private final PaddedAtomicInteger producers = new PaddedAtomicInteger(1);
     private final PaddedAtomicReference<ContextServiceImpl> scheduler =
         new PaddedAtomicReference<>();
-    private final ConcurrentHashMap<ChunkContextImpl.TickState, ChunkContextImpl> contexts =
-        new ConcurrentHashMap<>();
+    /**
+     * Intrusive MPSC registration stack. TickState already has exactly this
+     * lifetime, so no hash nodes, boxed keys, table resizing, or removal pass is
+     * needed. The producer reference acquired by register() prevents the zero
+     * transition from draining the head while a publisher is linking its state.
+     */
+    private final PaddedAtomicReference<ChunkContextImpl.TickState> contexts =
+        new PaddedAtomicReference<>();
 
     NativeTickToken(long serverTick) {
         this.serverTick = serverTick;
@@ -57,7 +61,11 @@ final class NativeTickToken {
             throw new IllegalArgumentException(
                 "One native tick token cannot span Context schedulers");
         }
-        contexts.putIfAbsent(state, context);
+        ChunkContextImpl.TickState observed;
+        do {
+            observed = contexts.get();
+            state.registeredNext(observed);
+        } while (!contexts.compareAndSet(observed, state));
         releaseProducer();
     }
 
@@ -73,9 +81,12 @@ final class NativeTickToken {
     }
 
     private void closeInputs() {
-        contexts.forEach((state, context) -> {
-            if (contexts.remove(state, context)) context.closeTickInput(state);
-        });
+        ChunkContextImpl.TickState state = contexts.getAndSet(null);
+        while (state != null) {
+            ChunkContextImpl.TickState next = state.registeredNext();
+            state.owner().closeTickInput(state);
+            state = next;
+        }
     }
 
     void seal() {

@@ -27,11 +27,13 @@ import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.Packet;
 
 import java.util.Queue;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Mixin(targets = "net.minecraft.network.Connection")
 abstract class ConnectionMixin {
     @Shadow private Channel channel;
-    @Unique private ConnectionSendScheduler aerogel$sendScheduler;
+    @Unique private final AtomicReference<ConnectionSendScheduler>
+        aerogel$sendScheduler = new AtomicReference<>();
     @Unique private final PendingActionDrainGate aerogel$pendingDrain =
         new PendingActionDrainGate();
 
@@ -41,6 +43,37 @@ abstract class ConnectionMixin {
 
     @Invoker("flushQueue")
     protected abstract void aerogel$flushPendingActions();
+
+    @Inject(method = "channelActive", at = @At("RETURN"))
+    private void aerogel$initializeSendLane(
+        io.netty.channel.ChannelHandlerContext context, CallbackInfo callbackInfo
+    ) {
+        aerogel$sendScheduler();
+    }
+
+    @Redirect(
+        method = "tick",
+        at = @At(
+            value = "INVOKE",
+            target = "Lio/netty/channel/Channel;flush()Lio/netty/channel/Channel;"
+        )
+    )
+    private Channel aerogel$publishTickFlush(Channel target) {
+        aerogel$publishOrderedFlush(target);
+        return target;
+    }
+
+    @Redirect(
+        method = "flushChannel",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/network/Connection;flush()V"
+        )
+    )
+    private void aerogel$publishExplicitFlush(Connection connection) {
+        Channel target = channel;
+        if (target != null) aerogel$publishOrderedFlush(target);
+    }
 
     @Redirect(
         method = {
@@ -159,16 +192,22 @@ abstract class ConnectionMixin {
         Packet<?> packet, ChannelFutureListener listener, boolean flush,
         CallbackInfo callbackInfo
     ) {
-        ConnectionSendScheduler scheduler = aerogel$sendScheduler;
-        if (scheduler == null) {
-            scheduler = new ConnectionSendScheduler(channel.eventLoop());
-            aerogel$sendScheduler = scheduler;
+        ConnectionSendScheduler scheduler = aerogel$sendScheduler();
+        if (scheduler == null) return;
+        if (!channel.isOpen()) {
+            scheduler.close();
+            callbackInfo.cancel();
+            return;
         }
         PacketPriority priority = OutboundPacketPriority.classify(packet);
         if (listener == null) {
             scheduler.submit(priority,
                 () -> aerogel$doSendPacket(packet, null, flush));
-        } else {
+        } else if (packet.isTerminal()) {
+            // A terminal packet changes the protocol understood by the next
+            // packet, so its completion is a real causal boundary. Ordinary
+            // listeners only observe write completion; waiting for all of them
+            // turns a delayed chunk write into connection-wide HOL blocking.
             ConnectionSendScheduler owner = scheduler;
             ChannelFutureListener causalListener = future -> {
                 try {
@@ -179,7 +218,32 @@ abstract class ConnectionMixin {
             };
             scheduler.submit(priority,
                 () -> aerogel$doSendPacket(packet, causalListener, flush), true);
+        } else {
+            scheduler.submit(priority,
+                () -> aerogel$doSendPacket(packet, listener, flush));
         }
         callbackInfo.cancel();
+    }
+
+    @Unique
+    private void aerogel$publishOrderedFlush(Channel target) {
+        ConnectionSendScheduler scheduler = aerogel$sendScheduler();
+        if (scheduler == null || !target.isOpen()) return;
+        scheduler.submit(PacketPriority.BARRIER, target::flush);
+    }
+
+    @Unique
+    private ConnectionSendScheduler aerogel$sendScheduler() {
+        ConnectionSendScheduler current = aerogel$sendScheduler.get();
+        if (current != null) return current;
+        Channel target = channel;
+        if (target == null) return null;
+        ConnectionSendScheduler candidate = new ConnectionSendScheduler(
+            target.eventLoop(), String.valueOf(target.remoteAddress()));
+        if (!aerogel$sendScheduler.compareAndSet(null, candidate)) {
+            return aerogel$sendScheduler.get();
+        }
+        target.closeFuture().addListener(ignored -> candidate.close());
+        return candidate;
     }
 }

@@ -165,6 +165,10 @@ public final class NativeTickCoordinator {
         shutdownDraining = true;
     }
 
+    static boolean acceptsContextRouting() {
+        return !shutdownDraining;
+    }
+
     public static void finishShutdownDrain() {
         mainServer = null;
         MAIN_WAKE_SCHEDULED.set(false);

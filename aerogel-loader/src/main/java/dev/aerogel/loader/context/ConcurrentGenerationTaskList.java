@@ -2,38 +2,42 @@ package dev.aerogel.loader.context;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
  * List-compatible MPSC generation queue used by vanilla ChunkMap.
  *
- * <p>ChunkMap calls {@code forEach(...)} followed by {@code clear()}. The marker
- * inserted by {@code forEach} is the exact linearization boundary: additions
- * before it run now, additions after it remain for the next pass. Consequently
- * {@code clear()} is intentionally a no-op; the generation was already removed
- * while being consumed.</p>
+ * <p>ChunkMap calls {@code forEach(...)} followed by {@code clear()}. A single
+ * atomic head exchange is the exact generation boundary. Producers publish to
+ * the new head immediately while the sole consumer reverses its detached LIFO
+ * chain back to FIFO order. Both publication and detachment are O(1), even when
+ * world generation has accumulated a very large generation.</p>
  */
 public final class ConcurrentGenerationTaskList<E> extends AbstractList<E> {
-    private static final Object GENERATION_END = new Object();
-    private final ConcurrentLinkedQueue<Object> queue = new ConcurrentLinkedQueue<>();
+    private final AtomicReference<Node<E>> head = new AtomicReference<>();
 
     @Override
     public boolean add(E element) {
-        queue.add(Objects.requireNonNull(element, "element"));
+        Objects.requireNonNull(element, "element");
+        while (true) {
+            Node<E> observed = head.get();
+            Node<E> created = new Node<>(element, observed);
+            if (head.compareAndSet(observed, created)) break;
+        }
         return true;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public void forEach(Consumer<? super E> action) {
         Objects.requireNonNull(action, "action");
-        queue.add(GENERATION_END);
-        Object entry;
-        while ((entry = queue.poll()) != null && entry != GENERATION_END) {
-            action.accept((E) entry);
+        Node<E> generation = reverse(head.getAndSet(null));
+        while (generation != null) {
+            action.accept(generation.value);
+            generation = generation.next;
         }
     }
 
@@ -44,18 +48,18 @@ public final class ConcurrentGenerationTaskList<E> extends AbstractList<E> {
 
     @Override
     public int size() {
-        int size = queue.size();
-        for (Object entry : queue) if (entry == GENERATION_END) size--;
+        int size = 0;
+        for (Node<E> node = head.get(); node != null; node = node.next) size++;
         return size;
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public Iterator<E> iterator() {
         ArrayList<E> snapshot = new ArrayList<>();
-        for (Object entry : queue) {
-            if (entry != GENERATION_END) snapshot.add((E) entry);
+        for (Node<E> node = head.get(); node != null; node = node.next) {
+            snapshot.add(node.value);
         }
+        Collections.reverse(snapshot);
         return snapshot.iterator();
     }
 
@@ -67,5 +71,26 @@ public final class ConcurrentGenerationTaskList<E> extends AbstractList<E> {
             if (current++ == index) return entry;
         }
         throw new IndexOutOfBoundsException(index);
+    }
+
+    private static <E> Node<E> reverse(Node<E> node) {
+        Node<E> previous = null;
+        while (node != null) {
+            Node<E> next = node.next;
+            node.next = previous;
+            previous = node;
+            node = next;
+        }
+        return previous;
+    }
+
+    private static final class Node<E> {
+        private final E value;
+        private Node<E> next;
+
+        private Node(E value, Node<E> next) {
+            this.value = value;
+            this.next = next;
+        }
     }
 }

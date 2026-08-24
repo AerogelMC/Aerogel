@@ -15,6 +15,7 @@ import dev.aerogel.api.event.player.PlayerItemConsumeEvent;
 import dev.aerogel.api.event.player.PlayerTeleportEvent;
 import dev.aerogel.loader.event.EventHooks;
 import dev.aerogel.loader.internal.ServerPlayerDisplayNameBridge;
+import dev.aerogel.loader.internal.ServerPlayerDebugBridge;
 import dev.aerogel.loader.internal.PlayerNameTagService;
 import dev.aerogel.loader.internal.DeathDropCapture;
 import dev.aerogel.loader.internal.PlayerViewService;
@@ -30,6 +31,7 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.gen.Invoker;
 
 import java.util.OptionalInt;
 import java.util.Objects;
@@ -95,7 +97,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
-abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
+abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge,
+    ServerPlayerDebugBridge {
     @Shadow public ServerGamePacketListenerImpl connection;
     @Shadow @Final private MinecraftServer server;
     @Unique
@@ -122,6 +125,10 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge {
     @Unique private boolean aerogel$experienceOverride;
     @Unique private boolean aerogel$teleportOverride;
     @Unique private boolean aerogel$dropOverride;
+
+    @Invoker("debugSubscriptions")
+    @Override
+    public abstract Set<?> aerogel$debugSubscriptions();
 
     /**
      * Keeps vanilla's spawn search and result exactly, but prevents a Context worker from

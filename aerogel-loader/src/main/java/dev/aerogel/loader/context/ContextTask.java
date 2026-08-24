@@ -9,7 +9,8 @@ record ContextTask(
     Runnable action,
     CompletableFuture<Void> completion,
     Runnable rejection,
-    AtomicReference<NeighborhoodLease> neighborhoodLease
+    AtomicReference<NeighborhoodLease> neighborhoodLease,
+    NativePhase phase
 ) {
     ContextTask(
         long epoch,
@@ -18,7 +19,20 @@ record ContextTask(
         CompletableFuture<Void> completion,
         Runnable rejection
     ) {
-        this(epoch, scopeKeys, action, completion, rejection, new AtomicReference<>());
+        this(epoch, scopeKeys, action, completion, rejection,
+            new AtomicReference<>(), NativePhase.DEFAULT);
+    }
+
+    ContextTask(
+        long epoch,
+        long[] scopeKeys,
+        Runnable action,
+        CompletableFuture<Void> completion,
+        Runnable rejection,
+        NativePhase phase
+    ) {
+        this(epoch, scopeKeys, action, completion, rejection,
+            new AtomicReference<>(), phase);
     }
 
     NeighborhoodLease neighborhoodLease(ChunkContextImpl primary, ContextServiceImpl scheduler) {

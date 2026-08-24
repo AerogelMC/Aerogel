@@ -30,6 +30,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -377,16 +378,21 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         WorldContextImpl world = worldImpl(level);
         NativeTickToken token = NativeTickCoordinator.currentTickToken();
         if (token == null) return;
-        world.entityTickProducer().offer(token, () -> dispatchBatched(() -> {
-            for (var entry : tickingByContext.entrySet()) {
+        CompletableFuture<Void> producerPass = world.entityTickProducer().offer(token, () -> {
+            ArrayList<Map.Entry<ChunkContextImpl,
+                ConcurrentHashMap<Entity, TickingRegistration>>> entries =
+                new ArrayList<>(tickingByContext.entrySet());
+            invokeOwnedStripes(entries.size(), index -> {
+                var entry = entries.get(index);
                 ChunkContextImpl context = entry.getKey();
-                if (context.world() != world) continue;
+                if (context.world() != world) return;
                 ConcurrentHashMap<Entity, TickingRegistration> registrations =
                     entry.getValue();
-                if (!context.active() || registrations.isEmpty()) continue;
+                if (!context.active() || registrations.isEmpty()) return;
                 submitTickingContext(context, registrations, action, token);
-            }
-        }));
+            });
+        });
+        world.publishEntityProducerPass(token, producerPass);
     }
 
     /**
@@ -480,7 +486,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 NativeTickCoordinator.taskRejected();
                 context.completeTickTask(tickState);
             };
-            boolean accepted = context.submitNative(() -> NativeTickCoordinator.runNative(
+            boolean accepted = context.submitNativePhase(NativePhase.ENTITY,
+                () -> NativeTickCoordinator.runNative(
                 List.of(registrations), ignored -> prepareTickingContext(
                     context, registrations, action, token),
                 () -> context.completeTickTask(tickState)), rejected);
@@ -572,7 +579,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(entities, "entities");
         Objects.requireNonNull(action, "action");
         if (entities.isEmpty()) return;
-        if (closed) {
+        if (closed || !NativeTickCoordinator.acceptsContextRouting()) {
             for (Entity entity : entities) if (entity != null) action.accept(entity);
             return;
         }
@@ -646,7 +653,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(tasks, "tasks");
         if (tasks.isEmpty()) return;
-        if (closed) {
+        if (closed || !NativeTickCoordinator.acceptsContextRouting()) {
             for (ContextOwnedEntityTask task : tasks) task.aerogel$run();
             return;
         }
@@ -709,9 +716,14 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         WorldContextImpl world = worldImpl(level);
         NativeTickToken token = NativeTickCoordinator.currentTickToken();
         if (token == null) return;
-        world.chunkTickProducer().offer(token, () -> dispatchBatched(() ->
-            chunkMap.forEachBlockTickingChunk(chunk ->
-                world.context(chunk).chunkLane().offer(chunk, action, token))));
+        world.chunkTickProducer().offer(token, () -> {
+            ArrayList<LevelChunk> chunks = new ArrayList<>();
+            chunkMap.forEachBlockTickingChunk(chunks::add);
+            invokeOwnedStripes(chunks.size(), index -> {
+                LevelChunk chunk = chunks.get(index);
+                world.context(chunk).chunkLane().offer(chunk, action, token);
+            });
+        });
     }
 
     public void registerTrackedEntity(
@@ -764,17 +776,34 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         List<ServerPlayer> movedSnapshot = List.copyOf(movedPlayers);
         NativeTickToken token = NativeTickCoordinator.currentTickToken();
         if (token == null) return;
-        worldImpl(level).trackingTickProducer().offer(token, () -> dispatchBatched(() -> {
-            for (var entry : trackedByContext.entrySet()) {
+        WorldContextImpl world = worldImpl(level);
+        Runnable produceTracking = () -> {
+            ArrayList<Map.Entry<ChunkContextImpl,
+                ConcurrentHashMap<Entity, TrackedRegistration>>> entries =
+                new ArrayList<>(trackedByContext.entrySet());
+            invokeOwnedStripes(entries.size(), index -> {
+                var entry = entries.get(index);
                 ChunkContextImpl context = entry.getKey();
-                if (context.world().level() != level) continue;
+                if (context.world().level() != level) return;
                 ConcurrentHashMap<Entity, TrackedRegistration> registrations =
                     entry.getValue();
-                if (!context.active() || registrations.isEmpty()) continue;
+                if (!context.active() || registrations.isEmpty()) return;
                 submitTrackingContext(context, registrations, playerSnapshot,
                     movedSnapshot, token);
+            });
+        };
+        CompletableFuture<Void> entityPass = world.entityProducerPass(token);
+        if (entityPass == null || !token.retainProducer()) {
+            world.trackingTickProducer().offer(token, produceTracking);
+            return;
+        }
+        entityPass.whenComplete((ignored, failure) -> {
+            try {
+                world.trackingTickProducer().offer(token, produceTracking);
+            } finally {
+                token.releaseProducer();
             }
-        }));
+        });
     }
 
     private void submitTrackingContext(
@@ -790,7 +819,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 NativeTickCoordinator.taskRejected();
                 context.completeTickTask(tickState);
             };
-            boolean accepted = context.submitNative(() -> {
+            boolean accepted = context.submitNativePhase(NativePhase.TRACKING, () -> {
                 List<TrackedRegistration> snapshot = List.copyOf(registrations.values());
                 NativeTickCoordinator.runNative(snapshot, registration ->
                     runTrackingRegistration(context, registration, players,
@@ -971,9 +1000,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             throw new IllegalStateException("Natural-spawn wave closed before chunk work");
         }
         Runnable complete = wave == null ? () -> { } : wave::taskComplete;
-        NativeTickToken token = wave == null ? null : wave.tickToken();
         worldImpl(level).context(chunk).chunkLane().offer(
-            chunk, ignored -> action.run(), complete, token);
+            chunk, ignored -> action.run(), complete, null);
     }
 
     /**
@@ -997,8 +1025,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         NaturalSpawner.SpawnState placeholder = NaturalSpawner.createState(
             spawnableChunks, List.of(), chunkGetter, localCaps);
         CompletableFuture<NaturalSpawner.SpawnState> prepared = new CompletableFuture<>();
-        NaturalSpawnWave wave = worldImpl(level).beginNaturalSpawnWave(
-            NativeTickCoordinator.currentTickToken());
+        NaturalSpawnWave wave = worldImpl(level).beginNaturalSpawnWave();
         ((PreparedSpawnStateBridge) placeholder).aerogel$preparedState(prepared, wave);
         wave.whenActive(() -> dispatch(() -> {
             try {
@@ -1092,7 +1119,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(chunk, "chunk");
         Objects.requireNonNull(action, "action");
-        if (closed) return false;
+        if (closed || !NativeTickCoordinator.acceptsContextRouting()) return false;
         ChunkContextImpl context = worldImpl(level).context(chunk);
         if (context.current()) return false;
 
@@ -1145,13 +1172,39 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         @Override
         protected void compute() {
             int length = to - from;
-            if (length == 1) {
-                task.accept(from);
+            if (length <= 0) return;
+            int stripes = Math.min(length,
+                Math.max(1, getPool() == null ? 1 : getPool().getParallelism()));
+            if (stripes == 1) {
+                for (int index = from; index < to; index++) task.accept(index);
                 return;
             }
-            int middle = from + length / 2;
-            invokeAll(new IndexedDispatchBatch(task, from, middle),
-                new IndexedDispatchBatch(task, middle, to));
+            IndexedStripe[] workers = new IndexedStripe[stripes];
+            for (int stripe = 0; stripe < stripes; stripe++) {
+                workers[stripe] = new IndexedStripe(
+                    task, from + stripe, to, stripes);
+            }
+            invokeAll(workers);
+        }
+    }
+
+    @SuppressWarnings("serial")
+    private static final class IndexedStripe extends RecursiveAction {
+        private final IntConsumer task;
+        private final int first;
+        private final int to;
+        private final int stride;
+
+        private IndexedStripe(IntConsumer task, int first, int to, int stride) {
+            this.task = task;
+            this.first = first;
+            this.to = to;
+            this.stride = stride;
+        }
+
+        @Override
+        protected void compute() {
+            for (int index = first; index < to; index += stride) task.accept(index);
         }
     }
 
@@ -1556,7 +1609,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     ) {
         Objects.requireNonNull(entity, "entity");
         Objects.requireNonNull(action, "action");
-        if (closed) return false;
+        if (closed || !NativeTickCoordinator.acceptsContextRouting()) return false;
 
         ChunkContextImpl context = resolveOwner(entity);
         if (context == null || context.current()) return false;

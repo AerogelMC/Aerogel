@@ -27,7 +27,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.BitSet;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Mixin(targets = "net.minecraft.server.network.PlayerChunkSender")
 abstract class PlayerChunkSenderMixin {
@@ -38,6 +40,8 @@ abstract class PlayerChunkSenderMixin {
 
     @Unique private static final ThreadLocal<ClientboundLevelChunkWithLightPacket>
         AEROGEL_PREBUILT_PACKET = new ThreadLocal<>();
+    @Unique private static final ConcurrentHashMap<LevelChunk, ChunkPacketWave>
+        AEROGEL_PACKET_WAVES = new ConcurrentHashMap<>();
 
     @Unique private ChunkBatchFrame aerogel$batchFrame;
     @Unique private CompletableFuture<Void> aerogel$batchTail =
@@ -100,19 +104,66 @@ abstract class PlayerChunkSenderMixin {
         ChunkBatchFrame frame = aerogel$batchFrame;
         if (frame == null) throw new IllegalStateException("Missing player chunk batch");
         ChunkBatchSlot slot = frame.reserve();
-        ChunkBatchFrame target = frame;
-        boolean accepted = AerogelRuntime.routeChunkTask(level, chunk, () -> {
-            try {
-                ClientboundLevelChunkWithLightPacket packet =
-                    new ClientboundLevelChunkWithLightPacket(
-                        chunk, level.getLightEngine(), null, null);
-                target.packetReady(slot, level, chunk, packet);
-            } catch (Throwable error) {
-                target.packetFailed(slot, chunk);
-                throw error;
+        aerogel$prepareOwnedPacket(frame, slot, level, chunk);
+    }
+
+    /**
+     * Coalesces only requests that overlap before their owner task starts. The
+     * Context removes the wave before reading the chunk, so a request arriving
+     * after that linearization point gets a later snapshot and cannot observe a
+     * stale block or light update. No rate, time window, or global lock is used.
+     */
+    @Unique
+    private static void aerogel$prepareOwnedPacket(
+        ChunkBatchFrame frame, ChunkBatchSlot slot,
+        ServerLevel level, LevelChunk chunk
+    ) {
+        ChunkPacketWaiter waiter = new ChunkPacketWaiter(frame, slot);
+        while (true) {
+            ChunkPacketWave observed = AEROGEL_PACKET_WAVES.get(chunk);
+            if (observed != null) {
+                if (observed.add(waiter)) return;
+                AEROGEL_PACKET_WAVES.remove(chunk, observed);
+                continue;
             }
-        });
-        if (!accepted) target.routeRejected(slot, chunk);
+
+            ChunkPacketWave created = new ChunkPacketWave();
+            ChunkPacketWave raced = AEROGEL_PACKET_WAVES.putIfAbsent(chunk, created);
+            if (raced != null) continue;
+            if (!created.add(waiter)) {
+                throw new IllegalStateException("New chunk packet wave was already closed");
+            }
+
+            boolean accepted = AerogelRuntime.routeChunkTask(level, chunk, () -> {
+                AEROGEL_PACKET_WAVES.remove(chunk, created);
+                ChunkPacketWaiter requests = created.close();
+                try {
+                    ClientboundLevelChunkWithLightPacket packet =
+                        new ClientboundLevelChunkWithLightPacket(
+                            chunk, level.getLightEngine(), null, null);
+                    while (requests != null) {
+                        requests.frame.packetReady(
+                            requests.slot, level, chunk, packet);
+                        requests = requests.next;
+                    }
+                } catch (Throwable error) {
+                    while (requests != null) {
+                        requests.frame.packetFailed(requests.slot, chunk);
+                        requests = requests.next;
+                    }
+                    throw error;
+                }
+            });
+            if (!accepted) {
+                AEROGEL_PACKET_WAVES.remove(chunk, created);
+                ChunkPacketWaiter requests = created.close();
+                while (requests != null) {
+                    requests.frame.routeRejected(requests.slot, chunk);
+                    requests = requests.next;
+                }
+            }
+            return;
+        }
     }
 
     @Redirect(
@@ -270,6 +321,41 @@ abstract class PlayerChunkSenderMixin {
     ) {
         private ChunkBatchSlot(CompletableFuture<Void> predecessor) {
             this(predecessor, new CompletableFuture<>());
+        }
+    }
+
+    @Unique
+    private static final class ChunkPacketWave {
+        private static final ChunkPacketWaiter CLOSED =
+            new ChunkPacketWaiter(null, null);
+        private final AtomicReference<ChunkPacketWaiter> waiters =
+            new AtomicReference<>();
+
+        private boolean add(ChunkPacketWaiter waiter) {
+            ChunkPacketWaiter observed = waiters.get();
+            while (observed != CLOSED) {
+                waiter.next = observed;
+                if (waiters.compareAndSet(observed, waiter)) return true;
+                observed = waiters.get();
+            }
+            return false;
+        }
+
+        private ChunkPacketWaiter close() {
+            ChunkPacketWaiter observed = waiters.getAndSet(CLOSED);
+            return observed == CLOSED ? null : observed;
+        }
+    }
+
+    @Unique
+    private static final class ChunkPacketWaiter {
+        private final ChunkBatchFrame frame;
+        private final ChunkBatchSlot slot;
+        private ChunkPacketWaiter next;
+
+        private ChunkPacketWaiter(ChunkBatchFrame frame, ChunkBatchSlot slot) {
+            this.frame = frame;
+            this.slot = slot;
         }
     }
 }

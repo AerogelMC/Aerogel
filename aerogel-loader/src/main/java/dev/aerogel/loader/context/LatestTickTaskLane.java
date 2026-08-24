@@ -2,6 +2,7 @@ package dev.aerogel.loader.context;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -13,6 +14,7 @@ final class LatestTickTaskLane implements AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger("Aerogel-Contexts");
 
     private final ContextServiceImpl scheduler;
+    private final String name;
     private final PaddedAtomicReference<Window> window =
         new PaddedAtomicReference<>(Window.EMPTY);
     private final PaddedLongAccumulator settledTick =
@@ -20,13 +22,20 @@ final class LatestTickTaskLane implements AutoCloseable {
     private volatile boolean closed;
 
     LatestTickTaskLane(ContextServiceImpl scheduler) {
-        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+        this(scheduler, "unnamed");
     }
 
-    void offer(NativeTickToken token, Runnable action) {
+    LatestTickTaskLane(ContextServiceImpl scheduler, String name) {
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+        this.name = Objects.requireNonNull(name, "name");
+    }
+
+    CompletableFuture<Void> offer(NativeTickToken token, Runnable action) {
         Objects.requireNonNull(token, "token");
         Objects.requireNonNull(action, "action");
-        if (closed || !token.retainProducer()) return;
+        if (closed || !token.retainProducer()) {
+            return CompletableFuture.completedFuture(null);
+        }
         Request created = new Request(this, token, action);
         while (!closed) {
             Window observed = window.get();
@@ -38,16 +47,17 @@ final class LatestTickTaskLane implements AutoCloseable {
             if (pending != null) newest = Math.max(newest, pending.token.serverTick());
             if (requestedTick <= newest) {
                 created.cancel();
-                return;
+                return created.completion;
             }
             Window updated = active == null
                 ? new Window(created, null) : new Window(active, created);
             if (!window.compareAndSet(observed, updated)) continue;
             if (pending != null) pending.cancel();
             if (active == null) created.start();
-            return;
+            return created.completion;
         }
         created.cancel();
+        return created.completion;
     }
 
     private void complete(Request request) {
@@ -58,6 +68,7 @@ final class LatestTickTaskLane implements AutoCloseable {
             Window updated = next == null ? Window.EMPTY : new Window(next, null);
             if (!window.compareAndSet(observed, updated)) continue;
             settledTick.accumulate(request.token.serverTick());
+            request.completion.complete(null);
             if (closed && observed.pending != null) observed.pending.cancel();
             if (next != null) next.start();
             return;
@@ -83,6 +94,7 @@ final class LatestTickTaskLane implements AutoCloseable {
         private final Runnable action;
         private final AtomicReference<Lifecycle> lifecycle =
             new AtomicReference<>(Lifecycle.PENDING);
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
 
         private Request(
             LatestTickTaskLane lane, NativeTickToken token, Runnable action
@@ -113,6 +125,7 @@ final class LatestTickTaskLane implements AutoCloseable {
 
         private void cancel() {
             if (lifecycle.compareAndSet(Lifecycle.PENDING, Lifecycle.CANCELLED)) {
+                completion.complete(null);
                 token.releaseProducer();
             }
         }

@@ -24,9 +24,12 @@ import java.util.function.BooleanSupplier;
 public final class ConnectionSendScheduler {
     private final Executor eventLoop;
     private final BooleanSupplier inEventLoop;
+    private final String identity;
+    private final boolean offloadExternalWakeup;
     private final ConcurrentLinkedQueue<Submission> inbox =
         new ConcurrentLinkedQueue<>();
     private final AtomicBoolean scheduled = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     // Accessed only by the connection's event-loop thread.
     private final ArrayDeque<PendingSegment> pending = new ArrayDeque<>();
@@ -34,12 +37,31 @@ public final class ConnectionSendScheduler {
     private boolean draining;
 
     public ConnectionSendScheduler(EventLoop eventLoop) {
-        this(eventLoop, eventLoop::inEventLoop);
+        this(eventLoop, eventLoop::inEventLoop, "unknown", true);
+    }
+
+    public ConnectionSendScheduler(EventLoop eventLoop, String identity) {
+        this(eventLoop, eventLoop::inEventLoop, identity, true);
     }
 
     ConnectionSendScheduler(Executor eventLoop, BooleanSupplier inEventLoop) {
+        this(eventLoop, inEventLoop, "test", false);
+    }
+
+    ConnectionSendScheduler(
+        Executor eventLoop, BooleanSupplier inEventLoop, String identity
+    ) {
+        this(eventLoop, inEventLoop, identity, false);
+    }
+
+    private ConnectionSendScheduler(
+        Executor eventLoop, BooleanSupplier inEventLoop, String identity,
+        boolean offloadExternalWakeup
+    ) {
         this.eventLoop = Objects.requireNonNull(eventLoop, "eventLoop");
         this.inEventLoop = Objects.requireNonNull(inEventLoop, "inEventLoop");
+        this.identity = Objects.requireNonNull(identity, "identity");
+        this.offloadExternalWakeup = offloadExternalWakeup;
     }
 
     public void submit(PacketPriority priority, Runnable action) {
@@ -49,21 +71,34 @@ public final class ConnectionSendScheduler {
     /**
      * Publishes a send whose completion callback is a causal protocol boundary.
      * The next send is not invoked until {@link #complete()} is called from that
-     * callback. This preserves vanilla's pipeline-transition ordering without
-     * blocking the event loop or any producer.
+     * callback. Callers must use this only for terminal protocol transitions,
+     * not ordinary write-completion listeners. This preserves vanilla's
+     * pipeline-transition ordering without allowing a bulk write callback to
+     * block later interactive traffic.
      */
     public void submit(
         PacketPriority priority, Runnable action, boolean awaitCompletion
     ) {
         Objects.requireNonNull(priority, "priority");
         Objects.requireNonNull(action, "action");
-        inbox.add(new Submission(priority, action, awaitCompletion));
+        if (closed.get()) return;
+
+        Submission submission = new Submission(priority, action, awaitCompletion);
+        inbox.add(submission);
+        // close() publishes the terminal state before clearing the inbox. A
+        // producer can race that clear after its first check, so remove the
+        // exact late publication instead of retaining a dead connection's
+        // packet graph indefinitely.
+        if (closed.get()) {
+            inbox.remove(submission);
+            return;
+        }
         if (!scheduled.compareAndSet(false, true)) return;
         try {
             if (inEventLoop.getAsBoolean()) {
                 drainTurn();
             } else {
-                eventLoop.execute(this::drainTurn);
+                executeExternal(this::drainTurn);
             }
         } catch (Throwable failure) {
             scheduled.set(false);
@@ -71,7 +106,37 @@ public final class ConnectionSendScheduler {
         }
     }
 
+    /**
+     * Permanently closes this connection lane.
+     *
+     * <p>Netty invokes this from the channel close future. The terminal flag is
+     * visible to every producer immediately; only the event-loop owner touches
+     * the segmented consumer queues. Pending sends are deliberately discarded:
+     * invoking their write listeners against a closed channel would cause
+     * Minecraft's failure listener to enqueue a fallback packet onto the same
+     * closed channel, producing a second avoidable failure for every send.</p>
+     */
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
+        inbox.clear();
+        if (inEventLoop.getAsBoolean()) {
+            discardPending();
+            return;
+        }
+        try {
+            executeExternal(this::discardPending);
+        } catch (Throwable ignored) {
+            // The event loop itself may already be terminated. The terminal
+            // flag and cleared MPSC inbox are sufficient; the connection owns
+            // the remaining event-loop-only objects and can now be collected.
+        }
+    }
+
     private void drainTurn() {
+        if (closed.get()) {
+            discardPending();
+            return;
+        }
         draining = true;
         try {
             importSubmissions();
@@ -87,14 +152,19 @@ public final class ConnectionSendScheduler {
             }
         } finally {
             draining = false;
-            scheduleContinuation();
+            if (closed.get()) {
+                discardPending();
+            } else {
+                scheduleContinuation();
+            }
         }
     }
 
     /** Completes the causal send currently owning this connection lane. */
     public void complete() {
+        if (closed.get()) return;
         if (!inEventLoop.getAsBoolean()) {
-            eventLoop.execute(this::complete);
+            executeExternal(this::complete);
             return;
         }
         if (!waitingForCompletion) return;
@@ -106,6 +176,10 @@ public final class ConnectionSendScheduler {
     }
 
     private void scheduleContinuation() {
+        if (closed.get()) {
+            discardPending();
+            return;
+        }
         if (waitingForCompletion) return;
         importSubmissions();
         if (!pending.isEmpty()) {
@@ -121,6 +195,10 @@ public final class ConnectionSendScheduler {
     }
 
     private void confirmIdle() {
+        if (closed.get()) {
+            discardPending();
+            return;
+        }
         importSubmissions();
         if (!pending.isEmpty()) {
             drainTurn();
@@ -134,6 +212,10 @@ public final class ConnectionSendScheduler {
     }
 
     private void importSubmissions() {
+        if (closed.get()) {
+            inbox.clear();
+            return;
+        }
         Submission submission;
         while ((submission = inbox.poll()) != null) {
             PendingSegment segment = tailSegment();
@@ -146,6 +228,29 @@ public final class ConnectionSendScheduler {
                 segment.interactive.addLast(submission);
             }
         }
+    }
+
+    private void executeExternal(Runnable task) {
+        if (!offloadExternalWakeup) {
+            eventLoop.execute(task);
+            return;
+        }
+        NettySelectorWakeupLane.execute(() -> {
+            try {
+                eventLoop.execute(task);
+            } catch (Throwable failure) {
+                closed.set(true);
+                inbox.clear();
+                scheduled.set(false);
+            }
+        });
+    }
+
+    private void discardPending() {
+        inbox.clear();
+        pending.clear();
+        waitingForCompletion = false;
+        scheduled.set(false);
     }
 
     private Submission pollNext() {
