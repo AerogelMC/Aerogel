@@ -42,8 +42,11 @@ import java.util.function.Consumer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.Objects;
 import net.minecraft.world.entity.MobCategory;
@@ -53,6 +56,7 @@ import net.minecraft.world.entity.Entity;
 
 @Mixin(targets = "net.minecraft.server.level.ServerChunkCache")
 abstract class ServerChunkCacheMixin {
+    @Unique private static final long AEROGEL_NATIVE_CHUNK_TIMEOUT_SECONDS = 10L;
     @Shadow @Final private Thread mainThread;
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private ChunkMap chunkMap;
@@ -511,7 +515,15 @@ abstract class ServerChunkCacheMixin {
         });
 
         try {
-            return loaded.join();
+            return loaded.orTimeout(
+                AEROGEL_NATIVE_CHUNK_TIMEOUT_SECONDS, TimeUnit.SECONDS).join();
+        } catch (CompletionException failure) {
+            if (failure.getCause() instanceof TimeoutException) {
+                NativeTickCoordinator.lockCurrentContextAfterTimeout(
+                    "chunk load " + position + " at status " + targetStatus,
+                    AEROGEL_NATIVE_CHUNK_TIMEOUT_SECONDS);
+            }
+            throw failure;
         } finally {
             Runnable release = () -> NativeTickCoordinator.submitGlobalCommit(() -> {
                 tickets.removeTicket(lease, position);

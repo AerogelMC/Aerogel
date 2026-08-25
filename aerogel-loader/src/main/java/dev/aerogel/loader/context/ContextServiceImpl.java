@@ -191,6 +191,12 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return true;
     }
 
+    /** Creates one reusable, unmounted-while-waiting continuation for an owner lane. */
+    Thread newOwnerContinuation(String name, Runnable task) {
+        if (closed) return null;
+        return Thread.ofVirtual().name(name).unstarted(task);
+    }
+
     /** Accepts an already-published owner commit while shutdown drains the pool. */
     boolean dispatchWorldCommit(Runnable task) {
         if (workers.isShutdown()) return false;
@@ -1239,7 +1245,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         };
         boolean accepted = primary.submitNative(scopeKeys,
             () -> NativeTickCoordinator.runNative(
-            List.of(action), Runnable::run, () -> { }), rejected);
+            List.of(action), Runnable::run, () -> { }), rejected,
+            NativeTickCoordinator::taskRejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
@@ -1310,7 +1317,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         };
         boolean accepted = primary.submitNative(scopeKeys,
             () -> NativeTickCoordinator.runNative(
-                List.of(post), Runnable::run, () -> { }), rejected);
+                List.of(post), Runnable::run, () -> { }), rejected,
+                NativeTickCoordinator::taskRejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
@@ -1375,7 +1383,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         };
         boolean accepted = primary.submitNative(scopeKeys,
             () -> NativeTickCoordinator.runNative(
-                List.of(action), Runnable::run, () -> { }), rejected);
+                List.of(action), Runnable::run, () -> { }), rejected,
+                NativeTickCoordinator::taskRejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
@@ -1502,7 +1511,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         };
         boolean accepted = primary.submitNative(scopeKeys,
             () -> NativeTickCoordinator.runNative(
-                List.of(action), Runnable::run, () -> { }), rejected);
+                List.of(action), Runnable::run, () -> { }), rejected,
+                NativeTickCoordinator::taskRejected);
         if (!accepted) NativeTickCoordinator.taskRejected();
         return accepted;
     }
@@ -1697,8 +1707,10 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 }
             }, () -> { });
         boolean accepted = interactive
-            ? owner.submitInteractiveNative(scopeKeys, routed, rejected)
-            : owner.submitNative(scopeKeys, routed, rejected);
+            ? owner.submitInteractiveNative(scopeKeys, routed, rejected,
+                NativeTickCoordinator::taskRejected)
+            : owner.submitNative(scopeKeys, routed, rejected,
+                NativeTickCoordinator::taskRejected);
         if (!accepted) NativeTickCoordinator.taskRejected();
         return accepted;
     }
@@ -1741,7 +1753,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                 } else if (!routeInteractiveEntityTargetTask(entity, target, action)) {
                     action.run();
                 }
-            }, () -> { }), rejected);
+            }, () -> { }), rejected, NativeTickCoordinator::taskRejected);
         if (!accepted) NativeTickCoordinator.taskRejected();
         return accepted;
     }

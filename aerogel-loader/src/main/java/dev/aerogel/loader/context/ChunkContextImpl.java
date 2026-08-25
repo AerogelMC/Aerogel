@@ -18,6 +18,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
 import jdk.internal.vm.annotation.Contended;
 import org.slf4j.Logger;
@@ -63,8 +64,15 @@ final class ChunkContextImpl implements ChunkContext {
     private final ConcurrentLinkedQueue<WaitingTask> waiters = new ConcurrentLinkedQueue<>();
     private final PaddedAtomicInteger queued = new PaddedAtomicInteger();
     private final PaddedAtomicBoolean scheduled = new PaddedAtomicBoolean();
+    private final PaddedAtomicReference<Thread> ownerContinuation =
+        new PaddedAtomicReference<>();
+    private final PaddedAtomicReference<Runnable> lockedUnload =
+        new PaddedAtomicReference<>();
+    private final PaddedAtomicBoolean waiterHandoff = new PaddedAtomicBoolean();
     private final PaddedAtomicReference<NeighborhoodLease> ownership =
         new PaddedAtomicReference<>();
+    /** Monotonic edge used to close release-before-park without retry spinning. */
+    private final PaddedAtomicLong ownershipRelease = new PaddedAtomicLong();
     private final PaddedAtomicReference<NeighborhoodLease> reservation =
         new PaddedAtomicReference<>();
     private final PaddedAtomicReference<CollectingNeighborUpdater> neighborUpdater =
@@ -187,13 +195,22 @@ final class ChunkContextImpl implements ChunkContext {
     boolean submitInteractiveNative(
         long[] scopeKeys, Runnable task, Runnable rejection
     ) {
+        return submitInteractiveNative(scopeKeys, task, rejection, rejection);
+    }
+
+    boolean submitInteractiveNative(
+        long[] scopeKeys, Runnable task, Runnable rejection,
+        Runnable unavailableRejection
+    ) {
         Objects.requireNonNull(task, "task");
         Objects.requireNonNull(rejection, "rejection");
+        Objects.requireNonNull(unavailableRejection, "unavailableRejection");
         if (!active()) return false;
         submitted.increment();
         queued.incrementAndGet();
         ContextTask contextTask = new ContextTask(
-            epoch, normalizeScope(scopeKeys), task, null, rejection);
+            epoch, normalizeScope(scopeKeys), task, null, rejection,
+            unavailableRejection, NativePhase.DEFAULT);
         interactiveMailbox.addLast(contextTask);
         if (!active() && interactiveMailbox.remove(contextTask)) {
             queued.decrementAndGet();
@@ -216,22 +233,38 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     boolean submitNative(long[] scopeKeys, Runnable task, Runnable rejection) {
+        return submitNative(scopeKeys, task, rejection, rejection);
+    }
+
+    boolean submitNative(
+        long[] scopeKeys, Runnable task, Runnable rejection,
+        Runnable unavailableRejection
+    ) {
         return submitNativePhase(
-            NativePhase.DEFAULT, scopeKeys, task, rejection);
+            NativePhase.DEFAULT, scopeKeys, task, rejection, unavailableRejection);
     }
 
     boolean submitNativePhase(
         NativePhase phase, long[] scopeKeys, Runnable task, Runnable rejection
     ) {
+        return submitNativePhase(phase, scopeKeys, task, rejection, rejection);
+    }
+
+    boolean submitNativePhase(
+        NativePhase phase, long[] scopeKeys, Runnable task, Runnable rejection,
+        Runnable unavailableRejection
+    ) {
         Objects.requireNonNull(task, "task");
         Objects.requireNonNull(rejection, "rejection");
+        Objects.requireNonNull(unavailableRejection, "unavailableRejection");
         if (!active()) {
             return false;
         }
         submitted.increment();
         queued.incrementAndGet();
         enqueueActive(mailboxFor(phase), new ContextTask(
-            epoch, normalizeScope(scopeKeys), task, null, rejection, phase));
+            epoch, normalizeScope(scopeKeys), task, null, rejection,
+            unavailableRejection, phase));
         return true;
     }
 
@@ -291,8 +324,44 @@ final class ChunkContextImpl implements ChunkContext {
     private void schedule() {
         NeighborhoodLease reserved = reservation.get();
         if (reserved != null && reserved.primary() != this) return;
-        if (!closed() && scheduled.compareAndSet(false, true)) {
-            scheduler.dispatch(this::drain);
+        if (!ownerStopped() && scheduled.compareAndSet(false, true)) {
+            Thread continuation = ownerContinuation.get();
+            if (continuation == null) {
+                continuation = scheduler.newOwnerContinuation(
+                    "Aerogel-Owner-" + chunkX + "," + chunkZ, this::ownerLoop);
+                if (continuation == null) {
+                    scheduled.set(false);
+                    return;
+                }
+                ownerContinuation.set(continuation);
+                continuation.start();
+            } else {
+                LockSupport.unpark(continuation);
+            }
+        }
+    }
+
+    private void ownerLoop() {
+        Thread current = Thread.currentThread();
+        try {
+            while (true) {
+                if (scheduled.get()) {
+                    try {
+                        drain();
+                    } catch (Throwable error) {
+                        LOGGER.error("Owner continuation failed at {},{}", chunkX, chunkZ, error);
+                        lockAfterFailure();
+                    }
+                    continue;
+                }
+                if (ownerStopped()) return;
+                LockSupport.park(this);
+            }
+        } finally {
+            ownerContinuation.compareAndSet(current, null);
+            if (scheduled.get()) scheduled.set(false);
+            if (!ownerStopped() && hasTasks()) schedule();
+            finishLockedUnloadIfIdle();
         }
     }
 
@@ -314,7 +383,7 @@ final class ChunkContextImpl implements ChunkContext {
         }
 
         try {
-            while (!closed()) {
+            while (!ownerStopped()) {
                 NeighborhoodLease pendingReservation = reservation.get();
                 if (pendingReservation != null && pendingReservation.primary() != this) {
                     pendingReservation.primary().schedule();
@@ -342,11 +411,12 @@ final class ChunkContextImpl implements ChunkContext {
                 }
             }
         } finally {
-            ownership.compareAndSet(self, null);
+            if (ownership.compareAndSet(self, null)) ownershipRelease.incrementAndGet();
             wakeWaitersIfAvailable();
             scheduled.set(false);
+            finishLockedUnloadIfIdle();
             tryFinishActiveTick();
-            if (hasTasks() && !closed()) schedule();
+            if (hasTasks() && !ownerStopped()) schedule();
         }
     }
 
@@ -359,40 +429,54 @@ final class ChunkContextImpl implements ChunkContext {
             affected.add(world.context(ChunkPos.getX(scopeKey), ChunkPos.getZ(scopeKey)));
         }
         affected.sort(Comparator.comparingLong(ChunkContextImpl::canonicalKey));
+        for (ChunkContextImpl context : affected) {
+            if (!context.active()) {
+                rejectUnavailable(task, context);
+                return true;
+            }
+        }
 
         NeighborhoodLease neighborhood = task.neighborhoodLease(this, scheduler);
+        ChunkContextImpl handoffContext = task.waiterHandoff().get();
         if (!ownership.compareAndSet(self, neighborhood)) {
             throw new IllegalStateException("Primary context lost ownership");
         }
-        List<ChunkContextImpl> newlyReserved = new ArrayList<>(affected.size());
         ChunkContextImpl conflict = null;
         for (ChunkContextImpl context : affected) {
             NeighborhoodLease existing = context.reservation.get();
-            if (existing == neighborhood) continue;
-            if (existing != null
-                || !context.reservation.compareAndSet(null, neighborhood)) {
-                conflict = context;
-                break;
+            if (existing != neighborhood) {
+                if (existing != null
+                    || !context.reservation.compareAndSet(null, neighborhood)) {
+                    conflict = context;
+                }
             }
-            newlyReserved.add(context);
+            if (context == handoffContext) releaseTaskHandoff(task);
+            if (conflict != null) break;
         }
 
         if (conflict != null) {
-            for (int i = newlyReserved.size() - 1; i >= 0; i--) {
-                newlyReserved.get(i).clearReservation(neighborhood);
+            releaseTaskHandoff(task);
+            // Release every reservation acquired during this attempt before
+            // parking. The selected waiter keeps only its FIFO attempt hand-off,
+            // never an out-of-order chunk reservation.
+            for (int i = affected.size() - 1; i >= 0; i--) {
+                affected.get(i).clearReservationIfHeld(neighborhood);
             }
             if (!ownership.compareAndSet(neighborhood, self)) {
                 throw new IllegalStateException("Primary neighborhood ownership was corrupted");
             }
-            parkOn(conflict, task, interactive, null);
+            parkOn(conflict, task, interactive, null, 0L);
             return false;
         }
 
         List<ChunkContextImpl> acquired = new ArrayList<>(affected.size() - 1);
+        long conflictRelease = 0L;
         for (ChunkContextImpl context : affected) {
             if (context == this) continue;
+            long observedRelease = context.ownershipRelease.get();
             if (!context.ownership.compareAndSet(null, neighborhood)) {
                 conflict = context;
+                conflictRelease = observedRelease;
                 break;
             }
             acquired.add(context);
@@ -409,7 +493,7 @@ final class ChunkContextImpl implements ChunkContext {
             // owner releases, this exact lease is next even though reservation
             // intentionally remains non-null to prevent later local work from
             // overtaking it.
-            parkOn(conflict, task, interactive, neighborhood);
+            parkOn(conflict, task, interactive, neighborhood, conflictRelease);
             return false;
         }
 
@@ -433,6 +517,12 @@ final class ChunkContextImpl implements ChunkContext {
         if (!reservation.compareAndSet(lease, null)) {
             throw new IllegalStateException("Neighborhood reservation release mismatch");
         }
+        wakeWaitersIfAvailable();
+        if (hasTasks()) schedule();
+    }
+
+    private void clearReservationIfHeld(NeighborhoodLease lease) {
+        if (!reservation.compareAndSet(lease, null)) return;
         wakeWaitersIfAvailable();
         if (hasTasks()) schedule();
     }
@@ -600,27 +690,37 @@ final class ChunkContextImpl implements ChunkContext {
 
     private void parkOn(
         ChunkContextImpl conflict, ContextTask task, boolean interactive,
-        NeighborhoodLease admittedReservation
+        NeighborhoodLease admittedReservation, long observedOwnershipRelease
     ) {
         queued.incrementAndGet();
-        conflict.addWaiter(new WaitingTask(
-            this, task, interactive, admittedReservation));
+        NeighborhoodLease lease = task.neighborhoodLease(this, scheduler);
+        WaitingTask waiter = new WaitingTask(this, task, interactive);
+        if (admittedReservation != null) {
+            lease.park(() -> resume(waiter));
+            // Close release-before-park using an ownership edge, not a repeated
+            // observation of a transiently free owner. Exactly one continuation
+            // is resumed for the release generation that invalidated our failed CAS.
+            if (conflict.ownershipRelease.get() != observedOwnershipRelease) {
+                lease.wake();
+            }
+        } else {
+            conflict.addWaiter(waiter);
+        }
     }
 
     private void addWaiter(WaitingTask waiter) {
         waiters.add(waiter);
-        // Publication followed by the state check closes the release-before-add
-        // race without a lock: either the releaser observes the waiter, or this
-        // thread observes the fully idle state and performs the wake itself.
-        wakeWaitersIfAvailable();
+        // Publication followed by the reservation check closes release-before-add.
+        // One waiter receives the free reservation directly; the rest stay asleep.
+        handoffNextWaiter();
     }
 
-    private void resume(WaitingTask waiter) {
+    private boolean resume(WaitingTask waiter) {
         ContextTask task = waiter.task;
         if (!active() || task.epoch() != epoch) {
             queued.decrementAndGet();
             rejectStale(task);
-            return;
+            return false;
         }
         if (waiter.interactive) interactiveMailbox.addFirst(task);
         else mailboxFor(task.phase()).add(task);
@@ -631,16 +731,18 @@ final class ChunkContextImpl implements ChunkContext {
             if (removed) {
                 queued.decrementAndGet();
                 rejectStale(task);
-                return;
+                return false;
             }
         }
         schedule();
+        return true;
     }
 
     private void release(NeighborhoodLease lease) {
         if (!ownership.compareAndSet(lease, null)) {
             throw new IllegalStateException("Neighborhood lease release mismatch");
         }
+        ownershipRelease.incrementAndGet();
         wakeWaitersIfAvailable();
         tryFinishActiveTick();
         if (hasTasks()) schedule();
@@ -650,24 +752,54 @@ final class ChunkContextImpl implements ChunkContext {
         if (ownership.get() != null) return;
         NeighborhoodLease nextReservation = reservation.get();
         if (nextReservation == null) {
-            wakeWaiters();
+            handoffNextWaiter();
             return;
         }
+        nextReservation.wake();
+    }
 
-        // A reservation that survived the acquisition attempt is the exact
-        // next owner. Wake only that lease; unrelated waiters stay parked until
-        // the reservation is cleared. Bound the scan to the published snapshot
-        // so concurrent additions cannot turn a wake edge into a retry loop.
-        int candidates = waiters.size();
-        while (candidates-- > 0) {
+    /**
+     * Selects exactly one FIFO waiter for the next reservation attempt. The
+     * hand-off stays claimed until that task reaches this Context in canonical
+     * acquisition order, preventing both a thundering herd and out-of-order
+     * pre-reservation cycles.
+     */
+    private void handoffNextWaiter() {
+        if (reservation.get() != null
+            || !waiterHandoff.compareAndSet(false, true)) return;
+        while (reservation.get() == null) {
             WaitingTask waiter = waiters.poll();
-            if (waiter == null) return;
-            if (waiter.admittedReservation == nextReservation) {
-                waiter.owner.resume(waiter);
-            } else {
-                waiters.add(waiter);
+            if (waiter == null) {
+                waiterHandoff.set(false);
+                if (!waiters.isEmpty()) handoffNextWaiter();
+                return;
             }
+            if (!waiter.owner.active() || waiter.task.epoch() != waiter.owner.epoch) {
+                waiter.owner.queued.decrementAndGet();
+                waiter.owner.rejectStale(waiter.task);
+                continue;
+            }
+            if (!waiter.task.claimWaiterHandoff(this)) {
+                waiterHandoff.set(false);
+                throw new IllegalStateException("Context task already owns a waiter handoff");
+            }
+            if (waiter.owner.resume(waiter)) return;
+            releaseTaskHandoff(waiter.task);
+            return;
         }
+        waiterHandoff.set(false);
+    }
+
+    private static void releaseTaskHandoff(ContextTask task) {
+        ChunkContextImpl context = task.takeWaiterHandoff();
+        if (context != null) context.finishWaiterHandoff();
+    }
+
+    private void finishWaiterHandoff() {
+        if (!waiterHandoff.compareAndSet(true, false)) {
+            throw new IllegalStateException("Waiter handoff released twice");
+        }
+        if (reservation.get() == null) handoffNextWaiter();
     }
 
     private void wakeWaiters() {
@@ -676,10 +808,22 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private void rejectStale(ContextTask task) {
+        releaseTaskHandoff(task);
         stale.increment();
         if (task.rejection() != null) task.rejection().run();
         complete(task, new RejectedExecutionException(
             "Stale chunk context task for epoch " + task.epoch()));
+    }
+
+    private void rejectUnavailable(ContextTask task, ChunkContextImpl unavailable) {
+        releaseTaskHandoff(task);
+        stale.increment();
+        if (task.unavailableRejection() != null) task.unavailableRejection().run();
+        if (task.completion() != null) {
+            complete(task, new RejectedExecutionException(
+                "Chunk context is locked or closed: " + unavailable.chunkX + ","
+                    + unavailable.chunkZ));
+        }
     }
 
     private void complete(ContextTask task, Throwable error) {
@@ -728,8 +872,44 @@ final class ChunkContextImpl implements ChunkContext {
         return lifecycle.get() == Lifecycle.CLOSED;
     }
 
+    private boolean ownerStopped() {
+        Lifecycle current = lifecycle.get();
+        return current == Lifecycle.LOCKED || current == Lifecycle.CLOSED;
+    }
+
+    void lockAfterTimeout(String operation, long timeoutSeconds) {
+        if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.LOCKED)) return;
+        LOGGER.warn(
+            "Locked chunk context {},{} after {} exceeded {} seconds; "
+                + "new work is rejected so unrelated chunks and shutdown can continue",
+            chunkX, chunkZ, operation, timeoutSeconds);
+        rejectQueuedTasks();
+        cancelTickWindow();
+    }
+
+    private void lockAfterFailure() {
+        if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.LOCKED)) return;
+        rejectQueuedTasks();
+        cancelTickWindow();
+    }
+
+    private void finishLockedUnloadIfIdle() {
+        if (lifecycle.get() != Lifecycle.LOCKED
+            || ownership.get() != null || scheduled.get()) return;
+        Runnable unload = lockedUnload.getAndSet(null);
+        if (unload == null) return;
+        if (lifecycle.compareAndSet(Lifecycle.LOCKED, Lifecycle.CLOSED)) {
+            NativeTickCoordinator.submitMainThread(unload);
+        }
+    }
+
     boolean drainThen(Runnable commit) {
         Objects.requireNonNull(commit, "commit");
+        if (lifecycle.get() == Lifecycle.LOCKED) {
+            lockedUnload.compareAndSet(null, commit);
+            finishLockedUnloadIfIdle();
+            return true;
+        }
         if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.DRAINING)) {
             return lifecycle.get() == Lifecycle.DRAINING;
         }
@@ -744,7 +924,34 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     void deactivate() {
-        if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.DRAINING)) return;
+        Lifecycle observed = lifecycle.get();
+        if (observed == Lifecycle.ACTIVE) {
+            if (!lifecycle.compareAndSet(Lifecycle.ACTIVE, Lifecycle.DRAINING)) {
+                deactivate();
+                return;
+            }
+        } else if (observed == Lifecycle.LOCKED) {
+            if (!lifecycle.compareAndSet(Lifecycle.LOCKED, Lifecycle.CLOSED)) {
+                deactivate();
+                return;
+            }
+        } else {
+            return;
+        }
+        rejectQueuedTasks();
+        lifecycle.set(Lifecycle.CLOSED);
+        // A foreign neighborhood lease remains owned by its primary Context even
+        // when this Context is detached. Revocation wakes its exact continuation,
+        // but only that lease's canonical release may clear the reservation.
+        // Clearing it here races runNeighborhood's finally block and corrupts the
+        // ownership protocol during ordinary chunk unload.
+        NeighborhoodLease abandonedReservation = reservation.get();
+        if (abandonedReservation != null) abandonedReservation.wake();
+        cancelTickWindow();
+        wakeWaiters();
+    }
+
+    private void rejectQueuedTasks() {
         ContextTask task;
         while ((task = interactiveMailbox.pollFirst()) != null) {
             queued.decrementAndGet();
@@ -766,11 +973,12 @@ final class ChunkContextImpl implements ChunkContext {
             queued.decrementAndGet();
             rejectStale(task);
         }
-        lifecycle.set(Lifecycle.CLOSED);
+    }
+
+    private void cancelTickWindow() {
         TickWindow ticks = tickWindow.getAndSet(TickWindow.EMPTY);
         if (ticks.active != null) ticks.active.cancel();
         if (ticks.pending != null) ticks.pending.cancel();
-        wakeWaiters();
     }
 
     private boolean hasTasks() {
@@ -780,8 +988,7 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private record WaitingTask(
-        ChunkContextImpl owner, ContextTask task, boolean interactive,
-        NeighborhoodLease admittedReservation
+        ChunkContextImpl owner, ContextTask task, boolean interactive
     ) { }
 
     WorldContextImpl world() { return world; }
@@ -964,6 +1171,7 @@ final class ChunkContextImpl implements ChunkContext {
     private enum Lifecycle {
         ACTIVE,
         DRAINING,
+        LOCKED,
         CLOSED
     }
 }

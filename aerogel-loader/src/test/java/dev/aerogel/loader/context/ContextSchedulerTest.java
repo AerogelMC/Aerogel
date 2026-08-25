@@ -10,6 +10,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +30,139 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ContextSchedulerTest {
+    @Test
+    void ownerWaitsAreUnmountableVirtualThreadContinuations() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl waiting = world.context(0, 0);
+            ChunkContextImpl independent = world.context(1, 0);
+            CompletableFuture<Void> dependency = new CompletableFuture<>();
+            CountDownLatch waitingStarted = new CountDownLatch(1);
+            CountDownLatch independentFinished = new CountDownLatch(1);
+
+            CompletableFuture<Void> blocked = waiting.submit(0, () -> {
+                assertTrue(Thread.currentThread().isVirtual());
+                waitingStarted.countDown();
+                dependency.join();
+            });
+            assertTrue(waitingStarted.await(2, TimeUnit.SECONDS));
+            independent.submit(0, independentFinished::countDown);
+
+            assertTrue(independentFinished.await(1, TimeUnit.SECONDS),
+                "a parked owner continuation must not consume the computation worker");
+            dependency.complete(null);
+            blocked.get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void timedOutContextIsLockedAndQueuedWorkIsReleased() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            CompletableFuture<Void> running = context.submit(0, () -> {
+                started.countDown();
+                await(release);
+            });
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            CompletableFuture<Void> queued = context.submit(0, () -> { });
+
+            context.lockAfterTimeout("test continuation", 10L);
+            assertEquals("LOCKED", context.snapshot().lifecycle());
+            assertThrows(Exception.class, () -> queued.get(1, TimeUnit.SECONDS));
+            assertThrows(RejectedExecutionException.class,
+                () -> context.execute(() -> { }));
+
+            release.countDown();
+            running.get(2, TimeUnit.SECONDS);
+            assertEquals(0, context.snapshot().queuedTasks());
+        }
+    }
+
+    @Test
+    void lockedNeighborhoodDefersUnloadUntilReservationRelease() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl primary = world.context(0, 0);
+            world.context(1, 0);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            AtomicBoolean unloaded = new AtomicBoolean();
+            CompletableFuture<Void> running = primary.submit(
+                new long[] { ChunkPos.pack(0, 0), ChunkPos.pack(1, 0) }, () -> {
+                    started.countDown();
+                    await(release);
+                });
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+
+            primary.lockAfterTimeout("test neighborhood continuation", 10L);
+            assertTrue(primary.drainThen(() -> unloaded.set(true)));
+            NativeTickCoordinator.pumpMainThread();
+            assertFalse(unloaded.get(),
+                "unload must not clear a reservation still owned by the continuation");
+
+            release.countDown();
+            running.get(2, TimeUnit.SECONDS);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (!unloaded.get() && System.nanoTime() < deadline) {
+                NativeTickCoordinator.pumpMainThread();
+                Thread.onSpinWait();
+            }
+            assertTrue(unloaded.get());
+            assertEquals("CLOSED", primary.snapshot().lifecycle());
+        }
+    }
+
+    @Test
+    void detachedNeighborCannotRevokeForeignReservation() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl primary = world.context(0, 0);
+            ChunkContextImpl neighbor = world.context(1, 0);
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            CompletableFuture<Void> running = primary.submit(
+                new long[] { ChunkPos.pack(0, 0), ChunkPos.pack(1, 0) }, () -> {
+                    started.countDown();
+                    await(release);
+                });
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+
+            neighbor.deactivate();
+            release.countDown();
+            running.get(2, TimeUnit.SECONDS);
+
+            assertEquals("CLOSED", neighbor.snapshot().lifecycle());
+            assertEquals(1L, primary.snapshot().completedTasks());
+        }
+    }
+
+    @Test
+    void lockedNeighborUsesTerminalRejectionWithoutRetryCallback() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl primary = world.context(0, 0);
+            ChunkContextImpl locked = world.context(1, 0);
+            AtomicInteger retryRejection = new AtomicInteger();
+            CountDownLatch terminalRejection = new CountDownLatch(1);
+            locked.lockAfterTimeout("test terminal rejection", 10L);
+
+            assertTrue(primary.submitNative(
+                new long[] { ChunkPos.pack(0, 0), ChunkPos.pack(1, 0) },
+                () -> { throw new AssertionError("locked scope must not execute"); },
+                retryRejection::incrementAndGet,
+                terminalRejection::countDown));
+
+            assertTrue(terminalRejection.await(2, TimeUnit.SECONDS), () ->
+                "primary=" + primary.snapshot() + ", locked=" + locked.snapshot()
+                    + ", retry=" + retryRejection.get());
+            assertEquals(0, retryRejection.get(),
+                "a quarantined owner is terminal, not a stale-owner retry");
+        }
+    }
+
     @Test
     void blockMutationScopeContainsOnlyTheActualTargetChunk() {
         assertScope(new long[] { ChunkPos.pack(2, 3) },
@@ -658,7 +792,7 @@ final class ContextSchedulerTest {
                 context.submit(0, Thread::onSpinWait),
                 context.submit(0, Thread::onSpinWait)
             ).join();
-            var first = context.snapshot();
+            var first = awaitMeasuredTicks(context, 1L);
             assertEquals(1L, first.measuredTicks());
             assertEquals(first.totalExecutionNanos(), first.maximumExecutionNanos());
             assertEquals(first.totalExecutionNanos() / 1_000_000.0D,
@@ -667,7 +801,7 @@ final class ContextSchedulerTest {
 
             NativeTickCoordinator.beginServerTick();
             context.submit(0, Thread::onSpinWait).join();
-            var second = context.snapshot();
+            var second = awaitMeasuredTicks(context, 2L);
             assertEquals(2L, second.measuredTicks());
             assertEquals(second.totalExecutionNanos() / 2_000_000.0D,
                 second.averageExecutionMillis(), 0.0D);
@@ -702,6 +836,37 @@ final class ContextSchedulerTest {
             releaseNeighborhood.countDown();
             CompletableFuture.allOf(reservation, adjacentResult).get(2, TimeUnit.SECONDS);
             assertTrue(adjacentRan.get());
+        }
+    }
+
+    @Test
+    void overlappingNeighborhoodBacklogDrainsWithoutRetryStorm() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(8)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            int contextCount = 32;
+            ChunkContextImpl[] contexts = new ChunkContextImpl[contextCount];
+            for (int index = 0; index < contextCount; index++) {
+                contexts[index] = world.context(index, 0);
+            }
+
+            List<CompletableFuture<Void>> completions = new ArrayList<>();
+            for (int wave = 0; wave < 128; wave++) {
+                for (int index = 0; index < contextCount; index++) {
+                    ChunkContextImpl primary = contexts[(index + wave) % contextCount];
+                    long[] scope = {
+                        contexts[index].key(),
+                        contexts[(index + 1) % contextCount].key(),
+                        contexts[(index + 2) % contextCount].key()
+                    };
+                    completions.add(primary.submit(scope, Thread::onSpinWait));
+                }
+            }
+
+            CompletableFuture.allOf(completions.toArray(CompletableFuture[]::new))
+                .get(10, TimeUnit.SECONDS);
+            for (ChunkContextImpl context : contexts) {
+                assertEquals(0, context.snapshot().queuedTasks());
+            }
         }
     }
 
@@ -1025,6 +1190,18 @@ final class ContextSchedulerTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(exception);
         }
+    }
+
+    private static dev.aerogel.api.context.ContextSnapshot awaitMeasuredTicks(
+        ChunkContextImpl context, long expected
+    ) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        dev.aerogel.api.context.ContextSnapshot snapshot = context.snapshot();
+        while (snapshot.measuredTicks() < expected && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+            snapshot = context.snapshot();
+        }
+        return snapshot;
     }
 
     private static void offerTickTask(

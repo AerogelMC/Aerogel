@@ -136,12 +136,22 @@ public final class NativeTickCoordinator {
     }
 
     public static boolean isNativeWorker() {
-        // Native frames are entered only by ContextServiceImpl's ForkJoin pool.
-        // The type guard keeps ordinary server-thread block operations completely
-        // off the ThreadLocal path while the frame check still rejects unrelated
-        // ForkJoin pools exactly.
-        return Thread.currentThread() instanceof ContextWorkerThread
-            && NATIVE_WORK.get().active;
+        // Owner drains run as virtual-thread continuations so a synchronous chunk
+        // future does not occupy a finite computation worker. An ownership scope
+        // is the exact capability; the native frame distinguishes the mutable
+        // transaction from other work on that same owner continuation.
+        return ContextThreadState.current() != null && NATIVE_WORK.get().active;
+    }
+
+    /** Quarantines exactly the owner whose native continuation exceeded its deadline. */
+    public static void lockCurrentContextAfterTimeout(
+        String operation, long timeoutSeconds
+    ) {
+        ContextThreadState.AccessScope scope = ContextThreadState.current();
+        if (scope == null || !NATIVE_WORK.get().active) {
+            throw new IllegalStateException("Chunk timeout occurred outside native ownership");
+        }
+        scope.primary().lockAfterTimeout(operation, timeoutSeconds);
     }
 
     public static void beginServerTick() {
@@ -282,9 +292,24 @@ public final class NativeTickCoordinator {
     }
 
     public static void drainForShutdown() {
-        while (OUTSTANDING.get() != 0 || !GLOBAL_COMMITS.isEmpty()) {
-            pumpMainThread();
-            Thread.onSpinWait();
+        MinecraftServer server = mainServer;
+        if (server != null && server.isSameThread()) {
+            // Some accepted owner work completes through MinecraftServer's own
+            // task queue (notably DistanceManager publication). stopServer runs
+            // before vanilla's normal task pump, so spinning only GLOBAL_COMMITS
+            // forms a cycle: the server waits for OUTSTANDING while its queued
+            // completion is the only action that can decrement OUTSTANDING.
+            // managedBlock preserves vanilla's executor ordering and wakes for
+            // newly published tasks while this shutdown boundary drains.
+            server.managedBlock(() -> {
+                pumpMainThread();
+                return OUTSTANDING.get() == 0 && GLOBAL_COMMITS.isEmpty();
+            });
+        } else {
+            while (OUTSTANDING.get() != 0 || !GLOBAL_COMMITS.isEmpty()) {
+                pumpMainThread();
+                Thread.onSpinWait();
+            }
         }
         pumpMainThread();
     }

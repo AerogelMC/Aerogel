@@ -9,7 +9,9 @@ record ContextTask(
     Runnable action,
     CompletableFuture<Void> completion,
     Runnable rejection,
+    Runnable unavailableRejection,
     AtomicReference<NeighborhoodLease> neighborhoodLease,
+    AtomicReference<ChunkContextImpl> waiterHandoff,
     NativePhase phase
 ) {
     ContextTask(
@@ -19,8 +21,8 @@ record ContextTask(
         CompletableFuture<Void> completion,
         Runnable rejection
     ) {
-        this(epoch, scopeKeys, action, completion, rejection,
-            new AtomicReference<>(), NativePhase.DEFAULT);
+        this(epoch, scopeKeys, action, completion, rejection, rejection,
+            new AtomicReference<>(), new AtomicReference<>(), NativePhase.DEFAULT);
     }
 
     ContextTask(
@@ -31,8 +33,21 @@ record ContextTask(
         Runnable rejection,
         NativePhase phase
     ) {
-        this(epoch, scopeKeys, action, completion, rejection,
-            new AtomicReference<>(), phase);
+        this(epoch, scopeKeys, action, completion, rejection, rejection,
+            new AtomicReference<>(), new AtomicReference<>(), phase);
+    }
+
+    ContextTask(
+        long epoch,
+        long[] scopeKeys,
+        Runnable action,
+        CompletableFuture<Void> completion,
+        Runnable rejection,
+        Runnable unavailableRejection,
+        NativePhase phase
+    ) {
+        this(epoch, scopeKeys, action, completion, rejection, unavailableRejection,
+            new AtomicReference<>(), new AtomicReference<>(), phase);
     }
 
     NeighborhoodLease neighborhoodLease(ChunkContextImpl primary, ContextServiceImpl scheduler) {
@@ -42,5 +57,13 @@ record ContextTask(
         return neighborhoodLease.compareAndSet(null, created)
             ? created
             : neighborhoodLease.get();
+    }
+
+    boolean claimWaiterHandoff(ChunkContextImpl context) {
+        return waiterHandoff.compareAndSet(null, context);
+    }
+
+    ChunkContextImpl takeWaiterHandoff() {
+        return waiterHandoff.getAndSet(null);
     }
 }
