@@ -11,6 +11,35 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class LatestTickTaskLaneTest {
     @Test
+    void producerStartsWhileContextComputationPoolIsOccupied() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
+            LatestTickTaskLane lane = new LatestTickTaskLane(scheduler, "test");
+            CountDownLatch computationStarted = new CountDownLatch(1);
+            CountDownLatch releaseComputation = new CountDownLatch(1);
+            CountDownLatch producerStarted = new CountDownLatch(1);
+
+            assertTrue(scheduler.executeComputation(() -> {
+                computationStarted.countDown();
+                try {
+                    assertTrue(releaseComputation.await(2, TimeUnit.SECONDS));
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                }
+            }));
+            assertTrue(computationStarted.await(1, TimeUnit.SECONDS));
+
+            NativeTickToken token = new NativeTickToken(1L);
+            lane.offer(token, producerStarted::countDown);
+            token.seal();
+
+            assertTrue(producerStarted.await(1, TimeUnit.SECONDS),
+                "producer admission must not wait in the Context computation pool");
+            releaseComputation.countDown();
+            lane.close();
+        }
+    }
+
+    @Test
     void overloadRunsCurrentThenLatestProducerOnly() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             LatestTickTaskLane lane = new LatestTickTaskLane(scheduler);

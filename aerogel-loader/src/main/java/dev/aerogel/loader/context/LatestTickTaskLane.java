@@ -3,6 +3,7 @@ package dev.aerogel.loader.context;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.locks.LockSupport;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -13,8 +14,16 @@ import java.util.logging.Logger;
 final class LatestTickTaskLane implements AutoCloseable {
     private static final Logger LOGGER = Logger.getLogger("Aerogel-Contexts");
 
-    private final ContextServiceImpl scheduler;
     private final String name;
+    /**
+     * Producer admission must not wait behind Context computation submitted to
+     * the ForkJoinPool. A waiting pass used to occupy the active slot before it
+     * had started; two ordinary 50 ms pulses could then replace the middle pass
+     * even though no Context was overloaded. One dormant platform continuation
+     * per semantic producer lane gives the OS an independently schedulable
+     * coordinator without reserving a Context worker or adding a task queue.
+     */
+    private final Thread owner;
     private final PaddedAtomicReference<Window> window =
         new PaddedAtomicReference<>(Window.EMPTY);
     private final PaddedLongAccumulator settledTick =
@@ -26,8 +35,12 @@ final class LatestTickTaskLane implements AutoCloseable {
     }
 
     LatestTickTaskLane(ContextServiceImpl scheduler, String name) {
-        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+        Objects.requireNonNull(scheduler, "scheduler");
         this.name = Objects.requireNonNull(name, "name");
+        this.owner = Thread.ofPlatform()
+            .daemon(true)
+            .name("Aerogel-Tick-Producer-" + name)
+            .start(this::ownerLoop);
     }
 
     CompletableFuture<Void> offer(NativeTickToken token, Runnable action) {
@@ -75,6 +88,18 @@ final class LatestTickTaskLane implements AutoCloseable {
         }
     }
 
+    private void ownerLoop() {
+        while (true) {
+            Request request = window.get().active;
+            if (request == null || !request.active()) {
+                if (closed && request == null) return;
+                LockSupport.park(this);
+                continue;
+            }
+            request.run();
+        }
+    }
+
     @Override
     public void close() {
         closed = true;
@@ -84,6 +109,7 @@ final class LatestTickTaskLane implements AutoCloseable {
                 ? Window.EMPTY : new Window(observed.active, null);
             if (!window.compareAndSet(observed, updated)) continue;
             if (observed.pending != null) observed.pending.cancel();
+            LockSupport.unpark(owner);
             return;
         }
     }
@@ -106,17 +132,20 @@ final class LatestTickTaskLane implements AutoCloseable {
 
         private void start() {
             if (!lifecycle.compareAndSet(Lifecycle.PENDING, Lifecycle.ACTIVE)) return;
-            if (!lane.scheduler.dispatch(() -> {
-                try {
-                    if (!lane.closed) action.run();
-                } catch (Throwable error) {
-                    LOGGER.log(Level.SEVERE, "Tick producer pass failed", error);
-                } finally {
-                    lifecycle.set(Lifecycle.CLOSED);
-                    token.releaseProducer();
-                    lane.complete(this);
-                }
-            })) {
+            LockSupport.unpark(lane.owner);
+        }
+
+        private boolean active() {
+            return lifecycle.get() == Lifecycle.ACTIVE;
+        }
+
+        private void run() {
+            if (!active()) return;
+            try {
+                if (!lane.closed) action.run();
+            } catch (Throwable error) {
+                LOGGER.log(Level.SEVERE, "Tick producer pass failed in " + lane.name, error);
+            } finally {
                 lifecycle.set(Lifecycle.CLOSED);
                 token.releaseProducer();
                 lane.complete(this);
