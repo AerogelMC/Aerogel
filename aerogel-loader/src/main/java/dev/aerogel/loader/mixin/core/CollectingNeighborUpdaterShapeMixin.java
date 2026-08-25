@@ -1,6 +1,7 @@
 package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.NeighborUpdateContinuation;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -8,6 +9,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.redstone.NeighborUpdater;
+import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -38,9 +40,14 @@ abstract class CollectingNeighborUpdaterShapeMixin {
         Runnable update = () -> NeighborUpdater.executeShapeUpdate(
             level, direction, position, neighborPosition,
             neighborState, flags, recursionLeft);
+        CollectingNeighborUpdater updater = NeighborUpdateContinuation.current();
+        Runnable continuation = updater == null
+            ? update : NeighborUpdateContinuation.resumeAfter(updater, update);
         if (!AerogelRuntime.routeBlockTask(
-            serverLevel, position.immutable(), update)) {
+            serverLevel, position.immutable(), continuation)) {
             update.run();
+        } else if (updater != null) {
+            NeighborUpdateContinuation.suspend(updater);
         }
     }
 }

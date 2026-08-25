@@ -263,6 +263,39 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void entityScopeGrowthDoesNotStrandShutdownPermit() throws Exception {
+        java.lang.reflect.Field outstandingField =
+            NativeTickCoordinator.class.getDeclaredField("OUTSTANDING");
+        outstandingField.setAccessible(true);
+        AtomicInteger outstanding = (AtomicInteger) outstandingField.get(null);
+        int before = outstanding.get();
+
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            CountDownLatch ownerOccupied = new CountDownLatch(1);
+            CountDownLatch releaseOwner = new CountDownLatch(1);
+            CountDownLatch ticked = new CountDownLatch(1);
+            CompletableFuture<Void> blocker = context.submit(0, () -> {
+                ownerOccupied.countDown();
+                await(releaseOwner);
+            });
+            assertTrue(ownerOccupied.await(2, TimeUnit.SECONDS));
+
+            DynamicScopeEntity entity = new DynamicScopeEntity(context);
+            context.entityLane().offer(List.of(entity), ignored -> ticked.countDown());
+            entity.additional = new BlockPos(16, 64, 0);
+            releaseOwner.countDown();
+
+            blocker.get(2, TimeUnit.SECONDS);
+            assertTrue(ticked.await(2, TimeUnit.SECONDS));
+            context.submit(0, () -> { }).get(2, TimeUnit.SECONDS);
+            assertEquals(before, outstanding.get(),
+                "replacing a stale entity admission must return its old permit");
+        }
+    }
+
+    @Test
     void overloadedContextKeepsOnlyTheLatestUnstartedTick() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
@@ -731,6 +764,22 @@ final class ContextSchedulerTest {
             if (owner != expected) return false;
             owner = updated;
             return true;
+        }
+    }
+
+    private static final class DynamicScopeEntity extends OwnedEntity
+        implements dev.aerogel.loader.internal.EntityContextScopeBridge {
+        private volatile BlockPos additional;
+
+        private DynamicScopeEntity(Object owner) {
+            super(owner);
+        }
+
+        @Override
+        public BlockPos aerogel$additionalContextBlock(
+            net.minecraft.server.level.ServerLevel level
+        ) {
+            return additional;
         }
     }
 

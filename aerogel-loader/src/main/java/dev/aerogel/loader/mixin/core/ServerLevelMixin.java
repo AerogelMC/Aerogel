@@ -43,6 +43,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.particles.ExplosionParticleInfo;
@@ -66,6 +67,7 @@ import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import net.minecraft.world.ticks.LevelTicks;
 import net.minecraft.world.level.saveddata.WeatherData;
 import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
+import net.minecraft.world.level.redstone.Orientation;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -266,27 +268,65 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     }
 
     @Redirect(
-        method = {
-            "updateNeighborsAt(Lnet/minecraft/core/BlockPos;"
-                + "Lnet/minecraft/world/level/block/Block;"
-                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
-            "updateNeighborsAtExceptFromFacing(Lnet/minecraft/core/BlockPos;"
-                + "Lnet/minecraft/world/level/block/Block;Lnet/minecraft/core/Direction;"
-                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
-            "neighborChanged(Lnet/minecraft/core/BlockPos;"
-                + "Lnet/minecraft/world/level/block/Block;"
-                + "Lnet/minecraft/world/level/redstone/Orientation;)V",
-            "neighborChanged(Lnet/minecraft/world/level/block/state/BlockState;"
-                + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/Block;"
-                + "Lnet/minecraft/world/level/redstone/Orientation;Z)V"
-        },
+        method = "updateNeighborsAt(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/Block;"
+            + "Lnet/minecraft/world/level/redstone/Orientation;)V",
         at = @At(value = "FIELD", target = "Lnet/minecraft/server/level/ServerLevel;"
             + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
     )
-    private CollectingNeighborUpdater aerogel$contextNeighborUpdater(ServerLevel level) {
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdaterAt(
+        ServerLevel level, BlockPos position, Block block, Orientation orientation
+    ) {
         CollectingNeighborUpdater fallback =
             ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
-        return ContextNeighborRouting.current(level, fallback);
+        return ContextNeighborRouting.current(level, fallback, position);
+    }
+
+    @Redirect(
+        method = "updateNeighborsAtExceptFromFacing(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/Block;Lnet/minecraft/core/Direction;"
+            + "Lnet/minecraft/world/level/redstone/Orientation;)V",
+        at = @At(value = "FIELD", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
+    )
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdaterExcept(
+        ServerLevel level, BlockPos position, Block block,
+        Direction direction, Orientation orientation
+    ) {
+        CollectingNeighborUpdater fallback =
+            ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
+        return ContextNeighborRouting.current(level, fallback, position);
+    }
+
+    @Redirect(
+        method = "neighborChanged(Lnet/minecraft/core/BlockPos;"
+            + "Lnet/minecraft/world/level/block/Block;"
+            + "Lnet/minecraft/world/level/redstone/Orientation;)V",
+        at = @At(value = "FIELD", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
+    )
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdaterChanged(
+        ServerLevel level, BlockPos position, Block block, Orientation orientation
+    ) {
+        CollectingNeighborUpdater fallback =
+            ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
+        return ContextNeighborRouting.current(level, fallback, position);
+    }
+
+    @Redirect(
+        method = "neighborChanged(Lnet/minecraft/world/level/block/state/BlockState;"
+            + "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/block/Block;"
+            + "Lnet/minecraft/world/level/redstone/Orientation;Z)V",
+        at = @At(value = "FIELD", target = "Lnet/minecraft/server/level/ServerLevel;"
+            + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
+    )
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdaterChangedState(
+        ServerLevel level, BlockState state, BlockPos position, Block block,
+        Orientation orientation, boolean moved
+    ) {
+        CollectingNeighborUpdater fallback =
+            ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
+        return ContextNeighborRouting.current(level, fallback, position);
     }
 
     @Unique

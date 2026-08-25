@@ -128,6 +128,7 @@ public final class NativeTickCoordinator {
                 }
             }
         } finally {
+            NeighborUpdateContinuation.clearWorkerState();
             // A Context failure may occur before its publication is handed to any
             // owner lane. Always release that lane and its OUTSTANDING permit once;
             // otherwise stopServer can spin forever before vanilla saves the world.
@@ -274,6 +275,11 @@ public final class NativeTickCoordinator {
     }
 
     static void taskRejected() {
+        OUTSTANDING.decrementAndGet();
+    }
+
+    /** Returns the permit of a queued task replaced before its native frame began. */
+    static void taskSuperseded() {
         OUTSTANDING.decrementAndGet();
     }
 

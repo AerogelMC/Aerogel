@@ -4,11 +4,12 @@ import dev.aerogel.loader.network.QueuedPacketBridge;
 import dev.aerogel.loader.network.PacketQueueMetrics;
 import dev.aerogel.loader.internal.EntityOwnedPacketListener;
 import dev.aerogel.loader.network.EntityTargetPackets;
+import dev.aerogel.loader.network.BlockTargetPacket;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.network.PacketListener;
 import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -45,12 +46,14 @@ abstract class PacketProcessorEntryMixin implements QueuedPacketBridge {
                     return;
                 }
             }
-            if (packet instanceof ServerboundUseItemOnPacket useItemOn
-                && entity.level() instanceof ServerLevel level
-                && AerogelRuntime.routeInteractiveEntityBlockTask(
-                    entity, level, useItemOn.getHitResult().getBlockPos().immutable(), this::handle)) {
-                callbackInfo.cancel();
-                return;
+            BlockPos targetBlock = packet instanceof BlockTargetPacket targeted
+                ? targeted.aerogel$targetBlock() : null;
+            if (targetBlock != null && entity.level() instanceof ServerLevel level) {
+                if (AerogelRuntime.routeInteractiveEntityBlockTask(
+                    entity, level, targetBlock.immutable(), this::handle)) {
+                    callbackInfo.cancel();
+                    return;
+                }
             }
             if (AerogelRuntime.routeInteractiveEntityTask(entity, this::handle)) {
                 callbackInfo.cancel();

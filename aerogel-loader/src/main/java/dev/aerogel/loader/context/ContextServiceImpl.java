@@ -29,6 +29,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +47,7 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Function;
 import dev.aerogel.loader.internal.EntityContextOwnerBridge;
+import dev.aerogel.loader.internal.EntityContextScopeBridge;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
 import dev.aerogel.loader.internal.DistanceManagerBridge;
@@ -1219,33 +1221,45 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(action, "action");
         if (closed) return false;
+        Runnable routedAction = ScheduledTickQueryScope.propagate(action);
         WorldContextImpl world = worlds.get(level);
         ChunkContextImpl context = resolveChunk(level, position.getX() >> 4, position.getZ() >> 4);
         if (world == null || context == null) return false;
-        long[] scopeKeys = blockMutationScope(position);
+        LongOpenHashSet requestedScope = new LongOpenHashSet(blockMutationScope(position));
         ContextThreadState.AccessScope currentScope = ContextThreadState.current();
+        ChunkContextImpl primary = context;
         if (currentScope != null && currentScope.primary().world() == world) {
             boolean allOwned = true;
-            for (long key : scopeKeys) {
+            for (long key : requestedScope.toLongArray()) {
                 if (!currentScope.containsKey(key)) {
                     allOwned = false;
                     break;
                 }
             }
             if (allOwned) return false;
+            // A cross-boundary mutation is causally downstream of the current
+            // transaction. Carry its exact ownership set into the hand-off so the
+            // target cannot observe a half-completed source update.
+            requestedScope.add(currentScope.primary().key());
+            if (currentScope.ownedKeys() != null) {
+                for (long key : currentScope.ownedKeys().toLongArray()) {
+                    requestedScope.add(key);
+                }
+            }
+            primary = currentScope.primary();
         }
-        ChunkContextImpl primary = context;
+        long[] scopeKeys = requestedScope.toLongArray();
 
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
             NativeTickCoordinator.taskRejected();
             NativeTickCoordinator.submitMainThread(() -> {
-                if (!routeBlockTask(level, position, action)) action.run();
+                if (!routeBlockTask(level, position, routedAction)) routedAction.run();
             });
         };
         boolean accepted = primary.submitNative(scopeKeys,
             () -> NativeTickCoordinator.runNative(
-            List.of(action), Runnable::run, () -> { }), rejected,
+            List.of(routedAction), Runnable::run, () -> { }), rejected,
             NativeTickCoordinator::taskRejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
@@ -1533,6 +1547,45 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return keys.toLongArray();
     }
 
+    /** Allocation-free fast path for validating a previously admitted entity scope. */
+    static boolean entityTickScopeCovered(
+        ChunkContextImpl owner, Entity entity, long[] sortedAdmitted
+    ) {
+        if (Arrays.binarySearch(sortedAdmitted, owner.key()) < 0) return false;
+        if (entity instanceof EntityContextScopeBridge additional) {
+            BlockPos position = additional.aerogel$additionalContextBlock(
+                owner.world().level());
+            if (position != null && Arrays.binarySearch(sortedAdmitted,
+                WorldContextImpl.key(position.getX() >> 4, position.getZ() >> 4)) < 0) {
+                return false;
+            }
+        }
+
+        AABB box = entity.getBoundingBox();
+        if (box == null) return true;
+        Vec3 movement = entity.getDeltaMovement();
+        double moveX = movement == null || !Double.isFinite(movement.x) ? 0.0D : movement.x;
+        double moveZ = movement == null || !Double.isFinite(movement.z) ? 0.0D : movement.z;
+        double minX = Math.min(box.minX, box.minX + moveX);
+        double minZ = Math.min(box.minZ, box.minZ + moveZ);
+        double maxX = Math.max(box.maxX, box.maxX + moveX);
+        double maxZ = Math.max(box.maxZ, box.maxZ + moveZ);
+        if (!Double.isFinite(minX) || !Double.isFinite(minZ)
+            || !Double.isFinite(maxX) || !Double.isFinite(maxZ)) return true;
+
+        int minChunkX = ((int) Math.floor(minX)) >> 4;
+        int minChunkZ = ((int) Math.floor(minZ)) >> 4;
+        int maxChunkX = ((int) Math.floor(maxX > minX ? Math.nextDown(maxX) : maxX)) >> 4;
+        int maxChunkZ = ((int) Math.floor(maxZ > minZ ? Math.nextDown(maxZ) : maxZ)) >> 4;
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                if (Arrays.binarySearch(sortedAdmitted,
+                    WorldContextImpl.key(chunkX, chunkZ)) < 0) return false;
+            }
+        }
+        return true;
+    }
+
     /** Exact union of all swept entity footprints in one owner-chunk tick batch. */
     static long[] entityTickScope(ChunkContextImpl owner, Iterable<Entity> entities) {
         LongOpenHashSet keys = new LongOpenHashSet();
@@ -1545,6 +1598,11 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         LongOpenHashSet keys, ChunkContextImpl owner, Entity entity
     ) {
         keys.add(owner.key());
+        if (entity instanceof EntityContextScopeBridge additional) {
+            BlockPos position = additional.aerogel$additionalContextBlock(
+                owner.world().level());
+            if (position != null) addScope(keys, position);
+        }
         AABB box = entity.getBoundingBox();
         if (box == null) return;
         Vec3 movement = entity.getDeltaMovement();
@@ -1622,7 +1680,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         if (closed || !NativeTickCoordinator.acceptsContextRouting()) return false;
 
         ChunkContextImpl context = resolveOwner(entity);
-        if (context == null || context.current()) return false;
+        if (context == null) return false;
+        long[] scopeKeys = entityTickScope(context, entity);
+        if (ownsAll(context.world(), scopeKeys)) return false;
 
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
@@ -1632,15 +1692,46 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             });
         };
         Runnable routed = () -> NativeTickCoordinator.runNative(
-            List.of(entity), ignored -> runRouted(
+            List.of(entity), ignored -> runScopedEntityTask(
                 context, entity, action, interactive), () -> { });
         boolean accepted = interactive
-            ? context.submitInteractiveNative(routed, rejected)
-            : context.submitNative(routed, rejected);
+            ? context.submitInteractiveNative(scopeKeys, routed, rejected)
+            : context.submitNative(scopeKeys, routed, rejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
         }
+        return true;
+    }
+
+    /**
+     * Validates dynamic entity dependencies at actual execution admission.
+     * Connection ticks and other owner-routed follow-up work can observe state
+     * created after queue submission (for example, a newly opened block menu).
+     * Requeue the whole action before it starts when that state requires another
+     * Context; never execute a partial action under a stale ownership snapshot.
+     */
+    private void runScopedEntityTask(
+        ChunkContextImpl expected, Entity entity, Runnable action, boolean interactive
+    ) {
+        if (closed || !expected.active()) return;
+        ChunkContextImpl current = resolveOwner(entity);
+        if (current == null) {
+            action.run();
+            return;
+        }
+        if (current != expected || !ownsAll(
+            current.world(), entityTickScope(current, entity))) {
+            if (!routeEntityTask(entity, action, interactive)) action.run();
+            return;
+        }
+        action.run();
+    }
+
+    private static boolean ownsAll(WorldContextImpl world, long[] keys) {
+        ContextThreadState.AccessScope scope = ContextThreadState.current();
+        if (scope == null || scope.primary().world() != world) return false;
+        for (long key : keys) if (!scope.containsKey(key)) return false;
         return true;
     }
 
@@ -1670,6 +1761,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(action, "action");
         if (closed || entity.level() != level) return false;
+        Runnable scopedAction = BlockInteractionScope.bind(level, position, action);
 
         ChunkContextImpl owner = resolveOwner(entity);
         if (owner == null || owner.world() != worldImpl(level)) return false;
@@ -1693,17 +1785,17 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
             NativeTickCoordinator.taskRejected();
             NativeTickCoordinator.submitMainThread(() -> {
                 if (!routeEntityBlockTask(
-                    entity, level, position, action, interactive)) action.run();
+                    entity, level, position, scopedAction, interactive)) scopedAction.run();
             });
         };
         Runnable routed = () -> NativeTickCoordinator.runNative(
             List.of(entity), ignored -> {
                 ChunkContextImpl current = resolveOwner(entity);
                 if (current == owner) {
-                    action.run();
+                    scopedAction.run();
                 } else if (!routeEntityBlockTask(
-                    entity, level, position, action, interactive)) {
-                    action.run();
+                    entity, level, position, scopedAction, interactive)) {
+                    scopedAction.run();
                 }
             }, () -> { });
         boolean accepted = interactive

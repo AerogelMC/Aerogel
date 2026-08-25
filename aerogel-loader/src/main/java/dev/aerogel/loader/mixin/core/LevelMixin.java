@@ -11,6 +11,7 @@ import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
@@ -105,8 +106,12 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
         at = @At(value = "FIELD", target = "Lnet/minecraft/world/level/Level;"
             + "neighborUpdater:Lnet/minecraft/world/level/redstone/CollectingNeighborUpdater;")
     )
-    private CollectingNeighborUpdater aerogel$contextNeighborUpdater(Level ignored) {
-        return ContextNeighborRouting.current((Level) (Object) this, neighborUpdater);
+    private CollectingNeighborUpdater aerogel$contextNeighborUpdater(
+        Level ignored, Direction direction, BlockPos position,
+        BlockPos neighborPosition, BlockState neighborState, int flags, int recursionLeft
+    ) {
+        return ContextNeighborRouting.current(
+            (Level) (Object) this, neighborUpdater, position);
     }
 
     @Inject(

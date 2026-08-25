@@ -21,6 +21,9 @@ import dev.aerogel.loader.internal.DeathDropCapture;
 import dev.aerogel.loader.internal.PlayerViewService;
 import dev.aerogel.loader.internal.RespawnGameListenerBridge;
 import dev.aerogel.loader.internal.PersistentDataHolderBridge;
+import dev.aerogel.loader.internal.EntityContextScopeBridge;
+import dev.aerogel.loader.internal.MenuContextBridge;
+import dev.aerogel.loader.context.BlockInteractionScope;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
@@ -98,7 +101,7 @@ import java.util.concurrent.CompletableFuture;
 
 @Mixin(targets = "net.minecraft.server.level.ServerPlayer")
 abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge,
-    ServerPlayerDebugBridge {
+    ServerPlayerDebugBridge, EntityContextScopeBridge {
     @Shadow public ServerGamePacketListenerImpl connection;
     @Shadow @Final private MinecraftServer server;
     @Unique
@@ -125,6 +128,14 @@ abstract class ServerPlayerMixin implements ServerPlayerDisplayNameBridge,
     @Unique private boolean aerogel$experienceOverride;
     @Unique private boolean aerogel$teleportOverride;
     @Unique private boolean aerogel$dropOverride;
+
+    @Override
+    public BlockPos aerogel$additionalContextBlock(ServerLevel level) {
+        BlockInteractionScope.Binding binding =
+            ((ServerPlayer) (Object) this).containerMenu instanceof MenuContextBridge menu
+                ? menu.aerogel$blockInteraction() : null;
+        return binding != null && binding.level() == level ? binding.position() : null;
+    }
 
     @Invoker("debugSubscriptions")
     @Override

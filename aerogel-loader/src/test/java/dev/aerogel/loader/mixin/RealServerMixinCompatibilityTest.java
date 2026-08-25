@@ -34,6 +34,17 @@ final class RealServerMixinCompatibilityTest {
         "net.minecraft.network.PacketProcessor",
         "net.minecraft.network.PacketProcessor$ListenerAndPacket",
         "net.minecraft.network.protocol.PacketUtils",
+        "net.minecraft.network.protocol.game.ServerboundBlockEntityTagQueryPacket",
+        "net.minecraft.network.protocol.game.ServerboundJigsawGeneratePacket",
+        "net.minecraft.network.protocol.game.ServerboundSetCommandBlockPacket",
+        "net.minecraft.network.protocol.game.ServerboundSetJigsawBlockPacket",
+        "net.minecraft.network.protocol.game.ServerboundSetStructureBlockPacket",
+        "net.minecraft.network.protocol.game.ServerboundSignUpdatePacket",
+        "net.minecraft.network.protocol.game.ServerboundPickItemFromBlockPacket",
+        "net.minecraft.network.protocol.game.ServerboundTestInstanceBlockActionPacket",
+        "net.minecraft.network.protocol.game.ServerboundSetTestBlockPacket",
+        "net.minecraft.network.protocol.game.ServerboundUseItemOnPacket",
+        "net.minecraft.network.protocol.game.ServerboundPlayerActionPacket",
         "net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket$Entry",
         "net.minecraft.server.Main",
         "net.minecraft.server.MinecraftServer",
@@ -157,6 +168,7 @@ final class RealServerMixinCompatibilityTest {
                 for (String target : TARGETS) {
                     Class.forName(target, false, loader);
                 }
+                verifyBlockTargetPacketAdapters(loader);
                 System.out.println("=== ServerLevel.tickChunk bytecode ===");
                 try (InputStream in = loader.getResourceAsStream("net/minecraft/server/level/ServerLevel.class")) {
                     new ClassReader(in).accept(new ClassVisitor(Opcodes.ASM9) {
@@ -503,6 +515,25 @@ final class RealServerMixinCompatibilityTest {
         }
         if (!failures.isEmpty()) {
             throw new AssertionError("Direct Minecraft linkage mismatches:\n" + String.join("\n", failures));
+        }
+    }
+
+    private static void verifyBlockTargetPacketAdapters(ClassLoader loader)
+        throws Exception {
+        for (String target : TARGETS) {
+            if (!target.startsWith("net.minecraft.network.protocol.game.Serverbound")) {
+                continue;
+            }
+            Class<?> type = Class.forName(target, false, loader);
+            boolean publishesTarget = Arrays.stream(type.getInterfaces())
+                .anyMatch(contract -> contract.getName().equals(
+                    "dev.aerogel.loader.network.BlockTargetPacket"));
+            if (!publishesTarget) {
+                throw new AssertionError(
+                    "Block-target packet did not publish its Context target: " + target
+                        + ", loader=" + type.getClassLoader()
+                        + ", interfaces=" + Arrays.toString(type.getInterfaces()));
+            }
         }
     }
 

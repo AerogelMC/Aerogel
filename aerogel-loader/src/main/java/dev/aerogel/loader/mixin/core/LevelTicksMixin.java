@@ -2,6 +2,7 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.context.ConcurrentIngress;
+import dev.aerogel.loader.context.ScheduledTickQueryScope;
 import dev.aerogel.loader.internal.LevelTicksBridge;
 import net.minecraft.world.ticks.LevelTicks;
 import net.minecraft.world.ticks.LevelChunkTicks;
@@ -18,7 +19,9 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.function.BiConsumer;
 import java.util.function.LongPredicate;
@@ -33,11 +36,14 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
     @Shadow @Final private Long2ObjectMap<LevelChunkTicks<T>> allContainers;
     @Shadow @Final private Long2LongMap nextTickForContainer;
     @Shadow @Final private Queue<LevelChunkTicks<T>> containersToTick;
+    @Shadow @Final private Queue<ScheduledTick<T>> toRunThisTick;
     @Unique private ConcurrentIngress<ScheduledTick<T>> aerogel$scheduledTicks;
     @Unique private TreeMap<Long, LongOpenHashSet> aerogel$dueByTime;
     @Unique private Long2LongOpenHashMap aerogel$indexedDue;
     @Unique private Long2LongOpenHashMap aerogel$inactiveDue;
     @Unique private ConcurrentIngress<Long> aerogel$eligibilityChanges;
+    @Unique private ScheduledTickQueryScope.Snapshot aerogel$querySnapshot;
+    @Unique private int aerogel$dispatchOrder;
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$initializeIngress(
@@ -65,6 +71,44 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
     ) {
         aerogel$scheduledTicks.drain(this::schedule);
         aerogel$eligibilityChanges.drain(this::aerogel$recheckEligibility);
+    }
+
+    @Inject(method = "runCollectedTicks", at = @At("HEAD"))
+    private void aerogel$indexCollectedTickOrder(
+        BiConsumer<BlockPos, T> ticker, CallbackInfo callback
+    ) {
+        aerogel$querySnapshot = ScheduledTickQueryScope.snapshot(toRunThisTick);
+        aerogel$dispatchOrder = 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Redirect(
+        method = "runCollectedTicks",
+        at = @At(value = "INVOKE", target = "Ljava/util/function/BiConsumer;"
+            + "accept(Ljava/lang/Object;Ljava/lang/Object;)V")
+    )
+    private void aerogel$publishCollectedTickView(
+        BiConsumer<BlockPos, T> ticker, Object position, Object type
+    ) {
+        int order = aerogel$dispatchOrder++;
+        ScheduledTickQueryScope.Snapshot snapshot = aerogel$querySnapshot;
+        ScheduledTickQueryScope.run((LevelTicks<T>) (Object) this, snapshot, order,
+            () -> ticker.accept((BlockPos) position, (T) type));
+    }
+
+    @Inject(method = "runCollectedTicks", at = @At("RETURN"))
+    private void aerogel$releaseCollectedTickOrder(
+        BiConsumer<BlockPos, T> ticker, CallbackInfo callback
+    ) {
+        aerogel$querySnapshot = null;
+    }
+
+    @Inject(method = "willTickThisTick", at = @At("HEAD"), cancellable = true)
+    private void aerogel$queryRoutedTickView(
+        BlockPos position, T type, CallbackInfoReturnable<Boolean> callback
+    ) {
+        Boolean result = ScheduledTickQueryScope.willTick(this, position, type);
+        if (result != null) callback.setReturnValue(result);
     }
 
     @Inject(method = "addContainer", at = @At("RETURN"))

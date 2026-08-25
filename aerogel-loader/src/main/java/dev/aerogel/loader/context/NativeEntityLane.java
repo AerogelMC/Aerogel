@@ -91,22 +91,61 @@ final class NativeEntityLane {
         Consumer<Entity> ownedAction = entity -> context.runEntity(entity, request.action);
         ScopeGroup group = request.groups.get(request.groupIndex);
         if (!context.submitNativePhase(NativePhase.ENTITY, group.scope,
-            () -> NativeTickCoordinator.runNativeAfterGlobalCommit(
-            group.entities, ownedAction, () -> {
-                request.groupIndex++;
-                if (request.groupIndex < request.groups.size()) {
-                    scheduleGroup(request);
-                } else {
-                    context.completeTickTask(request.tickState);
-                    scheduleNext();
-                }
-            }), rejected)) {
+            () -> runValidatedGroup(request, group, ownedAction), rejected)) {
             rejected.run();
         }
     }
 
+    /**
+     * Entity-owned state can add an exact Context dependency after the producer
+     * partitioned this tick. Opening a block menu is one example: the already
+     * queued player tick must also own that menu's block Context before calling
+     * stillValid. Re-evaluate at admission, while the entity owner is reserved.
+     * If the required scope grew, replace this group and enqueue it behind all
+     * entity mutations that were already ordered ahead of it. Revalidation at
+     * every admission makes this converge on the latest state without a retry
+     * count, distance rule, global lock, or partially executing an entity tick.
+     */
+    private void runValidatedGroup(
+        Request request, ScopeGroup admitted, Consumer<Entity> ownedAction
+    ) {
+        boolean covered = true;
+        for (Entity entity : admitted.entities) {
+            if (!ContextServiceImpl.entityTickScopeCovered(
+                context, entity, admitted.scope)) {
+                covered = false;
+                break;
+            }
+        }
+        if (!covered) {
+            List<ScopeGroup> current = partition(admitted.entities);
+            request.groups.remove(request.groupIndex);
+            request.groups.addAll(request.groupIndex, current);
+            try {
+                scheduleGroup(request);
+            } finally {
+                // This admission never enters runNative: its replacement owns a
+                // fresh permit, so the superseded admission must return its own.
+                NativeTickCoordinator.taskSuperseded();
+            }
+            return;
+        }
+        NativeTickCoordinator.runNativeAfterGlobalCommit(
+            admitted.entities, ownedAction, () -> completeGroup(request));
+    }
+
+    private void completeGroup(Request request) {
+        request.groupIndex++;
+        if (request.groupIndex < request.groups.size()) {
+            scheduleGroup(request);
+        } else {
+            context.completeTickTask(request.tickState);
+            scheduleNext();
+        }
+    }
+
     private static final class Request {
-        private final List<ScopeGroup> groups;
+        private final ArrayList<ScopeGroup> groups;
         private final Consumer<Entity> action;
         private final ChunkContextImpl.TickState tickState;
         private int groupIndex;
@@ -115,7 +154,7 @@ final class NativeEntityLane {
             List<ScopeGroup> groups, Consumer<Entity> action,
             ChunkContextImpl.TickState tickState
         ) {
-            this.groups = groups;
+            this.groups = new ArrayList<>(groups);
             this.action = action;
             this.tickState = tickState;
         }
