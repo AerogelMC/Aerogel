@@ -72,6 +72,26 @@ final class ContextualEntityCallbackTest {
     }
 
     @Test
+    void foreignContextMoveIsSerializedByTheEntityOwner() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl owner = world.context(2, 3);
+            ChunkContextImpl foreign = world.context(3, 3);
+            TestEntity entity = new TestEntity(owner, new ChunkPos(3, 3));
+            AtomicInteger moves = new AtomicInteger();
+            ContextualEntityCallback callback = new ContextualEntityCallback(
+                entity, delegate(moves));
+
+            foreign.submit(0, () -> NativeTickCoordinator.runNative(
+                List.of(entity), ignored -> callback.onMove(), () -> { })).get();
+            owner.submit(0, () -> { }).get();
+
+            assertEquals(1, moves.get());
+            assertEquals(null, entity.owner);
+        }
+    }
+
+    @Test
     void boundaryMovementReleasesAfterEarlierOwnerWork() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);

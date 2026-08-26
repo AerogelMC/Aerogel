@@ -1681,8 +1681,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
 
         ChunkContextImpl context = resolveOwner(entity);
         if (context == null) return false;
+        if (ownsCurrentEntityTickScope(context, entity)) return false;
         long[] scopeKeys = entityTickScope(context, entity);
-        if (ownsAll(context.world(), scopeKeys)) return false;
 
         NativeTickCoordinator.taskSubmitted();
         Runnable rejected = () -> {
@@ -1732,6 +1732,48 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ContextThreadState.AccessScope scope = ContextThreadState.current();
         if (scope == null || scope.primary().world() != world) return false;
         for (long key : keys) if (!scope.containsKey(key)) return false;
+        return true;
+    }
+
+    /** Allocation-free validation of the entity's exact current mutable scope. */
+    private static boolean ownsCurrentEntityTickScope(
+        ChunkContextImpl owner, Entity entity
+    ) {
+        ContextThreadState.AccessScope scope = ContextThreadState.current();
+        if (scope == null || scope.primary().world() != owner.world()
+            || !scope.containsKey(owner.key())) return false;
+        if (entity instanceof EntityContextScopeBridge additional) {
+            BlockPos position = additional.aerogel$additionalContextBlock(
+                owner.world().level());
+            if (position != null && !scope.containsKey(WorldContextImpl.key(
+                position.getX() >> 4, position.getZ() >> 4))) return false;
+        }
+
+        AABB box = entity.getBoundingBox();
+        if (box == null) return true;
+        Vec3 movement = entity.getDeltaMovement();
+        double moveX = movement == null || !Double.isFinite(movement.x)
+            ? 0.0D : movement.x;
+        double moveZ = movement == null || !Double.isFinite(movement.z)
+            ? 0.0D : movement.z;
+        double minX = Math.min(box.minX, box.minX + moveX);
+        double minZ = Math.min(box.minZ, box.minZ + moveZ);
+        double maxX = Math.max(box.maxX, box.maxX + moveX);
+        double maxZ = Math.max(box.maxZ, box.maxZ + moveZ);
+        if (!Double.isFinite(minX) || !Double.isFinite(minZ)
+            || !Double.isFinite(maxX) || !Double.isFinite(maxZ)) return true;
+
+        int minChunkX = ((int) Math.floor(minX)) >> 4;
+        int minChunkZ = ((int) Math.floor(minZ)) >> 4;
+        int maxChunkX = ((int) Math.floor(maxX > minX
+            ? Math.nextDown(maxX) : maxX)) >> 4;
+        int maxChunkZ = ((int) Math.floor(maxZ > minZ
+            ? Math.nextDown(maxZ) : maxZ)) >> 4;
+        for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+            for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+                if (!scope.containsKey(WorldContextImpl.key(chunkX, chunkZ))) return false;
+            }
+        }
         return true;
     }
 

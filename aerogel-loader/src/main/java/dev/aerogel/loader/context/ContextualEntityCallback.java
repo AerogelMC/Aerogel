@@ -19,6 +19,26 @@ public final class ContextualEntityCallback implements EntityInLevelCallback {
 
     @Override
     public void onMove() {
+        /*
+         * Movement is not necessarily initiated by the entity's own tick. A
+         * collision, vehicle, or another entity can move this entity while that
+         * caller owns a different Context. Mutating PersistentEntitySectionManager
+         * from that foreign scope races the entity's own lane: one callback can
+         * replace currentSection after another callback compared currentSectionKey,
+         * producing the vanilla "wasn't found in section" warning and a corrupt
+         * spatial index.
+         *
+         * routeEntityTask validates the exact current owner plus the entity's
+         * swept chunk footprint. It returns false when this transaction already
+         * owns that scope, so the normal owner-tick path stays allocation-free.
+         * A foreign mutation is appended to the entity owner instead of taking a
+         * lock or falling back to a global queue.
+         */
+        if (NativeTickCoordinator.isNativeWorker()) {
+            ContextThreadState.AccessScope scope = ContextThreadState.current();
+            if (scope.primary().scheduler().routeEntityTask(entity, this::onMove)) return;
+        }
+
         EntityContextOwnerBridge ownership = (EntityContextOwnerBridge) entity;
         Object expectedOwner = ownership.aerogel$contextOwner();
         if (NativeTickCoordinator.isNativeWorker()) {
