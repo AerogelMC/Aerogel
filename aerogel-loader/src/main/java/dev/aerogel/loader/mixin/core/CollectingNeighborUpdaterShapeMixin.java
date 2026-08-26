@@ -2,6 +2,7 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.context.NeighborUpdateContinuation;
+import dev.aerogel.loader.context.ScheduledTickQueryScope;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -31,7 +32,7 @@ abstract class CollectingNeighborUpdaterShapeMixin {
     ) {
         if (!NativeTickCoordinator.isNativeWorker()
             || !(level instanceof ServerLevel serverLevel)
-            || AerogelRuntime.isBlockMutationThread(serverLevel, position)) {
+            || AerogelRuntime.isNeighborMutationThread(serverLevel, position)) {
             NeighborUpdater.executeShapeUpdate(
                 level, direction, position, neighborPosition,
                 neighborState, flags, recursionLeft);
@@ -41,13 +42,20 @@ abstract class CollectingNeighborUpdaterShapeMixin {
             level, direction, position, neighborPosition,
             neighborState, flags, recursionLeft);
         CollectingNeighborUpdater updater = NeighborUpdateContinuation.current();
-        Runnable continuation = updater == null
-            ? update : NeighborUpdateContinuation.resumeAfter(updater, update);
-        if (!AerogelRuntime.routeBlockTask(
-            serverLevel, position.immutable(), continuation)) {
-            update.run();
-        } else if (updater != null) {
-            NeighborUpdateContinuation.suspend(updater);
+        if (updater == null) {
+            if (!AerogelRuntime.routeNeighborTask(
+                serverLevel, position.immutable(), update)) update.run();
+            return;
         }
+        // Capture the immutable scheduled-tick query view before the source action
+        // unwinds; only publication of this already-bound continuation is deferred.
+        Runnable continuation = ScheduledTickQueryScope.propagate(
+            NeighborUpdateContinuation.resumeAfter(updater, update));
+        Runnable rejected = () ->
+            NeighborUpdateContinuation.cancelSuspended(updater);
+        NeighborUpdateContinuation.suspend(updater, () -> {
+            if (!AerogelRuntime.routeNeighborTask(
+                serverLevel, position.immutable(), continuation, rejected)) rejected.run();
+        });
     }
 }

@@ -23,6 +23,7 @@ import dev.aerogel.loader.context.ContextRandomRouting;
 import dev.aerogel.loader.context.ContextNeighborRouting;
 import dev.aerogel.loader.context.LevelNeighborUpdaterBridge;
 import dev.aerogel.loader.context.NativeTickCoordinator;
+import dev.aerogel.loader.context.ScheduledTickQueryScope;
 import dev.aerogel.loader.context.ConcurrentNavigationSet;
 import dev.aerogel.loader.internal.NavigationIndexBridge;
 import dev.aerogel.loader.internal.EntityLoadStatusBridge;
@@ -279,7 +280,7 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     ) {
         CollectingNeighborUpdater fallback =
             ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
-        return ContextNeighborRouting.current(level, fallback, position);
+        return ContextNeighborRouting.current(level, fallback);
     }
 
     @Redirect(
@@ -295,7 +296,7 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     ) {
         CollectingNeighborUpdater fallback =
             ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
-        return ContextNeighborRouting.current(level, fallback, position);
+        return ContextNeighborRouting.current(level, fallback);
     }
 
     @Redirect(
@@ -310,7 +311,7 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     ) {
         CollectingNeighborUpdater fallback =
             ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
-        return ContextNeighborRouting.current(level, fallback, position);
+        return ContextNeighborRouting.current(level, fallback);
     }
 
     @Redirect(
@@ -326,7 +327,7 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     ) {
         CollectingNeighborUpdater fallback =
             ((LevelNeighborUpdaterBridge) (Object) level).aerogel$neighborUpdater();
-        return ContextNeighborRouting.current(level, fallback, position);
+        return ContextNeighborRouting.current(level, fallback);
     }
 
     @Unique
@@ -369,10 +370,17 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     private void aerogel$routeScheduledBlockTick(
         BlockPos position, Block block, CallbackInfo callback
     ) {
-        if (NativeTickCoordinator.isNativeWorker()) return;
+        if (NativeTickCoordinator.isNativeWorker()) {
+            ScheduledTickQueryScope.beginCurrent();
+            return;
+        }
         ServerLevel level = (ServerLevel) (Object) this;
         if (AerogelRuntime.routeBlockTask(level, position,
-            () -> level.tickBlock(position, block))) callback.cancel();
+            () -> level.tickBlock(position, block))) {
+            callback.cancel();
+        } else {
+            ScheduledTickQueryScope.beginCurrent();
+        }
     }
 
     @Redirect(
@@ -400,10 +408,17 @@ abstract class ServerLevelMixin implements NavigationIndexBridge {
     private void aerogel$routeScheduledFluidTick(
         BlockPos position, Fluid fluid, CallbackInfo callback
     ) {
-        if (NativeTickCoordinator.isNativeWorker()) return;
+        if (NativeTickCoordinator.isNativeWorker()) {
+            ScheduledTickQueryScope.beginCurrent();
+            return;
+        }
         ServerLevel level = (ServerLevel) (Object) this;
         if (AerogelRuntime.routeBlockTask(level, position,
-            () -> level.tickFluid(position, fluid))) callback.cancel();
+            () -> level.tickFluid(position, fluid))) {
+            callback.cancel();
+        } else {
+            ScheduledTickQueryScope.beginCurrent();
+        }
     }
 
     @Redirect(

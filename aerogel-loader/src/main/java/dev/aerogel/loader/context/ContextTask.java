@@ -12,7 +12,8 @@ record ContextTask(
     Runnable unavailableRejection,
     AtomicReference<NeighborhoodLease> neighborhoodLease,
     AtomicReference<ChunkContextImpl> waiterHandoff,
-    NativePhase phase
+    NativePhase phase,
+    NeighborCausalGroup causalGroup
 ) {
     ContextTask(
         long epoch,
@@ -22,7 +23,7 @@ record ContextTask(
         Runnable rejection
     ) {
         this(epoch, scopeKeys, action, completion, rejection, rejection,
-            new AtomicReference<>(), new AtomicReference<>(), NativePhase.DEFAULT);
+            new AtomicReference<>(), new AtomicReference<>(), NativePhase.DEFAULT, null);
     }
 
     ContextTask(
@@ -34,7 +35,7 @@ record ContextTask(
         NativePhase phase
     ) {
         this(epoch, scopeKeys, action, completion, rejection, rejection,
-            new AtomicReference<>(), new AtomicReference<>(), phase);
+            new AtomicReference<>(), new AtomicReference<>(), phase, null);
     }
 
     ContextTask(
@@ -47,7 +48,12 @@ record ContextTask(
         NativePhase phase
     ) {
         this(epoch, scopeKeys, action, completion, rejection, unavailableRejection,
-            new AtomicReference<>(), new AtomicReference<>(), phase);
+            new AtomicReference<>(), new AtomicReference<>(), phase, null);
+    }
+
+    ContextTask withCausalGroup(NeighborCausalGroup group) {
+        return new ContextTask(epoch, scopeKeys, action, completion, rejection,
+            unavailableRejection, neighborhoodLease, waiterHandoff, phase, group);
     }
 
     NeighborhoodLease neighborhoodLease(ChunkContextImpl primary, ContextServiceImpl scheduler) {
@@ -57,6 +63,10 @@ record ContextTask(
         return neighborhoodLease.compareAndSet(null, created)
             ? created
             : neighborhoodLease.get();
+    }
+
+    NeighborhoodLease existingNeighborhoodLease() {
+        return neighborhoodLease.get();
     }
 
     boolean claimWaiterHandoff(ChunkContextImpl context) {

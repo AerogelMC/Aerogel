@@ -6,6 +6,7 @@ import net.minecraft.world.ticks.ScheduledTick;
 
 import java.util.Collection;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
  * Preserves LevelTicks' per-dispatch {@code willTickThisTick} view when the
@@ -24,6 +25,10 @@ public final class ScheduledTickQueryScope {
 
     public static Snapshot snapshot(Collection<? extends ScheduledTick<?>> ticks) {
         return new Snapshot(ticks);
+    }
+
+    static Snapshot snapshotInOrderForTest(Object type, BlockPos... positions) {
+        return new Snapshot(type, positions);
     }
 
     public static void run(
@@ -59,26 +64,90 @@ public final class ScheduledTickQueryScope {
         };
     }
 
-    /** Returns null when vanilla owns the query, otherwise the exact routed view. */
-    public static Boolean willTick(Object levelTicks, BlockPos position, Object type) {
+    /** Marks the scheduled tick whose Context action has actually begun. */
+    public static void beginCurrent() {
         Binding binding = CURRENT.get();
-        if (binding == null || binding.levelTicks != levelTicks) return null;
-        return binding.snapshot.orderOf(type, position) > binding.dispatchOrder;
+        if (binding != null) binding.snapshot.begin(binding.dispatchOrder);
+    }
+
+    /**
+     * Returns null when vanilla owns the query. Native work without a direct
+     * scheduled-tick binding reads the lock-free published view for this tick.
+     */
+    public static Boolean willTick(
+        Object levelTicks, Snapshot published, BlockPos position, Object type
+    ) {
+        Binding binding = CURRENT.get();
+        boolean pending;
+        if (binding != null && binding.levelTicks == levelTicks) {
+            // Vanilla removes entries in dispatch order. Parallel wall-clock
+            // start order must not make a logically later scheduled tick appear
+            // to have already run from this action's point of view.
+            pending = binding.snapshot.orderOf(type, position) > binding.dispatchOrder;
+        } else {
+            if (published == null) return null;
+            pending = published.isPending(type, position);
+        }
+        return pending;
     }
 
     public static final class Snapshot {
         private final Object2IntOpenCustomHashMap<ScheduledTick<?>> order;
+        private final AtomicLongArray begun;
+        private final Object testType;
+        private final BlockPos[] testPositions;
 
         private Snapshot(Collection<? extends ScheduledTick<?>> ticks) {
             order = new Object2IntOpenCustomHashMap<>(ScheduledTick.UNIQUE_TICK_HASH);
             order.defaultReturnValue(-1);
             int index = 0;
             for (ScheduledTick<?> tick : ticks) order.put(tick, index++);
+            begun = new AtomicLongArray((index + Long.SIZE - 1) / Long.SIZE);
+            testType = null;
+            testPositions = null;
+        }
+
+        private Snapshot(Object type, BlockPos[] positions) {
+            order = null;
+            begun = new AtomicLongArray((positions.length + Long.SIZE - 1) / Long.SIZE);
+            testType = type;
+            testPositions = positions.clone();
+        }
+
+        private void begin(int dispatchOrder) {
+            if (dispatchOrder < 0) return;
+            int word = dispatchOrder >>> 6;
+            long bit = 1L << (dispatchOrder & 63);
+            begun.getAndAccumulate(word, bit, (current, update) -> current | update);
+        }
+
+        private boolean isPending(Object type, BlockPos position) {
+            int dispatchOrder = orderOf(type, position);
+            if (dispatchOrder < 0) return false;
+            long word = begun.get(dispatchOrder >>> 6);
+            return (word & (1L << (dispatchOrder & 63))) == 0L;
         }
 
         private int orderOf(Object type, BlockPos position) {
-            return order.getInt(ScheduledTick.probe(type, position));
+            if (testPositions == null) {
+                return order.getInt(ScheduledTick.probe(type, position));
+            }
+            if (type != testType) return -1;
+            for (int index = 0; index < testPositions.length; index++) {
+                BlockPos candidate = testPositions[index];
+                if (candidate.getX() == position.getX()
+                    && candidate.getY() == position.getY()
+                    && candidate.getZ() == position.getZ()) {
+                    return index;
+                }
+            }
+            return -1;
         }
+
+        int orderOfForTest(Object type, BlockPos position) {
+            return orderOf(type, position);
+        }
+
     }
 
     private record Binding(Object levelTicks, Snapshot snapshot, int dispatchOrder) { }

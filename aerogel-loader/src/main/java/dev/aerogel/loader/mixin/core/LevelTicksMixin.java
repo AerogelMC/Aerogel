@@ -42,7 +42,7 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
     @Unique private Long2LongOpenHashMap aerogel$indexedDue;
     @Unique private Long2LongOpenHashMap aerogel$inactiveDue;
     @Unique private ConcurrentIngress<Long> aerogel$eligibilityChanges;
-    @Unique private ScheduledTickQueryScope.Snapshot aerogel$querySnapshot;
+    @Unique private volatile ScheduledTickQueryScope.Snapshot aerogel$querySnapshot;
     @Unique private int aerogel$dispatchOrder;
 
     @Inject(method = "<init>", at = @At("RETURN"))
@@ -116,18 +116,14 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
             () -> ticker.accept((BlockPos) position, (T) type));
     }
 
-    @Inject(method = "runCollectedTicks", at = @At("RETURN"))
-    private void aerogel$releaseCollectedTickOrder(
-        BiConsumer<BlockPos, T> ticker, CallbackInfo callback
-    ) {
-        aerogel$querySnapshot = null;
-    }
-
     @Inject(method = "willTickThisTick", at = @At("HEAD"), cancellable = true)
     private void aerogel$queryRoutedTickView(
         BlockPos position, T type, CallbackInfoReturnable<Boolean> callback
     ) {
-        Boolean result = ScheduledTickQueryScope.willTick(this, position, type);
+        ScheduledTickQueryScope.Snapshot published =
+            NativeTickCoordinator.isNativeWorker() ? aerogel$querySnapshot : null;
+        Boolean result = ScheduledTickQueryScope.willTick(
+            this, published, position, type);
         if (result != null) callback.setReturnValue(result);
     }
 

@@ -278,6 +278,26 @@ public final class AerogelRuntime {
         return api().contexts().routeBlockTask(level, position, action);
     }
 
+    public static boolean routeNeighborTask(
+        ServerLevel level, net.minecraft.core.BlockPos position, Runnable action
+    ) {
+        return api().contexts().routeNeighborTask(level, position, action);
+    }
+
+    public static boolean routeNeighborTask(
+        ServerLevel level, net.minecraft.core.BlockPos position, Runnable action,
+        Runnable terminalRejection
+    ) {
+        return api().contexts().routeNeighborTask(
+            level, position, action, terminalRejection);
+    }
+
+    public static boolean deferNeighborChain(
+        ServerLevel level, net.minecraft.core.BlockPos position, Runnable task
+    ) {
+        return api().contexts().deferNeighborChain(level, position, task);
+    }
+
     public static boolean routeGameEvent(
         ServerLevel level,
         net.minecraft.core.Holder<net.minecraft.world.level.gameevent.GameEvent> event,
@@ -313,6 +333,13 @@ public final class AerogelRuntime {
     ) {
         return level.getServer().isSameThread()
             || api().contexts().isBlockOwnerContext(level, position);
+    }
+
+    public static boolean isNeighborMutationThread(
+        ServerLevel level, net.minecraft.core.BlockPos position
+    ) {
+        return level.getServer().isSameThread()
+            || api().contexts().isNeighborOwnerContext(level, position);
     }
 
     public static boolean isChunkOwnerContext(ServerLevel level, LevelChunk chunk) {

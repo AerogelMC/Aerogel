@@ -30,5 +30,9 @@ public interface CollectingNeighborUpdaterAccessor
 
     @Override
     @Accessor("count")
+    int aerogel$neighborUpdateCount();
+
+    @Override
+    @Accessor("count")
     void aerogel$neighborUpdateCount(int count);
 }

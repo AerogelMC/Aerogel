@@ -1217,6 +1217,58 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     public boolean routeBlockTask(ServerLevel level, BlockPos position, Runnable action) {
+        return routeScopedBlockTask(
+            level, position, blockMutationScope(position), action);
+    }
+
+    /**
+     * Routes a neighbor callback with the exact horizontal chunk footprint that
+     * vanilla block-state and redstone evaluation may read from the target block.
+     * Interior positions still own one chunk; a face/corner adds only the chunks
+     * actually reached by the six axial neighbors.
+     */
+    public boolean routeNeighborTask(
+        ServerLevel level, BlockPos position, Runnable action
+    ) {
+        return routeScopedBlockTask(
+            level, position, neighborMutationScope(position), action, false);
+    }
+
+    public boolean routeNeighborTask(
+        ServerLevel level, BlockPos position, Runnable action,
+        Runnable terminalRejection
+    ) {
+        Objects.requireNonNull(terminalRejection, "terminalRejection");
+        return routeScopedBlockTask(
+            level, position, neighborMutationScope(position), action, false,
+            terminalRejection);
+    }
+
+    public boolean deferNeighborChain(
+        ServerLevel level, BlockPos position, Runnable action
+    ) {
+        return routeScopedBlockTask(
+            level, position, neighborMutationScope(position), action, true);
+    }
+
+    private boolean routeScopedBlockTask(
+        ServerLevel level, BlockPos position, long[] initialScope, Runnable action
+    ) {
+        return routeScopedBlockTask(level, position, initialScope, action, false);
+    }
+
+    private boolean routeScopedBlockTask(
+        ServerLevel level, BlockPos position, long[] initialScope, Runnable action,
+        boolean forceCausalHandoff
+    ) {
+        return routeScopedBlockTask(
+            level, position, initialScope, action, forceCausalHandoff, null);
+    }
+
+    private boolean routeScopedBlockTask(
+        ServerLevel level, BlockPos position, long[] initialScope, Runnable action,
+        boolean forceCausalHandoff, Runnable terminalRejection
+    ) {
         Objects.requireNonNull(level, "level");
         Objects.requireNonNull(position, "position");
         Objects.requireNonNull(action, "action");
@@ -1225,8 +1277,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         WorldContextImpl world = worlds.get(level);
         ChunkContextImpl context = resolveChunk(level, position.getX() >> 4, position.getZ() >> 4);
         if (world == null || context == null) return false;
-        LongOpenHashSet requestedScope = new LongOpenHashSet(blockMutationScope(position));
+        LongOpenHashSet requestedScope = new LongOpenHashSet(initialScope);
         ContextThreadState.AccessScope currentScope = ContextThreadState.current();
+        NeighborCausalGroup causalGroup = NeighborCausalExecution.current();
         ChunkContextImpl primary = context;
         if (currentScope != null && currentScope.primary().world() == world) {
             boolean allOwned = true;
@@ -1236,31 +1289,47 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
                     break;
                 }
             }
-            if (allOwned) return false;
-            // A cross-boundary mutation is causally downstream of the current
-            // transaction. Carry its exact ownership set into the hand-off so the
-            // target cannot observe a half-completed source update.
-            requestedScope.add(currentScope.primary().key());
-            if (currentScope.ownedKeys() != null) {
-                for (long key : currentScope.ownedKeys().toLongArray()) {
-                    requestedScope.add(key);
+            if (allOwned && !forceCausalHandoff) return false;
+            if (causalGroup == null) {
+                // Ordinary one-shot mutations carry their source scope into the
+                // hand-off. A neighbor group instead retains causal claims for its
+                // full lifetime, so repeatedly copying every previously visited
+                // Context would turn a long wire into quadratic acquisition work.
+                requestedScope.add(currentScope.primary().key());
+                if (currentScope.ownedKeys() != null) {
+                    for (long key : currentScope.ownedKeys().toLongArray()) {
+                        requestedScope.add(key);
+                    }
                 }
+                primary = currentScope.primary();
             }
-            primary = currentScope.primary();
         }
         long[] scopeKeys = requestedScope.toLongArray();
 
         NativeTickCoordinator.taskSubmitted();
-        Runnable rejected = () -> {
-            NativeTickCoordinator.taskRejected();
-            NativeTickCoordinator.submitMainThread(() -> {
-                if (!routeBlockTask(level, position, routedAction)) routedAction.run();
-            });
-        };
-        boolean accepted = primary.submitNative(scopeKeys,
-            () -> NativeTickCoordinator.runNative(
-            List.of(routedAction), Runnable::run, () -> { }), rejected,
-            NativeTickCoordinator::taskRejected);
+        Runnable rejected;
+        if (causalGroup != null) {
+            rejected = () -> {
+                NativeTickCoordinator.taskRejected();
+                if (terminalRejection != null) terminalRejection.run();
+            };
+        } else {
+            rejected = () -> {
+                NativeTickCoordinator.taskRejected();
+                NativeTickCoordinator.submitMainThread(() -> {
+                    if (!routeScopedBlockTask(
+                        level, position, initialScope, routedAction,
+                        forceCausalHandoff)) routedAction.run();
+                });
+            };
+        }
+        Runnable nativeAction = () -> NativeTickCoordinator.runNative(
+            List.of(routedAction), Runnable::run, () -> { });
+        boolean accepted = causalGroup == null
+            ? primary.submitNative(scopeKeys, nativeAction, rejected,
+                NativeTickCoordinator::taskRejected)
+            : primary.submitCausalNative(causalGroup, scopeKeys, nativeAction, rejected,
+                rejected);
         if (!accepted) {
             NativeTickCoordinator.taskRejected();
             return false;
@@ -1491,6 +1560,20 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         return new long[] { WorldContextImpl.key(chunkX, chunkZ) };
     }
 
+    static long[] neighborMutationScope(BlockPos position) {
+        int chunkX = position.getX() >> 4;
+        int chunkZ = position.getZ() >> 4;
+        LongOpenHashSet keys = new LongOpenHashSet();
+        keys.add(WorldContextImpl.key(chunkX, chunkZ));
+        int localX = position.getX() & 15;
+        int localZ = position.getZ() & 15;
+        if (localX == 0) keys.add(WorldContextImpl.key(chunkX - 1, chunkZ));
+        else if (localX == 15) keys.add(WorldContextImpl.key(chunkX + 1, chunkZ));
+        if (localZ == 0) keys.add(WorldContextImpl.key(chunkX, chunkZ - 1));
+        else if (localZ == 15) keys.add(WorldContextImpl.key(chunkX, chunkZ + 1));
+        return keys.toLongArray();
+    }
+
     public boolean routeBlockEffects(
         ServerLevel level, Iterable<BlockPos> positions, Runnable action
     ) {
@@ -1645,6 +1728,18 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ContextThreadState.AccessScope scope = ContextThreadState.current();
         if (world == null || scope == null || scope.primary().world() != world) return false;
         for (long key : blockMutationScope(position)) {
+            if (!scope.containsKey(key)) return false;
+        }
+        return true;
+    }
+
+    public boolean isNeighborOwnerContext(ServerLevel level, BlockPos position) {
+        Objects.requireNonNull(level, "level");
+        Objects.requireNonNull(position, "position");
+        WorldContextImpl world = worlds.get(level);
+        ContextThreadState.AccessScope scope = ContextThreadState.current();
+        if (world == null || scope == null || scope.primary().world() != world) return false;
+        for (long key : neighborMutationScope(position)) {
             if (!scope.containsKey(key)) return false;
         }
         return true;

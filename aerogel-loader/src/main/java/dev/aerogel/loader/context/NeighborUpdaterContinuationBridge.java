@@ -8,5 +8,6 @@ public interface NeighborUpdaterContinuationBridge {
     void aerogel$resumeNeighborUpdates();
     ArrayDeque<?> aerogel$neighborUpdateStack();
     List<?> aerogel$neighborUpdatesAddedThisLayer();
+    int aerogel$neighborUpdateCount();
     void aerogel$neighborUpdateCount(int count);
 }

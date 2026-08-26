@@ -110,8 +110,7 @@ abstract class LevelMixin implements LevelNeighborUpdaterBridge {
         Level ignored, Direction direction, BlockPos position,
         BlockPos neighborPosition, BlockState neighborState, int flags, int recursionLeft
     ) {
-        return ContextNeighborRouting.current(
-            (Level) (Object) this, neighborUpdater, position);
+        return ContextNeighborRouting.current((Level) (Object) this, neighborUpdater);
     }
 
     @Inject(

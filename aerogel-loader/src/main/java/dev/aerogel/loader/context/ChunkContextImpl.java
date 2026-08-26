@@ -5,7 +5,6 @@ import dev.aerogel.api.context.ContextSnapshot;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 import net.minecraft.util.RandomSource;
 
 import java.lang.invoke.MethodHandles;
@@ -46,6 +45,14 @@ final class ChunkContextImpl implements ChunkContext {
      */
     private final ConcurrentLinkedDeque<ContextTask> interactiveMailbox =
         new ConcurrentLinkedDeque<>();
+    /**
+     * Continuations of an already-admitted causal actor.  They must run before
+     * work waiting behind that actor; putting them at the tail of the ordinary
+     * mailbox makes the actor scan and park its own successors before it can
+     * finish, which is priority inversion rather than useful parallelism.
+     */
+    private final ConcurrentLinkedQueue<ContextTask> causalMailbox =
+        new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<ContextTask> snapshotMailbox =
         new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<ContextTask> entityMailbox =
@@ -75,8 +82,9 @@ final class ChunkContextImpl implements ChunkContext {
     private final PaddedAtomicLong ownershipRelease = new PaddedAtomicLong();
     private final PaddedAtomicReference<NeighborhoodLease> reservation =
         new PaddedAtomicReference<>();
-    private final PaddedAtomicReference<CollectingNeighborUpdater> neighborUpdater =
+    private final PaddedAtomicReference<NeighborCausalGroup> neighborCausalClaim =
         new PaddedAtomicReference<>();
+    private final PaddedAtomicLong neighborCausalSequence = new PaddedAtomicLong();
     private final PaddedAtomicReference<Lifecycle> lifecycle =
         new PaddedAtomicReference<>(Lifecycle.ACTIVE);
     private final PaddedAtomicReference<TickWindow> tickWindow =
@@ -185,6 +193,23 @@ final class ChunkContextImpl implements ChunkContext {
         queued.incrementAndGet();
         enqueueActive(mailboxFor(phase),
             new ContextTask(epoch, selfScope, task, null, rejection, phase));
+        return true;
+    }
+
+    boolean submitCausalNative(
+        NeighborCausalGroup group, long[] scopeKeys, Runnable task,
+        Runnable rejection, Runnable unavailableRejection
+    ) {
+        Objects.requireNonNull(group, "group");
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(rejection, "rejection");
+        Objects.requireNonNull(unavailableRejection, "unavailableRejection");
+        if (!active()) return false;
+        submitted.increment();
+        ContextTask contextTask = new ContextTask(
+            epoch, normalizeScope(scopeKeys), task, null, rejection,
+            unavailableRejection, NativePhase.DEFAULT).withCausalGroup(group);
+        group.enqueue(this, contextTask);
         return true;
     }
 
@@ -389,8 +414,12 @@ final class ChunkContextImpl implements ChunkContext {
                     pendingReservation.primary().schedule();
                     break;
                 }
-                ContextTask task = interactiveMailbox.pollFirst();
-                boolean interactive = task != null;
+                ContextTask task = causalMailbox.poll();
+                boolean interactive = false;
+                if (task == null) {
+                    task = interactiveMailbox.pollFirst();
+                    interactive = task != null;
+                }
                 if (task == null) task = snapshotMailbox.poll();
                 if (task == null) task = entityMailbox.poll();
                 if (task == null) task = mailbox.poll();
@@ -401,6 +430,7 @@ final class ChunkContextImpl implements ChunkContext {
                     rejectStale(task);
                     continue;
                 }
+                if (parkBehindCausalClaim(task, interactive)) continue;
                 if (task.scopeKeys() == selfScope
                     || task.scopeKeys().length == 1 && task.scopeKeys()[0] == key) {
                     runOwned(task, null, interactive);
@@ -540,6 +570,7 @@ final class ChunkContextImpl implements ChunkContext {
             : activeTick.token.serverTick();
         ContextThreadState.enter(
             new ContextThreadState.AccessScope(this, ownedKeys, interactive));
+        NeighborCausalExecution.enter(task.causalGroup());
         Throwable failure = null;
         try {
             task.action().run();
@@ -549,6 +580,7 @@ final class ChunkContextImpl implements ChunkContext {
             failed.increment();
             LOGGER.error("Chunk context task failed at {},{}", chunkX, chunkZ, error);
         } finally {
+            NeighborCausalExecution.leave();
             ContextThreadState.leave();
             long elapsed = System.nanoTime() - started;
             totalExecutionNanos.add(elapsed);
@@ -557,6 +589,66 @@ final class ChunkContextImpl implements ChunkContext {
         // Completion publishes both the action result and its accounting. A caller
         // observing a completed Future must never race the MSPT publication.
         complete(task, failure);
+    }
+
+    /**
+     * Preserves the temporal edge that vanilla gets from its single call stack:
+     * work submitted after a neighbor chain touched any Context in this task's
+     * exact scope cannot overtake that chain.  The task remains ordinary Context
+     * work; only its publication is attached to the causal completion event.
+     */
+    private boolean parkBehindCausalClaim(ContextTask task, boolean interactive) {
+        /*
+         * Causal jobs are already serialized by their unioned group actor. Their
+         * scope was claimed before the job was published, and a later collision
+         * unions the actors. Applying the ordinary-successor rule again can race
+         * root path compression and make a selected job await its own new root.
+         */
+        if (task.causalGroup() != null) return false;
+        /*
+         * A neighborhood task which already published its lease on the exact
+         * scope won admission before a later causal claim appeared. Parking that
+         * predecessor behind the new claim creates a cycle: the causal actor
+         * waits for this lease, while this task waits for the actor to complete.
+         * Keep the canonical reservation order authoritative and let the admitted
+         * predecessor finish. Tasks that have not published a reservation still
+         * wait behind the causal claim as usual.
+         */
+        NeighborhoodLease admitted = task.existingNeighborhoodLease();
+        if (admitted != null) {
+            for (long scopeKey : task.scopeKeys()) {
+                ChunkContextImpl scoped = world.context(
+                    ChunkPos.getX(scopeKey), ChunkPos.getZ(scopeKey));
+                if (scoped.reservation.get() == admitted) return false;
+            }
+        }
+        NeighborCausalGroup predecessor = null;
+        for (long scopeKey : task.scopeKeys()) {
+            ChunkContextImpl scoped = world.context(
+                ChunkPos.getX(scopeKey), ChunkPos.getZ(scopeKey));
+            NeighborCausalGroup claim = scoped.neighborCausalClaim();
+            if (claim == null) continue;
+            NeighborCausalGroup claimRoot = claim.root();
+            predecessor = claimRoot;
+            break;
+        }
+        if (predecessor == null) return false;
+
+        queued.incrementAndGet();
+        WaitingTask waiting = new WaitingTask(this, task, interactive);
+        if (predecessor.awaitCompletion(() -> resume(waiting))) {
+            /*
+             * A waiter hand-off is only permission to make the next reservation
+             * attempt; unlike a published NeighborhoodLease it is not admission.
+             * Once this task waits behind a causal predecessor it must return that
+             * permission, otherwise the predecessor's continuation can be the next
+             * FIFO waiter and can never be selected.
+             */
+            releaseTaskHandoff(task);
+            return true;
+        }
+        queued.decrementAndGet();
+        return false;
     }
 
     /**
@@ -722,12 +814,15 @@ final class ChunkContextImpl implements ChunkContext {
             rejectStale(task);
             return false;
         }
-        if (waiter.interactive) interactiveMailbox.addFirst(task);
+        if (task.causalGroup() != null) causalMailbox.add(task);
+        else if (waiter.interactive) interactiveMailbox.addFirst(task);
         else mailboxFor(task.phase()).add(task);
         if (!active()) {
-            boolean removed = waiter.interactive
-                ? interactiveMailbox.remove(task)
-                : mailboxFor(task.phase()).remove(task);
+            boolean removed = task.causalGroup() != null
+                ? causalMailbox.remove(task)
+                : waiter.interactive
+                    ? interactiveMailbox.remove(task)
+                    : mailboxFor(task.phase()).remove(task);
             if (removed) {
                 queued.decrementAndGet();
                 rejectStale(task);
@@ -868,6 +963,41 @@ final class ChunkContextImpl implements ChunkContext {
         return lifecycle.get() == Lifecycle.ACTIVE;
     }
 
+    NeighborCausalGroup neighborCausalClaim() {
+        NeighborCausalGroup claim = neighborCausalClaim.get();
+        if (claim != null && claim.isCompleted()) {
+            neighborCausalClaim.compareAndSet(claim, null);
+            return neighborCausalClaim.get();
+        }
+        return claim;
+    }
+
+    boolean claimNeighborCausal(
+        NeighborCausalGroup expected, NeighborCausalGroup update
+    ) {
+        return neighborCausalClaim.compareAndSet(expected, update);
+    }
+
+    long nextNeighborCausalSequence() {
+        return neighborCausalSequence.incrementAndGet();
+    }
+
+    void releaseNeighborCausal(NeighborCausalGroup group) {
+        neighborCausalClaim.compareAndSet(group, null);
+        if (hasTasks()) schedule();
+    }
+
+    void resumeCausalTask(ContextTask task) {
+        if (!active() || task.epoch() != epoch) {
+            rejectStale(task);
+            if (task.causalGroup() != null) task.causalGroup().actionCompleted();
+            return;
+        }
+        queued.incrementAndGet();
+        causalMailbox.add(task);
+        schedule();
+    }
+
     boolean closed() {
         return lifecycle.get() == Lifecycle.CLOSED;
     }
@@ -953,6 +1083,10 @@ final class ChunkContextImpl implements ChunkContext {
 
     private void rejectQueuedTasks() {
         ContextTask task;
+        while ((task = causalMailbox.poll()) != null) {
+            queued.decrementAndGet();
+            rejectStale(task);
+        }
         while ((task = interactiveMailbox.pollFirst()) != null) {
             queued.decrementAndGet();
             rejectStale(task);
@@ -982,7 +1116,7 @@ final class ChunkContextImpl implements ChunkContext {
     }
 
     private boolean hasTasks() {
-        return !interactiveMailbox.isEmpty()
+        return !causalMailbox.isEmpty() || !interactiveMailbox.isEmpty()
             || !snapshotMailbox.isEmpty() || !entityMailbox.isEmpty()
             || !mailbox.isEmpty() || !trackingMailbox.isEmpty();
     }
@@ -991,17 +1125,9 @@ final class ChunkContextImpl implements ChunkContext {
         ChunkContextImpl owner, ContextTask task, boolean interactive
     ) { }
 
+
     WorldContextImpl world() { return world; }
     RandomSource random() { return random; }
-    CollectingNeighborUpdater neighborUpdater(
-        net.minecraft.world.level.Level level, int maximumChainedUpdates
-    ) {
-        CollectingNeighborUpdater current = neighborUpdater.get();
-        if (current != null) return current;
-        CollectingNeighborUpdater created =
-            new CollectingNeighborUpdater(level, maximumChainedUpdates);
-        return neighborUpdater.compareAndSet(null, created) ? created : neighborUpdater.get();
-    }
     NativeEntityLane entityLane() { return entityLane; }
     NativeChunkLane chunkLane() { return chunkLane; }
     NativeBlockEntityLane blockEntityLane() { return blockEntityLane; }
@@ -1014,6 +1140,7 @@ final class ChunkContextImpl implements ChunkContext {
         NeighborhoodLease current = reservation.get();
         return current != null && current.primary() == primary;
     }
+
 
     /**
      * One short-lived Context tick admission state.

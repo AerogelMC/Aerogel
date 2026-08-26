@@ -31,6 +31,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ContextSchedulerTest {
     @Test
+    void scheduledTickQueryUsesVanillaOrderNotParallelStartOrder() {
+        Object levelTicks = new Object();
+        Object type = new Object();
+        BlockPos firstPosition = new BlockPos(0, 64, 0);
+        BlockPos laterPosition = new BlockPos(1, 64, 0);
+        ScheduledTickQueryScope.Snapshot snapshot =
+            ScheduledTickQueryScope.snapshotInOrderForTest(
+                type, firstPosition, laterPosition);
+        assertEquals(0, snapshot.orderOfForTest(type, firstPosition));
+        assertEquals(1, snapshot.orderOfForTest(type, laterPosition));
+
+        // A later Context can physically start first. From the earlier vanilla
+        // dispatch position it is nevertheless still pending this tick.
+        ScheduledTickQueryScope.run(levelTicks, snapshot, 1,
+            ScheduledTickQueryScope::beginCurrent);
+        ScheduledTickQueryScope.run(levelTicks, snapshot, 0, () ->
+            assertEquals(Boolean.TRUE, ScheduledTickQueryScope.willTick(
+                levelTicks, snapshot, laterPosition, type)));
+    }
+
+    @Test
     void ownerWaitsAreUnmountableVirtualThreadContinuations() throws Exception {
         try (ContextServiceImpl scheduler = new ContextServiceImpl(1)) {
             WorldContextImpl world = new WorldContextImpl(scheduler, null);
@@ -174,6 +195,21 @@ final class ContextSchedulerTest {
     }
 
     @Test
+    void neighborMutationScopeContainsOnlyAxiallyReadChunkFaces() {
+        assertNeighborScope(new long[] { ChunkPos.pack(2, 3) },
+            new BlockPos(2 * 16 + 8, 64, 3 * 16 + 8));
+        assertNeighborScope(new long[] {
+            ChunkPos.pack(1, 3), ChunkPos.pack(2, 3)
+        }, new BlockPos(2 * 16, 64, 3 * 16 + 8));
+        assertNeighborScope(new long[] {
+            ChunkPos.pack(1, 3), ChunkPos.pack(2, 2), ChunkPos.pack(2, 3)
+        }, new BlockPos(2 * 16, 64, 3 * 16));
+        assertNeighborScope(new long[] {
+            ChunkPos.pack(-2, -2), ChunkPos.pack(-2, -1), ChunkPos.pack(-1, -2)
+        }, new BlockPos(-17, 64, -17));
+    }
+
+    @Test
     void blockEffectScopeIsDerivedFromTheActualTargetPositions() {
         long[] actual = ContextServiceImpl.blockEffectScope(List.of(
             new BlockPos(8, 64, 8),
@@ -231,6 +267,13 @@ final class ContextSchedulerTest {
 
     private static void assertScope(long[] expected, BlockPos position) {
         long[] actual = ContextServiceImpl.blockMutationScope(position);
+        Arrays.sort(expected);
+        Arrays.sort(actual);
+        assertArrayEquals(expected, actual);
+    }
+
+    private static void assertNeighborScope(long[] expected, BlockPos position) {
+        long[] actual = ContextServiceImpl.neighborMutationScope(position);
         Arrays.sort(expected);
         Arrays.sort(actual);
         assertArrayEquals(expected, actual);

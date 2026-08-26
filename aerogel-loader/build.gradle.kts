@@ -127,6 +127,44 @@ tasks.assemble {
     dependsOn(standaloneJar)
 }
 
+tasks.test {
+    useJUnitPlatform {
+        excludeTags("neighbor-circuit")
+    }
+}
+
+/**
+ * Starts a real transformed server and drives a generated chunk-border redstone /
+ * repeating-command-block stress circuit. This is separate from the fast unit
+ * suite because it intentionally boots Minecraft and runs for several seconds.
+ */
+val neighborCircuitTest by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Runs the real-server neighbor-update and command-circuit regression."
+    dependsOn(standaloneJar)
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("neighbor-circuit")
+    }
+    systemProperty(
+        "aerogel.test.distributionJar",
+        standaloneJar.flatMap { it.archiveFile }.get().asFile.absolutePath)
+    systemProperty(
+        "aerogel.test.vanillaBaseline",
+        providers.gradleProperty("aerogelVanillaBaseline").orNull ?: "false")
+    doFirst {
+        val configured = providers.gradleProperty("aerogelTestServerJar").orNull
+        val serverJar = configured?.let(::file) ?: rootProject.fileTree("work") {
+            include("**/runtime/$minecraftVersion/server.jar")
+        }.files.firstOrNull()
+        require(serverJar != null && serverJar.isFile) {
+            "Minecraft server JAR not found; pass -PaerogelTestServerJar=<path>"
+        }
+        systemProperty("aerogel.test.serverJar", serverJar.absolutePath)
+    }
+}
+
 distributions {
     main {
         distributionBaseName.set("aerogel")

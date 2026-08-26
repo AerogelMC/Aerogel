@@ -79,11 +79,11 @@ Minecraft jar selected
 ## Installation
 
 1. Install **JDK 25**.
-2. Copy `Aerogel-26.2-27.jar` to a fresh server directory.
+2. Copy `Aerogel-26.2-28.jar` to a fresh server directory.
 3. Start once:
 
 ```bash
-java -Xms2G -Xmx4G -jar Aerogel-26.2-27.jar nogui
+java -Xms2G -Xmx4G -jar Aerogel-26.2-28.jar nogui
 ```
 
 4. On first run, `eula.txt` is generated. Accept EULA if you agree.
@@ -105,7 +105,7 @@ On Windows:
 ```
 
 Artifacts:
-- `aerogel-loader/build/libs/Aerogel-26.2-27.jar`
+- `aerogel-loader/build/libs/Aerogel-26.2-28.jar`
 
 ## Configuration
 
