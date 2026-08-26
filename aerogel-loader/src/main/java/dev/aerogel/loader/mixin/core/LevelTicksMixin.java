@@ -25,6 +25,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.function.BiConsumer;
 import java.util.function.LongPredicate;
+import java.util.ArrayList;
 import java.util.TreeMap;
 import java.util.Queue;
 import net.minecraft.core.BlockPos;
@@ -37,7 +38,6 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
     @Shadow @Final private Long2LongMap nextTickForContainer;
     @Shadow @Final private Queue<LevelChunkTicks<T>> containersToTick;
     @Shadow @Final private Queue<ScheduledTick<T>> toRunThisTick;
-    @Unique private ConcurrentIngress<ScheduledTick<T>> aerogel$scheduledTicks;
     @Unique private TreeMap<Long, LongOpenHashSet> aerogel$dueByTime;
     @Unique private Long2LongOpenHashMap aerogel$indexedDue;
     @Unique private Long2LongOpenHashMap aerogel$inactiveDue;
@@ -49,7 +49,6 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
     private void aerogel$initializeIngress(
         LongPredicate tickCheck, CallbackInfo callback
     ) {
-        aerogel$scheduledTicks = new ConcurrentIngress<>();
         aerogel$dueByTime = new TreeMap<>();
         aerogel$indexedDue = new Long2LongOpenHashMap();
         aerogel$inactiveDue = new Long2LongOpenHashMap();
@@ -60,7 +59,29 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
         at = @At("HEAD"), cancellable = true)
     private void aerogel$commitScheduledTick(ScheduledTick<T> tick, CallbackInfo callback) {
         if (!NativeTickCoordinator.isNativeWorker()) return;
-        aerogel$scheduledTicks.offer(tick);
+        /*
+         * A schedule is an owner mutation, not next-tick ingress. Publishing it
+         * with the native transaction keeps it ahead of the same Context's unload
+         * fence. One attachment batches every schedule produced by this LevelTicks
+         * instance in the transaction, so this adds neither one global queue node
+         * nor one wake-up per scheduled tick.
+         */
+        ArrayList<ScheduledTick<T>> batch = NativeTickCoordinator.nativeAttachment(
+            this, () -> {
+                ArrayList<ScheduledTick<T>> created = new ArrayList<>();
+                if (!NativeTickCoordinator.deferGlobalCommit(() -> {
+                    for (ScheduledTick<T> scheduled : created) schedule(scheduled);
+                })) {
+                    throw new IllegalStateException(
+                        "Scheduled tick publication escaped its native transaction");
+                }
+                return created;
+            });
+        if (batch == null) {
+            throw new IllegalStateException(
+                "Scheduled tick publication has no native transaction");
+        }
+        batch.add(tick);
         callback.cancel();
     }
 
@@ -69,7 +90,6 @@ abstract class LevelTicksMixin<T> implements LevelTicksBridge {
         long gameTime, int maximumTicks, BiConsumer<BlockPos, T> ticker,
         CallbackInfo callback
     ) {
-        aerogel$scheduledTicks.drain(this::schedule);
         aerogel$eligibilityChanges.drain(this::aerogel$recheckEligibility);
     }
 

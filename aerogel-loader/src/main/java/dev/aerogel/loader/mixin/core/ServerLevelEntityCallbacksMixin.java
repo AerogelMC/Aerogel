@@ -106,13 +106,26 @@ abstract class ServerLevelEntityCallbacksMixin {
         if (tickingCallback) AEROGEL$REPLAYING_TICKING_CALLBACK.set(true);
         try {
             switch (method) {
-                case "onCreated" -> onCreated(entity);
+                // A native owner may complete an entity's whole lifetime before
+                // its server-owned publications are drained. Removal is terminal
+                // for an Entity instance, so publishing an earlier start after
+                // that point would resurrect it in global indexes and make
+                // ChunkMap build a spawn packet for an already removed entity.
+                case "onCreated" -> {
+                    if (!entity.isRemoved()) onCreated(entity);
+                }
                 case "onDestroyed" -> onDestroyed(entity);
-                case "onTickingStart" -> onTickingStart(entity);
+                case "onTickingStart" -> {
+                    if (!entity.isRemoved()) onTickingStart(entity);
+                }
                 case "onTickingEnd" -> onTickingEnd(entity);
-                case "onTrackingStart" -> onTrackingStart(entity);
+                case "onTrackingStart" -> {
+                    if (!entity.isRemoved()) onTrackingStart(entity);
+                }
                 case "onTrackingEnd" -> onTrackingEnd(entity);
-                case "onSectionChange" -> onSectionChange(entity);
+                case "onSectionChange" -> {
+                    if (!entity.isRemoved()) onSectionChange(entity);
+                }
                 default -> throw new IllegalArgumentException(
                     "Unknown entity callback " + method);
             }

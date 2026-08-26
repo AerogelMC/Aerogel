@@ -76,8 +76,26 @@ abstract class TrackedEntityMixin implements TrackedEntityBridge {
         ((ServerEntityBridge) serverEntity).aerogel$publishDirtyState();
     }
 
+    /**
+     * Removal is the terminal lifecycle publication for an Entity instance.
+     * A player-visibility pass can still hold an older snapshot while that
+     * publication is being drained; never let the stale snapshot add a pairing.
+     * If the player was already paired, remove it through vanilla's exact path.
+     */
+    @Inject(method = "updatePlayers", at = @At("HEAD"), cancellable = true)
+    private void aerogel$rejectRemovedPairingBatch(
+        List<ServerPlayer> players, CallbackInfo callbackInfo
+    ) {
+        if (entity.isRemoved()) callbackInfo.cancel();
+    }
+
     @Inject(method = "updatePlayer", at = @At("HEAD"), cancellable = true)
     private void aerogel$keepHidden(ServerPlayer player, CallbackInfo callbackInfo) {
+        if (entity.isRemoved()) {
+            removePlayer(player);
+            callbackInfo.cancel();
+            return;
+        }
         if (PlayerViewService.isHidden(player, entity)) callbackInfo.cancel();
     }
 }
