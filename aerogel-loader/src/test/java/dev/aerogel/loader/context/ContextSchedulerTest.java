@@ -31,6 +31,134 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class ContextSchedulerTest {
     @Test
+    void causalUnionPublicationCannotOrphanSuccessorsAtRootCompletion()
+        throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2);
+             ExecutorService racers = Executors.newFixedThreadPool(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl first = world.context(0, 0);
+            ChunkContextImpl second = world.context(1, 0);
+            ChunkContextImpl earlier = Long.compareUnsigned(
+                first.canonicalKey(), second.canonicalKey()) <= 0 ? first : second;
+            ChunkContextImpl later = earlier == first ? second : first;
+
+            for (int iteration = 0; iteration < 5_000; iteration++) {
+                NeighborCausalGroup completing = newCausalGroup(earlier);
+                NeighborCausalGroup merging = newCausalGroup(later);
+                AtomicInteger successorRuns = new AtomicInteger();
+                assertTrue(merging.awaitCompletion(successorRuns::incrementAndGet));
+                CountDownLatch start = new CountDownLatch(1);
+
+                CompletableFuture<Void> completion = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    completing.actionCompleted();
+                }, racers);
+                CompletableFuture<Void> union = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    merging.claim(earlier);
+                }, racers);
+                start.countDown();
+                CompletableFuture.allOf(completion, union).get(2, TimeUnit.SECONDS);
+                merging.actionCompleted();
+
+                assertEquals(1, successorRuns.get(),
+                    "a child published at root completion must remain in the actor");
+            }
+        }
+    }
+
+    @Test
+    void causalJobPublicationCannotRacePastRootCompletion() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2);
+             ExecutorService racers = Executors.newFixedThreadPool(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            ChunkContextImpl context = world.context(0, 0);
+            for (int iteration = 0; iteration < 5_000; iteration++) {
+                NeighborCausalGroup group = newCausalGroup(context);
+                CountDownLatch start = new CountDownLatch(1);
+                CountDownLatch settled = new CountDownLatch(1);
+                AtomicInteger terminals = new AtomicInteger();
+                Runnable terminal = () -> {
+                    terminals.incrementAndGet();
+                    settled.countDown();
+                };
+                ContextTask task = new ContextTask(
+                    context.snapshot().epoch(), new long[] { context.key() },
+                    terminal, null, terminal);
+
+                CompletableFuture<Void> publish = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    group.enqueue(context, task);
+                }, racers);
+                CompletableFuture<Void> complete = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    group.actionCompleted();
+                }, racers);
+                start.countDown();
+                CompletableFuture.allOf(publish, complete)
+                    .get(2, TimeUnit.SECONDS);
+                assertTrue(settled.await(2, TimeUnit.SECONDS),
+                    "root completion must own every causal job publication");
+                assertEquals(1, terminals.get());
+                long completionDeadline = System.nanoTime()
+                    + TimeUnit.SECONDS.toNanos(2);
+                while (!group.isCompleted()
+                    && System.nanoTime() < completionDeadline) Thread.onSpinWait();
+                assertTrue(group.isCompleted());
+            }
+        }
+    }
+
+    private static NeighborCausalGroup newCausalGroup(ChunkContextImpl context) {
+        ContextThreadState.enter(new ContextThreadState.AccessScope(
+            context, null, false));
+        try {
+            return NeighborCausalGroup.startCurrent();
+        } finally {
+            ContextThreadState.leave();
+        }
+    }
+
+    @Test
+    void causalRepublishRacingDeactivationAlwaysSettles() throws Exception {
+        try (ContextServiceImpl scheduler = new ContextServiceImpl(2);
+             ExecutorService racers = Executors.newFixedThreadPool(2)) {
+            WorldContextImpl world = new WorldContextImpl(scheduler, null);
+            for (int iteration = 0; iteration < 2_000; iteration++) {
+                ChunkContextImpl context = world.context(iteration, 0);
+                NeighborCausalGroup completed = newCausalGroup(context);
+                completed.actionCompleted();
+                CountDownLatch start = new CountDownLatch(1);
+                CountDownLatch settled = new CountDownLatch(1);
+                AtomicInteger terminals = new AtomicInteger();
+                Runnable terminal = () -> {
+                    terminals.incrementAndGet();
+                    settled.countDown();
+                };
+                ContextTask task = new ContextTask(
+                    context.snapshot().epoch(), new long[] { context.key() },
+                    terminal, null, terminal);
+
+                CompletableFuture<Void> republish = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    completed.enqueue(context, task);
+                }, racers);
+                CompletableFuture<Void> deactivate = CompletableFuture.runAsync(() -> {
+                    await(start);
+                    context.deactivate();
+                }, racers);
+                start.countDown();
+                CompletableFuture.allOf(republish, deactivate)
+                    .get(2, TimeUnit.SECONDS);
+                assertTrue(settled.await(2, TimeUnit.SECONDS),
+                    "causal publication must be owned by either the Context or deactivation");
+                assertEquals(1, terminals.get());
+                assertEquals(0, context.snapshot().queuedTasks());
+            }
+        }
+    }
+
+    @Test
     void scheduledTickQueryUsesVanillaOrderNotParallelStartOrder() {
         Object levelTicks = new Object();
         Object type = new Object();

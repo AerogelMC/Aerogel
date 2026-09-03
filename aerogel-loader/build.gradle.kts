@@ -130,6 +130,36 @@ tasks.assemble {
 tasks.test {
     useJUnitPlatform {
         excludeTags("neighbor-circuit")
+        excludeTags("chunk-generation-benchmark")
+    }
+}
+
+val chunkGenerationBenchmark by tasks.registering(Test::class) {
+    group = "verification"
+    description = "Benchmarks a real-server 16x16 fresh chunk generation wave."
+    dependsOn(standaloneJar)
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("chunk-generation-benchmark")
+    }
+    testLogging.showStandardStreams = true
+    providers.gradleProperty("aerogelBenchmarkJfr").orNull?.let {
+        systemProperty("aerogel.test.jfrOutput", file(it).absolutePath)
+    }
+    systemProperty(
+        "aerogel.test.distributionJar",
+        providers.gradleProperty("aerogelBenchmarkJar").orNull
+            ?: standaloneJar.flatMap { it.archiveFile }.get().asFile.absolutePath)
+    doFirst {
+        val configured = providers.gradleProperty("aerogelTestServerJar").orNull
+        val serverJar = configured?.let(::file) ?: rootProject.fileTree("work") {
+            include("**/runtime/$minecraftVersion/server.jar")
+        }.files.firstOrNull()
+        require(serverJar != null && serverJar.isFile) {
+            "Minecraft server JAR not found; pass -PaerogelTestServerJar=<path>"
+        }
+        systemProperty("aerogel.test.serverJar", serverJar.absolutePath)
     }
 }
 

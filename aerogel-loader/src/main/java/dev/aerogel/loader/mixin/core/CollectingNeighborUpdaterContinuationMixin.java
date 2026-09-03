@@ -44,13 +44,15 @@ abstract class CollectingNeighborUpdaterContinuationMixin
 
     @Override
     public void aerogel$neighborCausalGroup(NeighborCausalGroup group) {
-        NeighborCausalGroup existing = aerogel$neighborCausalGroup.get();
-        if (existing == null) {
-            aerogel$neighborCausalGroup.compareAndSet(null, group);
-            existing = aerogel$neighborCausalGroup.get();
-        }
-        if (existing.root() != group.root()) {
-            throw new IllegalStateException("Neighbor updater changed causal group");
+        while (true) {
+            NeighborCausalGroup existing = aerogel$neighborCausalGroup.get();
+            if (existing == null) {
+                if (aerogel$neighborCausalGroup.compareAndSet(null, group)) return;
+                continue;
+            }
+            NeighborCausalGroup merged = existing.mergeWith(group);
+            if (aerogel$neighborCausalGroup.compareAndSet(existing, merged)
+                || aerogel$neighborCausalGroup.get().root() == group.root()) return;
         }
     }
 

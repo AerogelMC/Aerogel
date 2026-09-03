@@ -995,6 +995,17 @@ final class ChunkContextImpl implements ChunkContext {
         }
         queued.incrementAndGet();
         causalMailbox.add(task);
+        // Complete the same publication/deactivation hand-off used by ordinary
+        // submissions. A causal actor can finish while this Context is being
+        // detached: if deactivation scanned before this add, the publisher must
+        // reclaim and reject its own task. If removal fails, either deactivation
+        // or the sole owner continuation already owns the terminal path.
+        if (!active() && causalMailbox.remove(task)) {
+            queued.decrementAndGet();
+            rejectStale(task);
+            if (task.causalGroup() != null) task.causalGroup().actionCompleted();
+            return;
+        }
         schedule();
     }
 

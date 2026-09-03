@@ -1,6 +1,7 @@
 package net.minecraft.server.level;
 
 public class ChunkMap {
+    public net.minecraft.world.level.chunk.storage.RegionStorageInfo storageInfo() { return null; }
     private void setChunkUnsaved(net.minecraft.world.level.ChunkPos position) { }
     public DistanceManager getDistanceManager() { return null; }
     public ChunkHolder getUpdatingChunkIfPresent(long chunkKey) { return null; }

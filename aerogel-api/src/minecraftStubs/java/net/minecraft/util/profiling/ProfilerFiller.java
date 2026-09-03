@@ -4,4 +4,5 @@ package net.minecraft.util.profiling;
 public interface ProfilerFiller {
     void push(String section);
     void pop();
+    void incrementCounter(String counter);
 }

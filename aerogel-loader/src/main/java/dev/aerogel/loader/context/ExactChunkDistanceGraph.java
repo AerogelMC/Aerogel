@@ -133,9 +133,21 @@ public final class ExactChunkDistanceGraph {
         }
         if (keys.isEmpty()) return new CompletedGeneration(ChangeBatch.EMPTY, sequence);
 
+        // Enumerate every affected destination exactly once. The previous
+        // implementation made every owner stripe scan every source radius and
+        // discard destinations owned by another stripe, multiplying coordinate
+        // work by the owner count. Producer partitions build owner-local primitive
+        // deltas independently; each destination stripe then applies its deltas
+        // as the sole writer.
+        int partitions = Math.min(stripes.length, keys.size());
+        DeltaBatch[][] deltas = new DeltaBatch[partitions][stripes.length];
+        dispatcher.invoke(partitions, partition -> partitionDeltas(
+            partition, partitions, deltas[partition], keys,
+            previousLevels, nextLevels));
+
         StripeChanges[] changes = new StripeChanges[stripes.length];
-        dispatcher.invoke(stripes.length, stripe -> changes[stripe] = stripes[stripe].apply(
-            stripe, stripes.length, keys, previousLevels, nextLevels));
+        dispatcher.invoke(stripes.length, stripe -> changes[stripe] =
+            stripes[stripe].apply(deltas, stripe));
 
         for (int index = 0; index < keys.size(); index++) {
             long key = keys.getLong(index);
@@ -144,6 +156,50 @@ public final class ExactChunkDistanceGraph {
             else sources.put(key, next);
         }
         return new CompletedGeneration(new ChangeBatch(changes), sequence);
+    }
+
+    private void partitionDeltas(
+        int partition,
+        int partitionCount,
+        DeltaBatch[] deltas,
+        LongArrayList sourceKeys,
+        IntArrayList previousLevels,
+        IntArrayList nextLevels
+    ) {
+        int from = sourceKeys.size() * partition / partitionCount;
+        int to = sourceKeys.size() * (partition + 1) / partitionCount;
+        for (int sourceIndex = from; sourceIndex < to; sourceIndex++) {
+            long sourceKey = sourceKeys.getLong(sourceIndex);
+            int sourceX = (int) sourceKey;
+            int sourceZ = (int) (sourceKey >>> 32);
+            int previous = previousLevels.getInt(sourceIndex);
+            int next = nextLevels.getInt(sourceIndex);
+            int previousRadius = maximumLevel - previous - 1;
+            int nextRadius = maximumLevel - next - 1;
+            int radius = Math.max(previousRadius, nextRadius);
+
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    int distance = Math.max(Math.abs(dx), Math.abs(dz));
+                    int previousContribution = distance <= previousRadius
+                        ? previous + distance : maximumLevel;
+                    int nextContribution = distance <= nextRadius
+                        ? next + distance : maximumLevel;
+                    if (previousContribution == nextContribution) continue;
+
+                    long targetKey = pack(sourceX + dx, sourceZ + dz);
+                    int targetOwner = owner(targetKey, stripes.length);
+                    DeltaBatch batch = deltas[targetOwner];
+                    if (batch == null) {
+                        batch = new DeltaBatch();
+                        deltas[targetOwner] = batch;
+                    }
+                    batch.keys.add(targetKey);
+                    batch.previousLevels.add((byte) previousContribution);
+                    batch.nextLevels.add((byte) nextContribution);
+                }
+            }
+        }
     }
 
     /** Publishes only fully completed immutable generations; this method never waits. */
@@ -363,50 +419,30 @@ public final class ExactChunkDistanceGraph {
             this.maximumLevel = maximumLevel;
         }
 
-        private StripeChanges apply(
-            int owner, int ownerCount,
-            LongArrayList sourceKeys,
-            IntArrayList previousLevels,
-            IntArrayList nextLevels
-        ) {
+        private StripeChanges apply(DeltaBatch[][] partitions, int owner) {
             Long2ByteOpenHashMap originalLevels = new Long2ByteOpenHashMap();
             originalLevels.defaultReturnValue((byte) maximumLevel);
 
-            for (int sourceIndex = 0; sourceIndex < sourceKeys.size(); sourceIndex++) {
-                long sourceKey = sourceKeys.getLong(sourceIndex);
-                int sourceX = (int) sourceKey;
-                int sourceZ = (int) (sourceKey >>> 32);
-                int previous = previousLevels.getInt(sourceIndex);
-                int next = nextLevels.getInt(sourceIndex);
-                int previousRadius = maximumLevel - previous - 1;
-                int nextRadius = maximumLevel - next - 1;
-                int radius = Math.max(previousRadius, nextRadius);
-
-                for (int dx = -radius; dx <= radius; dx++) {
-                    for (int dz = -radius; dz <= radius; dz++) {
-                        int distance = Math.max(Math.abs(dx), Math.abs(dz));
-                        int previousContribution = distance <= previousRadius
-                            ? previous + distance : maximumLevel;
-                        int nextContribution = distance <= nextRadius
-                            ? next + distance : maximumLevel;
-                        if (previousContribution == nextContribution) continue;
-
-                        long targetKey = pack(sourceX + dx, sourceZ + dz);
-                        if (ExactChunkDistanceGraph.owner(targetKey, ownerCount) != owner) {
-                            continue;
-                        }
-                        Destination destination = destinations.get(targetKey);
-                        int original = destination == null
-                            ? maximumLevel : destination.level;
-                        if (!originalLevels.containsKey(targetKey)) {
-                            originalLevels.put(targetKey, (byte) original);
-                        }
-                        if (destination == null) {
-                            destination = new Destination(maximumLevel);
-                            destinations.put(targetKey, destination);
-                        }
-                        destination.replace(previousContribution, nextContribution);
+            for (DeltaBatch[] partition : partitions) {
+                DeltaBatch batch = partition[owner];
+                if (batch == null) continue;
+                for (int index = 0; index < batch.keys.size(); index++) {
+                    long targetKey = batch.keys.getLong(index);
+                    int previousContribution =
+                        batch.previousLevels.getByte(index) & 0xff;
+                    int nextContribution =
+                        batch.nextLevels.getByte(index) & 0xff;
+                    Destination destination = destinations.get(targetKey);
+                    int original = destination == null
+                        ? maximumLevel : destination.level;
+                    if (!originalLevels.containsKey(targetKey)) {
+                        originalLevels.put(targetKey, (byte) original);
                     }
+                    if (destination == null) {
+                        destination = new Destination(maximumLevel);
+                        destinations.put(targetKey, destination);
+                    }
+                    destination.replace(previousContribution, nextContribution);
                 }
             }
 
@@ -473,6 +509,12 @@ public final class ExactChunkDistanceGraph {
     private record PublicationWaiter(long sequence, CompletableFuture<Void> completion) { }
 
     private record StripeChanges(LongArrayList keys, ByteArrayList levels) { }
+
+    private static final class DeltaBatch {
+        private final LongArrayList keys = new LongArrayList();
+        private final ByteArrayList previousLevels = new ByteArrayList();
+        private final ByteArrayList nextLevels = new ByteArrayList();
+    }
 
     static long pack(int chunkX, int chunkZ) {
         return (chunkX & 0xffffffffL) | ((long) chunkZ & 0xffffffffL) << 32;

@@ -6,6 +6,8 @@ import dev.aerogel.loader.internal.ServerEntityBridge;
 import dev.aerogel.loader.internal.ContextOwnedEntityTask;
 import dev.aerogel.loader.internal.TrackedEntityBridge;
 import dev.aerogel.loader.internal.GenerationNodeExecutorBridge;
+import dev.aerogel.loader.worldgen.ChunkLoadAssemblyScope;
+import dev.aerogel.loader.worldgen.ChunkGenerationCoordinator;
 import dev.aerogel.loader.runtime.AerogelRuntime;
 import dev.aerogel.loader.context.DenseLongObjectList;
 import dev.aerogel.loader.context.ConcurrentLongSet;
@@ -34,8 +36,13 @@ import net.minecraft.server.level.GenerationChunkHolder;
 import net.minecraft.server.level.ChunkGenerationTask;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.util.TriState;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.world.entity.ai.village.poi.PoiManager;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.storage.SerializableChunkData;
 import net.minecraft.world.level.entity.EntityAccess;
 import it.unimi.dsi.fastutil.longs.LongConsumer;
 import dev.aerogel.loader.context.NativeTickCoordinator;
@@ -51,14 +58,19 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.gen.Invoker;
+import org.slf4j.Logger;
 
+import java.util.Optional;
 import java.util.Set;
 import java.util.HashSet;
+import java.util.function.IntSupplier;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import dev.aerogel.loader.internal.LevelTicksBridge;
 
 @Mixin(targets = "net.minecraft.server.level.ChunkMap")
 abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeExecutorBridge {
+    @Shadow @Final private static Logger LOGGER;
     private static final ThreadLocal<MoveSnapshot> AEROGEL_MOVE_SNAPSHOT =
         new ThreadLocal<>();
     private static final ThreadLocal<Boolean> AEROGEL_REPLAYING_UNSAVED =
@@ -71,6 +83,8 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Shadow @Final private ServerLevel level;
     @Shadow @Final private Int2ObjectMap<Object> entityMap;
     @Shadow @Final private ChunkTaskDispatcher worldgenTaskDispatcher;
+    @Shadow @Final private ChunkTaskDispatcher lightTaskDispatcher;
+    @Shadow @Final private PoiManager poiManager;
     @Shadow @Final private Long2ObjectLinkedOpenHashMap<ChunkHolder> visibleChunkMap;
     @Shadow @Final @Mutable private java.util.List<ChunkGenerationTask>
         pendingGenerationTasks;
@@ -81,6 +95,19 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Invoker("playerIsCloseEnoughForSpawning")
     protected abstract boolean aerogel$exactPlayerSpawnDistance(
         ServerPlayer player, ChunkPos position);
+    @Invoker("readChunk")
+    protected abstract CompletableFuture<Optional<CompoundTag>> aerogel$readChunk(
+        ChunkPos position);
+    @Invoker("createEmptyChunk")
+    protected abstract ChunkAccess aerogel$createEmptyChunk(ChunkPos position);
+    @Invoker("handleChunkLoadFailure")
+    protected abstract ChunkAccess aerogel$handleChunkLoadFailure(
+        Throwable failure, ChunkPos position);
+    @Invoker("markPosition")
+    protected abstract byte aerogel$markPosition(
+        ChunkPos position, net.minecraft.world.level.chunk.status.ChunkType type);
+    @Invoker("getChunkQueueLevel")
+    protected abstract IntSupplier aerogel$getChunkQueueLevel(long chunkKey);
     @Unique private boolean aerogel$spawnCandidatesInitialized;
     @Unique private final Long2ObjectOpenHashMap<SpawnCandidate>
         aerogel$spawnCandidates = new Long2ObjectOpenHashMap<>();
@@ -97,6 +124,167 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     @Unique private long aerogel$spawnPlayerRefreshEpoch;
     @Unique private final PublishedChunkHolderIndex aerogel$generationHolders =
         new PublishedChunkHolderIndex();
+    @Unique private final ChunkGenerationCoordinator aerogel$generationCoordinator =
+        new ChunkGenerationCoordinator(
+            (net.minecraft.server.level.GeneratingChunkMap) (Object) this, this);
+
+    /**
+     * Keeps vanilla disk IO, data fixing and NBT parsing, but replaces the
+     * server-thread chunk assembly continuation with owner-keyed stages. The
+     * chunk future is exposed only after light and server-owned indexes have
+     * observed the assembled result.
+     */
+    @Inject(method = "scheduleChunkLoad", at = @At("HEAD"), cancellable = true)
+    private void aerogel$loadChunkThroughOwnerPipeline(
+        ChunkPos position,
+        CallbackInfoReturnable<CompletableFuture<ChunkAccess>> callback
+    ) {
+        CompletableFuture<Optional<SerializableChunkData>> parsed =
+            aerogel$readChunk(position).thenCompose(
+                optional -> aerogel$parseLoadedChunk(position, optional));
+
+        CompletableFuture<?> poiReady = poiManager.prefetch(position);
+        CompletableFuture<ChunkAccess> assembled = parsed
+            .thenCombine(poiReady, (data, ignored) -> data)
+            .thenCompose(data -> aerogel$assembleLoadedChunk(position, data));
+        CompletableFuture<ChunkAccess> loaded = assembled.handle((chunk, failure) ->
+            failure == null ? CompletableFuture.completedFuture(chunk)
+                : aerogel$recoverChunkLoad(position, failure)).thenCompose(future -> future);
+        callback.setReturnValue(loaded);
+    }
+
+    @Unique
+    private CompletableFuture<Optional<SerializableChunkData>> aerogel$parseLoadedChunk(
+        ChunkPos position, Optional<CompoundTag> tag
+    ) {
+        long chunkKey = position.pack();
+        CompletableFuture<Optional<SerializableChunkData>> result =
+            new CompletableFuture<>();
+        try {
+            worldgenTaskDispatcher.submit(() -> {
+                try {
+                    result.complete(tag.map(value -> {
+                        SerializableChunkData data = SerializableChunkData.parse(
+                            (net.minecraft.world.level.LevelHeightAccessor)
+                                (Object) level,
+                            level.palettedContainerFactory(), value);
+                        if (data == null) {
+                            LOGGER.error(
+                                "Chunk file at {} is missing level data, skipping",
+                                position);
+                        }
+                        return data;
+                    }));
+                } catch (Throwable failure) {
+                    result.completeExceptionally(failure);
+                }
+            }, chunkKey, aerogel$getChunkQueueLevel(chunkKey));
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+        }
+        return result;
+    }
+
+    @Unique
+    private CompletableFuture<ChunkAccess> aerogel$recoverChunkLoad(
+        ChunkPos position, Throwable failure
+    ) {
+        CompletableFuture<ChunkAccess> recovered = new CompletableFuture<>();
+        NativeTickCoordinator.submitGlobalCommit(() -> {
+            try {
+                recovered.complete(aerogel$handleChunkLoadFailure(failure, position));
+            } catch (Throwable recoveryFailure) {
+                recovered.completeExceptionally(recoveryFailure);
+            }
+        });
+        return recovered;
+    }
+
+    @Unique
+    private CompletableFuture<ChunkAccess> aerogel$assembleLoadedChunk(
+        ChunkPos position, Optional<SerializableChunkData> serialized
+    ) {
+        long chunkKey = position.pack();
+        IntSupplier priority = aerogel$getChunkQueueLevel(chunkKey);
+        CompletableFuture<ChunkAccess> result = new CompletableFuture<>();
+
+        try {
+            worldgenTaskDispatcher.submit(() -> {
+                try {
+                    ChunkLoadAssemblyScope.Result<ChunkAccess> assembly =
+                        ChunkLoadAssemblyScope.capture(() -> serialized
+                            .<ChunkAccess>map(data -> data.read(
+                                level, poiManager,
+                                ((ChunkMap) (Object) this).storageInfo(), position))
+                            .orElseGet(() -> aerogel$createEmptyChunk(position)));
+
+                    CompletableFuture<Void> lightPublication =
+                        aerogel$publishLoadedLight(
+                            chunkKey, priority, assembly.lightPublications());
+                    CompletableFuture<Void> serverPublication =
+                        aerogel$publishLoadedIndexes(
+                            position, serialized, assembly.serverPublications());
+                    CompletableFuture.allOf(lightPublication, serverPublication)
+                        .whenComplete((ignored, failure) -> {
+                            if (failure == null) result.complete(assembly.value());
+                            else result.completeExceptionally(failure);
+                        });
+                } catch (Throwable failure) {
+                    result.completeExceptionally(failure);
+                }
+            }, chunkKey, priority);
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+        }
+        return result;
+    }
+
+    @Unique
+    private CompletableFuture<Void> aerogel$publishLoadedLight(
+        long chunkKey, IntSupplier priority, Runnable[] publications
+    ) {
+        if (publications.length == 0) return CompletableFuture.completedFuture(null);
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        try {
+            lightTaskDispatcher.submit(() -> {
+                try {
+                    for (Runnable publication : publications) publication.run();
+                    result.complete(null);
+                } catch (Throwable failure) {
+                    result.completeExceptionally(failure);
+                }
+            }, chunkKey, priority);
+        } catch (Throwable failure) {
+            result.completeExceptionally(failure);
+        }
+        return result;
+    }
+
+    @Unique
+    private CompletableFuture<Void> aerogel$publishLoadedIndexes(
+        ChunkPos position,
+        Optional<SerializableChunkData> serialized,
+        Runnable[] publications
+    ) {
+        if (publications.length == 0 && serialized.isEmpty()) {
+            return CompletableFuture.completedFuture(null);
+        }
+        CompletableFuture<Void> result = new CompletableFuture<>();
+        NativeTickCoordinator.submitGlobalCommit(() -> {
+            try {
+                for (Runnable publication : publications) publication.run();
+                if (serialized.isPresent()) {
+                    Profiler.get().incrementCounter("chunkLoad");
+                    aerogel$markPosition(position,
+                        serialized.orElseThrow().chunkStatus().getChunkType());
+                }
+                result.complete(null);
+            } catch (Throwable failure) {
+                result.completeExceptionally(failure);
+            }
+        });
+        return result;
+    }
 
     @Inject(method = "<init>", at = @At("RETURN"))
     private void aerogel$listenForSpawnDistanceChanges(CallbackInfo callback) {
@@ -421,6 +609,11 @@ abstract class ChunkMapMixin implements ChunkMapTrackingBridge, GenerationNodeEx
     ) {
         worldgenTaskDispatcher.submit(
             task, holder.getPos().pack(), holder::getQueueLevel);
+    }
+
+    @Override
+    public ChunkGenerationCoordinator aerogel$generationCoordinator() {
+        return aerogel$generationCoordinator;
     }
 
     @Override

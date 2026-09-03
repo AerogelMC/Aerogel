@@ -26,6 +26,9 @@ public final class NativeTickCoordinator {
     private static final Runnable COMMIT_GENERATION_END = () -> { };
     private static final AtomicBoolean GLOBAL_DRAINING = new AtomicBoolean();
     private static final AtomicInteger OUTSTANDING = new AtomicInteger();
+    private static final AtomicInteger NATIVE_TASKS = new AtomicInteger();
+    private static final AtomicInteger WORLD_COMMITS = new AtomicInteger();
+    private static final AtomicInteger DISTANCE_PUBLICATIONS = new AtomicInteger();
     private static final AtomicBoolean MAIN_WAKE_SCHEDULED = new AtomicBoolean();
     private static volatile MinecraftServer mainServer;
     private static volatile boolean shutdownDraining;
@@ -60,7 +63,7 @@ public final class NativeTickCoordinator {
             try {
                 committed.run();
             } finally {
-                OUTSTANDING.decrementAndGet();
+                completeNativeTask();
             }
         };
         boolean completionTransferred = false;
@@ -271,26 +274,46 @@ public final class NativeTickCoordinator {
     }
 
     static void taskSubmitted() {
+        NATIVE_TASKS.incrementAndGet();
         OUTSTANDING.incrementAndGet();
     }
 
     static void taskRejected() {
-        OUTSTANDING.decrementAndGet();
+        completeNativeTask();
     }
 
     /** Returns the permit of a queued task replaced before its native frame began. */
     static void taskSuperseded() {
-        OUTSTANDING.decrementAndGet();
+        completeNativeTask();
     }
 
     /** Registers a non-native asynchronous owner transaction for shutdown drain. */
-    public static void beginAsynchronousWork() {
+    public static void beginAsynchronousWork(AsynchronousOwner owner) {
+        counter(owner).incrementAndGet();
         OUTSTANDING.incrementAndGet();
     }
 
     /** Completes a transaction registered by {@link #beginAsynchronousWork()}. */
-    public static void endAsynchronousWork() {
+    public static void endAsynchronousWork(AsynchronousOwner owner) {
+        counter(owner).decrementAndGet();
         OUTSTANDING.decrementAndGet();
+    }
+
+    private static void completeNativeTask() {
+        NATIVE_TASKS.decrementAndGet();
+        OUTSTANDING.decrementAndGet();
+    }
+
+    private static AtomicInteger counter(AsynchronousOwner owner) {
+        return switch (owner) {
+            case WORLD_COMMIT -> WORLD_COMMITS;
+            case DISTANCE_PUBLICATION -> DISTANCE_PUBLICATIONS;
+        };
+    }
+
+    public enum AsynchronousOwner {
+        WORLD_COMMIT,
+        DISTANCE_PUBLICATION
     }
 
     public static void pumpMainThread() {

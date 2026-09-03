@@ -18,4 +18,5 @@ public final class ChunkStatus {
     public boolean isAfter(ChunkStatus other) { return false; }
     public boolean isOrAfter(ChunkStatus other) { return false; }
     public boolean isBefore(ChunkStatus other) { return false; }
+    public ChunkType getChunkType() { return null; }
 }

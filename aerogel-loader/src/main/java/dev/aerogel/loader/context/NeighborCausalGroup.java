@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
 
@@ -13,6 +14,8 @@ import net.minecraft.world.level.redstone.CollectingNeighborUpdater;
  * gives the combined group one actor without introducing a world-wide lane.
  */
 public final class NeighborCausalGroup {
+    private static final int COMPLETED = -1;
+    private static final int COMPLETING = -2;
     private final long originKey;
     private final long originSequence;
     private final AtomicReference<NeighborCausalGroup> parent =
@@ -36,7 +39,12 @@ public final class NeighborCausalGroup {
     private final AtomicBoolean active = new AtomicBoolean(true);
     private final AtomicBoolean contended = new AtomicBoolean();
     private final AtomicBoolean scheduling = new AtomicBoolean();
-    private final AtomicBoolean completed = new AtomicBoolean();
+    /**
+     * Non-negative values count in-flight union publications involving this
+     * root; {@link #COMPLETED} is terminal. One CAS state closes root completion
+     * racing the publication of a new child without a lock.
+     */
+    private final AtomicInteger topologyState = new AtomicInteger();
 
     private NeighborCausalGroup(long originKey, long originSequence) {
         this.originKey = originKey;
@@ -69,18 +77,23 @@ public final class NeighborCausalGroup {
     }
 
     boolean isCompleted() {
-        return root().completed.get();
+        return root().isDirectlyCompleted();
+    }
+
+    /** Unifies actors that encounter the same mutable vanilla causal queue. */
+    public NeighborCausalGroup mergeWith(NeighborCausalGroup other) {
+        return union(root(), other.root());
     }
 
     NeighborCausalGroup claim(ChunkContextImpl context) {
         while (true) {
             NeighborCausalGroup root = root();
-            if (root.completed.get()) return root;
+            if (root.isDirectlyCompleted()) return root;
             NeighborCausalGroup existing = context.neighborCausalClaim();
             if (existing == null || existing.isCompleted()) {
                 if (!context.claimNeighborCausal(existing, this)) continue;
                 claims.add(context);
-                if (root().completed.get()) {
+                if (root().isDirectlyCompleted()) {
                     context.releaseNeighborCausal(this);
                     continue;
                 }
@@ -99,22 +112,60 @@ public final class NeighborCausalGroup {
             first = first.root();
             second = second.root();
             if (first == second) return first;
-            NeighborCausalGroup winner = precedes(first, second) ? first : second;
-            NeighborCausalGroup loser = winner == first ? second : first;
-            // Both chains may already own different Contexts. Mark the collision
-            // before publishing the union edge so the next chain admission waits
-            // for the combined actor without pausing unrelated owner work.
-            first.contended.set(true);
-            second.contended.set(true);
-            // Publish membership before the parent edge. A scheduler can only
-            // consider the child after root() observes that edge.
-            winner.children.add(loser);
-            if (loser.parent.compareAndSet(loser, winner)) {
-                winner.trySchedule();
-                return winner;
+            if (first.isDirectlyCompleted()) return second;
+            if (second.isDirectlyCompleted()) return first;
+
+            if (!first.acquireTopologyPublication()) continue;
+            if (!second.acquireTopologyPublication()) {
+                first.releaseTopologyPublication();
+                continue;
             }
-            winner.children.remove(loser);
+            try {
+                // Another lock-free union may have changed either root while the
+                // permits were acquired. Re-resolve rather than link a stale root.
+                if (first.root() != first || second.root() != second) continue;
+
+                NeighborCausalGroup winner = precedes(first, second) ? first : second;
+                NeighborCausalGroup loser = winner == first ? second : first;
+                // Both chains may already own different Contexts. Mark the collision
+                // before publishing the union edge so the next chain admission waits
+                // for the combined actor without pausing unrelated owner work.
+                first.contended.set(true);
+                second.contended.set(true);
+                // Membership is visible before the parent edge. The topology
+                // permits keep the root non-terminal across both publications.
+                winner.children.add(loser);
+                if (loser.parent.compareAndSet(loser, winner)) return winner;
+                winner.children.remove(loser);
+            } finally {
+                second.releaseTopologyPublication();
+                first.releaseTopologyPublication();
+            }
         }
+    }
+
+    private boolean acquireTopologyPublication() {
+        while (true) {
+            int observed = topologyState.get();
+            if (observed == COMPLETED) return false;
+            if (observed == COMPLETING) {
+                Thread.onSpinWait();
+                continue;
+            }
+            if (topologyState.compareAndSet(observed, observed + 1)) return true;
+        }
+    }
+
+    private void releaseTopologyPublication() {
+        int remaining = topologyState.decrementAndGet();
+        if (remaining < 0) {
+            throw new IllegalStateException("Causal topology publication released twice");
+        }
+        if (remaining == 0) root().trySchedule();
+    }
+
+    private boolean isDirectlyCompleted() {
+        return topologyState.get() == COMPLETED;
     }
 
     boolean contended() {
@@ -138,25 +189,29 @@ public final class NeighborCausalGroup {
     }
 
     void enqueue(ChunkContextImpl owner, ContextTask task) {
-        NeighborCausalGroup root = root();
-        if (root.completed.get()) {
-            owner.resumeCausalTask(task.withCausalGroup(null));
-            return;
-        }
-        claimScope(owner.world(), task.scopeKeys());
-        CausalJob job = new CausalJob(owner, task.withCausalGroup(this));
-        jobs.add(job);
-        root().trySchedule();
-        /*
-         * Close completion-after-check/before-publication. The completing actor
-         * may have scanned an empty tree and published completed immediately
-         * before this job became visible. In that case no causal claim remains,
-         * so atomically reclaim this still-unselected job and publish it as
-         * ordinary Context work. If pollJob already selected it, remove fails and
-         * the actor owns the only completion path.
-         */
-        if (root().completed.get() && jobs.remove(job)) {
-            owner.resumeCausalTask(task.withCausalGroup(null));
+        while (true) {
+            NeighborCausalGroup root = root();
+            if (!root.acquireTopologyPublication()) {
+                owner.resumeCausalTask(task.withCausalGroup(null));
+                return;
+            }
+            boolean published = false;
+            try {
+                // Root completion, union membership and job publication share one
+                // topology state. If claiming the exact scope joins another tree,
+                // retry under that new root before making the job visible.
+                if (root() != root) continue;
+                claimScope(owner.world(), task.scopeKeys());
+                if (root() != root) continue;
+                jobs.add(new CausalJob(owner, task.withCausalGroup(this)));
+                published = true;
+            } finally {
+                root.releaseTopologyPublication();
+            }
+            if (published) {
+                root().trySchedule();
+                return;
+            }
         }
     }
 
@@ -183,15 +238,30 @@ public final class NeighborCausalGroup {
         }
         if (!scheduling.compareAndSet(false, true)) return;
         try {
-            if (completed.get()) return;
+            if (isDirectlyCompleted()) return;
             while (true) {
                 if (hasActive(this)) return;
                 NodeJob selected = pollJob(this);
                 if (selected == null) {
-                    if (!completed.compareAndSet(false, true)) return;
-                    releaseClaims(this);
-                    releaseSuccessors(this);
-                    return;
+                    /*
+                     * Claim completion before trusting the empty scan. A plain
+                     * CAS(0, COMPLETED) is vulnerable to ABA when a publisher
+                     * acquires and releases its permit between the scan and CAS.
+                     * COMPLETING excludes new publishers, then a second scan
+                     * observes every job published by the previous generation.
+                     */
+                    if (!topologyState.compareAndSet(0, COMPLETING)) return;
+                    selected = pollJob(this);
+                    if (selected == null) {
+                        if (!topologyState.compareAndSet(COMPLETING, COMPLETED)) {
+                            throw new IllegalStateException(
+                                "Causal completion ownership was corrupted");
+                        }
+                        releaseClaims(this);
+                        releaseSuccessors(this);
+                        return;
+                    }
+                    topologyState.set(0);
                 }
                 if (!selected.node.active.compareAndSet(false, true)) continue;
                 selected.job.owner.resumeCausalTask(
@@ -201,7 +271,7 @@ public final class NeighborCausalGroup {
         } finally {
             scheduling.set(false);
             // Close enqueue/merge-after-scan without spinning or a timer.
-            if (!completed.get() && !hasActive(this)) trySchedule();
+            if (topologyState.get() == 0 && !hasActive(this)) trySchedule();
         }
     }
 
@@ -251,9 +321,9 @@ public final class NeighborCausalGroup {
      */
     boolean awaitCompletion(Runnable successor) {
         NeighborCausalGroup root = root();
-        if (root.completed.get()) return false;
+        if (root.isDirectlyCompleted()) return false;
         root.successors.add(successor);
-        if (root.completed.get() && root.successors.remove(successor)) {
+        if (root.isDirectlyCompleted() && root.successors.remove(successor)) {
             successor.run();
         }
         return true;

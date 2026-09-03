@@ -2,6 +2,7 @@ package dev.aerogel.loader.mixin.core;
 
 import dev.aerogel.loader.context.NativeTickCoordinator;
 import dev.aerogel.loader.context.ConcurrentVillageDistanceIndex;
+import dev.aerogel.loader.worldgen.ChunkLoadAssemblyScope;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.world.entity.ai.village.poi.PoiManager;
@@ -31,6 +32,7 @@ abstract class PoiManagerMixin {
             PoiManager.Occupancy occupancy);
     @Shadow protected abstract void setDirty(long sectionKey);
     @Invoker("isVillageCenter") protected abstract boolean aerogel$isVillageCenter(long sectionKey);
+    @Invoker("onSectionLoad") protected abstract void aerogel$onSectionLoad(long sectionKey);
 
     @Inject(method = "take", at = @At("HEAD"), cancellable = true)
     private void aerogel$acquireFirstAvailablePoi(
@@ -58,8 +60,21 @@ abstract class PoiManagerMixin {
     private void aerogel$commitDistanceAndPersistenceWithoutWaiting(
         long sectionKey, org.spongepowered.asm.mixin.injection.callback.CallbackInfo callback
     ) {
+        if (ChunkLoadAssemblyScope.deferServer(() -> setDirty(sectionKey))) {
+            callback.cancel();
+            return;
+        }
         if (!NativeTickCoordinator.isNativeWorker()) return;
         if (NativeTickCoordinator.deferGlobalCommit(() -> setDirty(sectionKey))) {
+            callback.cancel();
+        }
+    }
+
+    @Inject(method = "onSectionLoad", at = @At("HEAD"), cancellable = true)
+    private void aerogel$deferLoadedSectionDistanceIndex(
+        long sectionKey, org.spongepowered.asm.mixin.injection.callback.CallbackInfo callback
+    ) {
+        if (ChunkLoadAssemblyScope.deferServer(() -> aerogel$onSectionLoad(sectionKey))) {
             callback.cancel();
         }
     }

@@ -42,6 +42,8 @@ import net.minecraft.world.ticks.LevelTicks;
 
 /** Compile-time name stub. Not included in the Aerogel API JAR. */
 public class ServerLevel extends Level {
+    public net.minecraft.world.level.chunk.PalettedContainerFactory
+        palettedContainerFactory() { return null; }
     public net.minecraft.world.level.lighting.LevelLightEngine getLightEngine() { return null; }
     public void unload(LevelChunk chunk) { }
     public ServerLevel(

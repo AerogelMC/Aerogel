@@ -106,7 +106,7 @@ public final class AerogelMain {
               --offline               Reserved for offline verification workflows
               --                      Pass all remaining arguments to Minecraft
 
-            Run: java -Xms2G -Xmx4G -jar Aerogel-26.2-28.jar nogui
+            Run: java -Xms2G -Xmx4G -jar Aerogel-26.2-29.jar nogui
             First launch creates eula.txt and stops. Read the EULA, then edit the file directly.
             Plugins go in <game-dir>/plugins and contain aerogel.plugin.json.
             """);

@@ -53,7 +53,8 @@ final class WorldCommitLane implements AutoCloseable {
         // A native owner publishes its world commits before releasing its own
         // shutdown permit. Claim this generation first, so shutdown observes a
         // continuous unfinished-work chain through the final world mutation.
-        NativeTickCoordinator.beginAsynchronousWork();
+        NativeTickCoordinator.beginAsynchronousWork(
+            NativeTickCoordinator.AsynchronousOwner.WORLD_COMMIT);
         if (!scheduler.dispatchWorldCommit(this::drainGeneration)) {
             if (closing) {
                 // An already-running Context may publish after pool shutdown has
@@ -63,7 +64,8 @@ final class WorldCommitLane implements AutoCloseable {
                 return;
             }
             scheduled.set(false);
-            NativeTickCoordinator.endAsynchronousWork();
+            NativeTickCoordinator.endAsynchronousWork(
+                NativeTickCoordinator.AsynchronousOwner.WORLD_COMMIT);
             throw new IllegalStateException("Context scheduler rejected a world commit");
         }
     }
@@ -87,7 +89,8 @@ final class WorldCommitLane implements AutoCloseable {
                 // accepted by this world is still queued.
                 if (!queue.isEmpty()) schedule();
             } finally {
-                NativeTickCoordinator.endAsynchronousWork();
+                NativeTickCoordinator.endAsynchronousWork(
+                    NativeTickCoordinator.AsynchronousOwner.WORLD_COMMIT);
             }
         }
     }

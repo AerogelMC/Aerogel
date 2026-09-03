@@ -125,7 +125,8 @@ abstract class ServerChunkCacheMixin {
         ExactChunkDistanceGraph.ChangeBatch changes
     ) {
         CompletableFuture<Void> completion = new CompletableFuture<>();
-        NativeTickCoordinator.beginAsynchronousWork();
+        NativeTickCoordinator.beginAsynchronousWork(
+            NativeTickCoordinator.AsynchronousOwner.DISTANCE_PUBLICATION);
         aerogel$distancePublications.offer(
             new DistancePublication(changes, completion));
         aerogel$scheduleDistancePublication();
@@ -181,7 +182,8 @@ abstract class ServerChunkCacheMixin {
             if (error == null) publication.completion.complete(null);
             else publication.completion.completeExceptionally(error);
         } finally {
-            NativeTickCoordinator.endAsynchronousWork();
+            NativeTickCoordinator.endAsynchronousWork(
+                NativeTickCoordinator.AsynchronousOwner.DISTANCE_PUBLICATION);
             aerogel$startNextDistancePublication();
         }
     }

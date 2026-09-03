@@ -31,4 +31,6 @@ public class PoiManager {
     ) { return Optional.empty(); }
 
     public boolean release(BlockPos position) { return false; }
+    public java.util.concurrent.CompletableFuture<?> prefetch(
+        net.minecraft.world.level.ChunkPos position) { return null; }
 }

@@ -1056,7 +1056,7 @@ Copy only the plugin JAR into the server's `plugins` directory:
 
 ```text
 server/
-├─ Aerogel-26.2-28.jar
+├─ Aerogel-26.2-29.jar
 └─ plugins/
    └─ my-plugin-1.0.0.jar
 ```

@@ -28,6 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("neighbor-circuit")
 final class NeighborCircuitServerIntegrationTest {
     private static final String COMMAND_TICK_MARKER = "AEROGEL_NEIGHBOR_COMMAND_TICKS_OK";
+    private static final String RELOAD_MARKER = "AEROGEL_SAVED_CHUNK_RELOAD_OK";
     private static final int TICKS_TO_RUN = 160;
     private static final List<String> FAILURES = List.of(
         "Too many chained neighbor updates",
@@ -128,6 +129,55 @@ final class NeighborCircuitServerIntegrationTest {
         assertTrue(log.contains(COMMAND_TICK_MARKER),
             "Repeating command blocks did not execute for " + TICKS_TO_RUN
                 + " ticks:\n" + log);
+        verifySavedChunkReload(server, launchJar);
+    }
+
+    private static void verifySavedChunkReload(Path server, String launchJar)
+        throws Exception {
+        Process process = new ProcessBuilder(javaExecutable(), "-Xms1G", "-Xmx2G",
+            "-jar", launchJar, "nogui")
+            .directory(server.toFile())
+            .redirectErrorStream(true)
+            .start();
+        List<String> output = java.util.Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch ready = new CountDownLatch(1);
+        CountDownLatch reloaded = new CountDownLatch(1);
+        Thread reader = Thread.ofPlatform().name("saved-chunk-reload-output").start(() -> {
+            try (BufferedReader lines = new BufferedReader(new InputStreamReader(
+                process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = lines.readLine()) != null) {
+                    output.add(line);
+                    if (line.contains("Done (")) ready.countDown();
+                    if (line.contains(RELOAD_MARKER)) reloaded.countDown();
+                }
+            } catch (IOException error) {
+                output.add("reader failed: " + error);
+            }
+        });
+
+        try (BufferedWriter input = new BufferedWriter(new OutputStreamWriter(
+            process.getOutputStream(), StandardCharsets.UTF_8))) {
+            assertTrue(ready.await(45, TimeUnit.SECONDS), () -> joined(output));
+            long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+            while (!reloaded.await(100, TimeUnit.MILLISECONDS)
+                && System.nanoTime() < deadline) {
+                send(input, "execute if loaded 0 64 0 run say " + RELOAD_MARKER);
+            }
+            send(input, "stop");
+        } finally {
+            if (!process.waitFor(30, TimeUnit.SECONDS)) {
+                process.destroy();
+                if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly();
+            }
+            reader.join(TimeUnit.SECONDS.toMillis(5));
+        }
+
+        String log = joined(output);
+        assertTrue(log.contains(RELOAD_MARKER), log);
+        assertFalse(log.contains("Exception"), log);
+        assertFalse(log.contains("Chunk context task failed"), log);
+        assertEquals(0, process.exitValue(), log);
     }
 
     private static List<String> circuitCommands() {
