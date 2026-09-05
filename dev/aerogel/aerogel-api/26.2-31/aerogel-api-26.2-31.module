@@ -1,0 +1,80 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "dev.aerogel",
+    "module": "aerogel-api",
+    "version": "26.2-31",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.3.0"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 25,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "aerogel-api-26.2-31.jar",
+          "url": "aerogel-api-26.2-31.jar",
+          "size": 150272,
+          "sha512": "9d80c0401e5d2a9ba55097a6c4d1998ed1f8dd5051e1edbdc687c8bd2c2fff0f6ded8961d0ca273a49b2b7845fd4aed4a0b22f0fc5143284672a19d2419f9ad8",
+          "sha256": "7d802e05f1a3ff5abbfd13dd2cc7609ce13bf4572a2d2e1c56ab879c7340b336",
+          "sha1": "287ff7a0a243fe9b4be58d4539d54a8d9e3d40ba",
+          "md5": "c50d68de2a15abf708b119dcd9716c25"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 25,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerogel-api-26.2-31.jar",
+          "url": "aerogel-api-26.2-31.jar",
+          "size": 150272,
+          "sha512": "9d80c0401e5d2a9ba55097a6c4d1998ed1f8dd5051e1edbdc687c8bd2c2fff0f6ded8961d0ca273a49b2b7845fd4aed4a0b22f0fc5143284672a19d2419f9ad8",
+          "sha256": "7d802e05f1a3ff5abbfd13dd2cc7609ce13bf4572a2d2e1c56ab879c7340b336",
+          "sha1": "287ff7a0a243fe9b4be58d4539d54a8d9e3d40ba",
+          "md5": "c50d68de2a15abf708b119dcd9716c25"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "aerogel-api-26.2-31-sources.jar",
+          "url": "aerogel-api-26.2-31-sources.jar",
+          "size": 96066,
+          "sha512": "2729cf4c9f8a80acce3e74a4ce77bf41ca665e1d6948a363d89cf0b4889194eac553f4b807594341c33ac5ad6991a31f01857f7b1d625ea14e8aa23d2fc59448",
+          "sha256": "470203bab6a285180c4bf23fea0072e466f9f974841eaa906423c31d8b9bfec8",
+          "sha1": "e15456dcd57c3622323ac7ed9e1cc87f24a71ac7",
+          "md5": "8068f9b77fc17ace0de691b4c1773cea"
+        }
+      ]
+    }
+  ]
+}
