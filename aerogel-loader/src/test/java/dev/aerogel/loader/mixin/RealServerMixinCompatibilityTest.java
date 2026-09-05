@@ -117,6 +117,8 @@ final class RealServerMixinCompatibilityTest {
         "dev/aerogel/loader/api/DirectInventoryService.class",
         "dev/aerogel/loader/api/DirectDialogService.class",
         "dev/aerogel/loader/api/DirectScoreboardService.class",
+        "dev/aerogel/loader/internal/ViewerScoreboard.class",
+        "dev/aerogel/loader/internal/PlayerScoreboardView.class",
         "dev/aerogel/loader/api/PluginTranslations.class",
         "dev/aerogel/loader/api/AerogelApiRuntime.class",
         "dev/aerogel/loader/api/DirectPersistentDataService.class",
@@ -238,11 +240,68 @@ final class RealServerMixinCompatibilityTest {
                     "dev.aerogel.loader.internal.AerogelPersistentSavedData", true, loader);
                 verifyTicketActivityIndex(loader);
                 verifyDirectMinecraftLinkage(loader);
+                verifyViewerScoreboard(loader);
 
             } finally {
                 current.setContextClassLoader(previous);
             }
         }
+    }
+
+    private static void verifyViewerScoreboard(ClassLoader loader) throws Exception {
+        Class<?> boardType = loader.loadClass("dev.aerogel.loader.internal.ViewerScoreboard");
+        Class<?> baseType = loader.loadClass("net.minecraft.world.scores.Scoreboard");
+        Class<?> objectiveType = loader.loadClass("net.minecraft.world.scores.Objective");
+        Class<?> criteriaType = loader.loadClass("net.minecraft.world.scores.criteria.ObjectiveCriteria");
+        Class<?> renderType = loader.loadClass("net.minecraft.world.scores.criteria.ObjectiveCriteria$RenderType");
+        Class<?> componentType = loader.loadClass("net.minecraft.network.chat.Component");
+        Class<?> formatType = loader.loadClass("net.minecraft.network.chat.numbers.NumberFormat");
+        Class<?> holderType = loader.loadClass("net.minecraft.world.scores.ScoreHolder");
+        Class<?> slotType = loader.loadClass("net.minecraft.world.scores.DisplaySlot");
+        Class<?> accessType = loader.loadClass("net.minecraft.world.scores.ScoreAccess");
+        List<Object> firstPackets = new ArrayList<>();
+        List<Object> secondPackets = new ArrayList<>();
+        var constructor = boardType.getConstructor(java.util.function.Consumer.class);
+        Object first = constructor.newInstance((java.util.function.Consumer<Object>) firstPackets::add);
+        Object second = constructor.newInstance((java.util.function.Consumer<Object>) secondPackets::add);
+        Method add = baseType.getMethod("addObjective", String.class, criteriaType, componentType,
+            renderType, boolean.class, formatType);
+        Object title = componentType.getMethod("literal", String.class).invoke(null, "Private");
+        Object criteria = criteriaType.getField("DUMMY").get(null);
+        Object integer = renderType.getField("INTEGER").get(null);
+        Object firstObjective = add.invoke(first, "same_name", criteria, title, integer, false, null);
+        Object secondObjective = add.invoke(second, "same_name", criteria, title, integer, false, null);
+        Object holder = holderType.getMethod("forNameOnly", String.class).invoke(null, "Balance");
+        Method score = baseType.getMethod("getOrCreatePlayerScore", holderType, objectiveType);
+        Object firstScore = score.invoke(first, holder, firstObjective);
+        Object secondScore = score.invoke(second, holder, secondObjective);
+        accessType.getMethod("set", int.class).invoke(firstScore, 10);
+        accessType.getMethod("set", int.class).invoke(secondScore, 99);
+        org.junit.jupiter.api.Assertions.assertEquals(10, accessType.getMethod("get").invoke(firstScore));
+        org.junit.jupiter.api.Assertions.assertEquals(99, accessType.getMethod("get").invoke(secondScore));
+        int secondCount = secondPackets.size();
+        accessType.getMethod("set", int.class).invoke(firstScore, 20);
+        org.junit.jupiter.api.Assertions.assertEquals(secondCount, secondPackets.size());
+        Object latest = firstPackets.getLast();
+        org.junit.jupiter.api.Assertions.assertEquals("ClientboundSetScorePacket", latest.getClass().getSimpleName());
+        org.junit.jupiter.api.Assertions.assertEquals(20, latest.getClass().getMethod("score").invoke(latest));
+        Object sidebar = slotType.getField("SIDEBAR").get(null);
+        baseType.getMethod("setDisplayObjective", slotType, objectiveType).invoke(first, sidebar, firstObjective);
+        Object team = baseType.getMethod("addPlayerTeam", String.class).invoke(first, "private_team");
+        Class<?> teamType = loader.loadClass("net.minecraft.world.scores.PlayerTeam");
+        baseType.getMethod("addPlayerToTeam", String.class, teamType).invoke(first, "Balance", team);
+        List<Object> snapshot = new ArrayList<>();
+        boardType.getMethod("snapshot", baseType, java.util.function.Consumer.class)
+            .invoke(null, first, (java.util.function.Consumer<Object>) snapshot::add);
+        org.junit.jupiter.api.Assertions.assertEquals("ClientboundSetObjectivePacket", snapshot.getFirst().getClass().getSimpleName());
+        org.junit.jupiter.api.Assertions.assertTrue(snapshot.stream().anyMatch(p -> p.getClass().getSimpleName().equals("ClientboundSetPlayerTeamPacket")));
+        List<Object> cleared = new ArrayList<>();
+        boardType.getMethod("clearDisplay", baseType, java.util.function.Consumer.class)
+            .invoke(null, first, (java.util.function.Consumer<Object>) cleared::add);
+        org.junit.jupiter.api.Assertions.assertTrue(cleared.stream().anyMatch(p -> p.getClass().getSimpleName().equals("ClientboundSetObjectivePacket")));
+        baseType.getMethod("resetSinglePlayerScore", holderType, objectiveType).invoke(first, holder, firstObjective);
+        org.junit.jupiter.api.Assertions.assertEquals("ClientboundResetScorePacket", firstPackets.getLast().getClass().getSimpleName());
+        org.junit.jupiter.api.Assertions.assertEquals(99, accessType.getMethod("get").invoke(secondScore));
     }
 
     private static void verifyTicketActivityIndex(ClassLoader loader) throws Exception {

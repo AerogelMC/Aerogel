@@ -1,6 +1,17 @@
 package net.minecraft.world.scores;
 
 public class Scoreboard {
+    public Objective getDisplayObjective(DisplaySlot slot) { return null; }
+    public java.util.Collection<PlayerScoreEntry> listPlayerScores(Objective objective) { return null; }
+    public void onObjectiveAdded(Objective objective) { }
+    public void onObjectiveChanged(Objective objective) { }
+    public void onObjectiveRemoved(Objective objective) { }
+    protected void onScoreChanged(ScoreHolder holder, Objective objective, Score score) { }
+    public void onPlayerRemoved(ScoreHolder holder) { }
+    public void onPlayerScoreRemoved(ScoreHolder holder, Objective objective) { }
+    public void onTeamAdded(PlayerTeam team) { }
+    public void onTeamChanged(PlayerTeam team) { }
+    public void onTeamRemoved(PlayerTeam team) { }
     public Objective getObjective(String name) { return null; }
     public Objective addObjective(
         String name, net.minecraft.world.scores.criteria.ObjectiveCriteria criteria,

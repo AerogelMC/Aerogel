@@ -135,6 +135,7 @@ abstract class PlayerListMixin {
         at = @At("HEAD")
     )
     private void aerogel$playerQuit(ServerPlayer player, CallbackInfo callbackInfo) {
+        dev.aerogel.loader.internal.PlayerScoreboardView.disconnected(player);
         PlayerNameTagService.playerRemoved(player);
     }
 
@@ -150,6 +151,7 @@ abstract class PlayerListMixin {
         Entity.RemovalReason removalReason,
         org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<ServerPlayer> callbackInfo
     ) {
+        dev.aerogel.loader.internal.PlayerScoreboardView.respawned(previousPlayer, callbackInfo.getReturnValue());
         if (EventHooks.hasListeners(PlayerRespawnEvent.class)) {
             EventHooks.post(new PlayerRespawnEvent(
                 previousPlayer, callbackInfo.getReturnValue(), keepEverything));

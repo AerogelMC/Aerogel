@@ -423,6 +423,52 @@ board.team("builders")
 
 Objectives and teams created by a plugin are removed automatically on reload. Existing vanilla objectives and teams can be found and wrapped without taking ownership.
 
+### Per-player scoreboards
+
+```java
+context.scheduler().run(() -> {
+    PlayerScoreboard board = context.scoreboards().create(player);
+    board.objective("coins", Component.literal("My coins"))
+        .score("Balance", 10)
+        .display(DisplaySlot.SIDEBAR);
+    board.team("builders").prefix(Component.literal("[Build] "))
+        .add(player.getScoreboardName());
+    board.show();
+    // Retain board in your plugin; later server-scheduler updates send deltas:
+    board.findObjective("coins").orElseThrow().score("Balance", 20);
+    // board.hide();  // Restore the current main scoreboard; retain private data.
+    // board.show();  // Reapply this board.
+    // board.close(); // Restore main if visible and release this board.
+});
+```
+
+Import `dev.aerogel.api.scoreboard.PlayerScoreboard`. `create(player)` starts hidden
+so the initial contents can be prepared before publication. Each board is independent:
+two players can use the same objective/team names with different values. Only the
+assigned player receives its updates. Showing a second board for the same player
+hides the first, even across plugins; closing a hidden board does not disturb the visible one.
+
+Create, read, show, hide and mutate on `context.scheduler()` (the server thread).
+The vanilla scoreboard containers are mutable; private API access from another thread
+throws rather than racing them. The `vanilla()` escape hatch has the same threading
+requirement. `close()` may be called from any thread and schedules cleanup if needed.
+There is no periodic full-board resend or per-tick viewer scan.
+
+Disconnect closes all of that player's private boards. Respawn retains them and
+updates `board.player()` to the replacement instance. Plugin unload closes its boards.
+While a private board is visible, external scoreboard objective/score/display/team
+packets are suppressed for that viewer (including packets in bundles); hiding it
+restores the main board's current contents. This also supersedes team-based display
+overrides such as custom glow/name-tag teams while visible. Private team rules and
+scores affect the client's display only: server commands, collisions and damage rules
+continue to use the main scoreboard.
+
+플레이어별 보드는 `context.scoreboards().create(player)`로 만들고 내용을 설정한 뒤
+`show()`로 표시합니다. 수정·조회·표시·숨김은 `context.scheduler().run(...)`에서 실행합니다.
+`hide()`는 공용 보드를 복원하고 전용 데이터를 유지하며, `close()`는 보드를 종료합니다.
+로그아웃·플러그인 종료 시 자동 정리되고 리스폰 시 새 플레이어 인스턴스로 이어집니다.
+전용 보드는 화면 표시용이며 서버의 실제 점수·팀 규칙을 변경하지 않습니다.
+
 ## Boss bars
 
 ```java

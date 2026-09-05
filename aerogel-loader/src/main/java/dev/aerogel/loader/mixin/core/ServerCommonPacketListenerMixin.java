@@ -25,6 +25,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @Mixin(targets = "net.minecraft.server.network.ServerCommonPacketListenerImpl")
 abstract class ServerCommonPacketListenerMixin {
+    @Inject(
+        method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
+        at = @At("HEAD"), cancellable = true
+    )
+    private void aerogel$personalScoreboard(
+        Packet<?> packet, io.netty.channel.ChannelFutureListener listener, CallbackInfo callback
+    ) {
+        ServerPlayer player = playerOrNull();
+        if (player != null && dev.aerogel.loader.internal.PlayerScoreboardView.suppress(player, packet)) {
+            callback.cancel();
+        }
+    }
     @Unique private final AtomicBoolean aerogel$disconnectRequested =
         new AtomicBoolean();
 
@@ -70,7 +82,8 @@ abstract class ServerCommonPacketListenerMixin {
         net.minecraft.network.protocol.Packet<?> packet
     ) {
         ServerPlayer player = playerOrNull();
-        return player == null ? packet : PlayerViewService.transform(player, packet);
+        return player == null ? packet : dev.aerogel.loader.internal.PlayerScoreboardView.filterBundle(
+            player, PlayerViewService.transform(player, packet));
     }
 
     @Inject(method = "handleCustomClickAction", at = @At("HEAD"), cancellable = true)
