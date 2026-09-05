@@ -68,9 +68,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Entity, TrackedRegistration> trackedEntities =
         new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<ChunkContextImpl,
-        ConcurrentHashMap<Entity, TrackedRegistration>> trackedByContext =
-        new ConcurrentHashMap<>();
+    private final ContextRegistrationIndex<ChunkContextImpl, Entity, TrackedRegistration>
+        trackedByContext = new ContextRegistrationIndex<>();
     /**
      * Viewers that have already participated in a tracking pass, partitioned by
      * dimension. A player is added only after ChunkMap has published its initial
@@ -84,9 +83,8 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Entity, TickingRegistration> tickingEntities =
         new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<ChunkContextImpl,
-        ConcurrentHashMap<Entity, TickingRegistration>> tickingByContext =
-        new ConcurrentHashMap<>();
+    private final ContextRegistrationIndex<ChunkContextImpl, Entity, TickingRegistration>
+        tickingByContext = new ContextRegistrationIndex<>();
     private final AtomicLong nextEpoch = new AtomicLong(1L);
     private final AtomicLong nextLease = new AtomicLong(1L);
     private final AtomicInteger workerIds = new AtomicInteger();
@@ -352,8 +350,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         TickingRegistration registration = new TickingRegistration(entity, owner);
         TickingRegistration previous = tickingEntities.put(entity, registration);
         if (previous != null) removeTickingRegistration(previous);
-        tickingByContext.computeIfAbsent(owner, ignored -> new ConcurrentHashMap<>())
-            .put(entity, registration);
+        tickingByContext.put(owner, entity, registration);
     }
 
     public void unregisterTickingEntity(Entity entity) {
@@ -363,11 +360,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     private void removeTickingRegistration(TickingRegistration registration) {
-        ConcurrentHashMap<Entity, TickingRegistration> entries =
-            tickingByContext.get(registration.owner);
-        if (entries == null) return;
-        entries.remove(registration.entity, registration);
-        if (entries.isEmpty()) tickingByContext.remove(registration.owner, entries);
+        tickingByContext.remove(registration.owner, registration.entity, registration);
     }
 
     /**
@@ -389,7 +382,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         CompletableFuture<Void> producerPass = world.entityTickProducer().offer(token, () -> {
             ArrayList<Map.Entry<ChunkContextImpl,
                 ConcurrentHashMap<Entity, TickingRegistration>>> entries =
-                new ArrayList<>(tickingByContext.entrySet());
+                tickingByContext.snapshot();
             invokeOwnedStripes(entries.size(), index -> {
                 var entry = entries.get(index);
                 ChunkContextImpl context = entry.getKey();
@@ -560,15 +553,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ChunkContextImpl current
     ) {
         if (current == null || registration.owner != expected) return;
-        ConcurrentHashMap<Entity, TickingRegistration> previous =
-            tickingByContext.get(expected);
-        if (previous != null) {
-            previous.remove(registration.entity, registration);
-            if (previous.isEmpty()) tickingByContext.remove(expected, previous);
-        }
+        tickingByContext.remove(expected, registration.entity, registration);
         registration.owner = current;
-        tickingByContext.computeIfAbsent(current, ignored -> new ConcurrentHashMap<>())
-            .put(registration.entity, registration);
+        tickingByContext.put(current, registration.entity, registration);
     }
 
     /**
@@ -745,8 +732,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         TrackedRegistration registration = new TrackedRegistration(entity, tracked, owner);
         TrackedRegistration previous = trackedEntities.put(entity, registration);
         if (previous != null) removeTrackedRegistration(previous);
-        trackedByContext.computeIfAbsent(owner, ignored -> new ConcurrentHashMap<>())
-            .put(entity, registration);
+        trackedByContext.put(owner, entity, registration);
     }
 
     public void unregisterTrackedEntity(Entity entity) {
@@ -756,11 +742,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
     }
 
     private void removeTrackedRegistration(TrackedRegistration registration) {
-        ConcurrentHashMap<Entity, TrackedRegistration> entries =
-            trackedByContext.get(registration.owner);
-        if (entries == null) return;
-        entries.remove(registration.entity, registration);
-        if (entries.isEmpty()) trackedByContext.remove(registration.owner, entries);
+        trackedByContext.remove(registration.owner, registration.entity, registration);
     }
 
     public void tickTrackedEntities(
@@ -788,7 +770,7 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         Runnable produceTracking = () -> {
             ArrayList<Map.Entry<ChunkContextImpl,
                 ConcurrentHashMap<Entity, TrackedRegistration>>> entries =
-                new ArrayList<>(trackedByContext.entrySet());
+                trackedByContext.snapshot();
             invokeOwnedStripes(entries.size(), index -> {
                 var entry = entries.get(index);
                 ChunkContextImpl context = entry.getKey();
@@ -950,15 +932,9 @@ public final class ContextServiceImpl implements ContextService, AutoCloseable {
         ChunkContextImpl current
     ) {
         if (current == null || registration.owner != expected) return;
-        ConcurrentHashMap<Entity, TrackedRegistration> previous =
-            trackedByContext.get(expected);
-        if (previous != null) {
-            previous.remove(registration.entity, registration);
-            if (previous.isEmpty()) trackedByContext.remove(expected, previous);
-        }
+        trackedByContext.remove(expected, registration.entity, registration);
         registration.owner = current;
-        trackedByContext.computeIfAbsent(current, ignored -> new ConcurrentHashMap<>())
-            .put(registration.entity, registration);
+        trackedByContext.put(current, registration.entity, registration);
     }
 
     /**

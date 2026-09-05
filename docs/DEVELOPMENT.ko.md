@@ -1003,7 +1003,7 @@ Mixin 리로드는 최선 시도입니다. 메서드 본문 변경은 hot swap�
 
 ```text
 server/
-├─ Aerogel-26.2-29.jar
+├─ Aerogel-26.2-30.jar
 └─ plugins/
    └─ my-plugin-1.0.0.jar
 ```
